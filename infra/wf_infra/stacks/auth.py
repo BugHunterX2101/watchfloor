@@ -13,7 +13,7 @@ from aws_cdk import aws_kms as kms
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import PythonLambda, api_domain
+from ..common import PythonLambda, default_host_output, domain_mapping
 from ..config import EnvConfig
 from .data import DataStack
 from .net import NetStack
@@ -64,7 +64,7 @@ class AuthStack(Stack):
                 # A CloudFormation dynamic reference: resolved at deploy time, never written into the template.
                 "WF_SESSION_SECRET": session.secret_value.unsafe_unwrap(),
                 "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
-                "WF_ALLOWED_HOSTS": cfg.auth_domain,
+                "WF_ALLOWED_HOSTS": cfg.auth_host,
             },
         ).function
         data.auth_secret.grant_read(fn)
@@ -116,13 +116,12 @@ class AuthStack(Stack):
             self,
             "Api",
             api_name=f"{cfg.prefix}-auth",
-            default_domain_mapping=apigwv2.DomainMappingOptions(
-                domain_name=api_domain(self, cfg, cfg.auth_domain)
-            ),
+            default_domain_mapping=domain_mapping(self, cfg, cfg.auth_domain),
         )
         self.api.add_routes(path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=integ)
         self.function = fn
         CfnOutput(self, "Issuer", value=cfg.issuer)
+        default_host_output(self, cfg, self.api)
 
     def _generated(
         self, construct_id: str, name: str, key: str, template: dict[str, str] | None = None

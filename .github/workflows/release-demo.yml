@@ -52,9 +52,12 @@ jobs:
                    --query 'repositories[0].repositoryUri' --output text)
           make agents-image ENV=demo && make agents-push ENV=demo REPO="$REPO"
 
-      - name: cdk deploy
-        working-directory: infra
-        run: uv sync --frozen && npx --yes aws-cdk@2 deploy --all -c env=demo --require-approval never
+      - name: cdk deploy (writes the hosts AWS assigned into the config when there are no custom domains)
+        run: |
+          (cd infra && uv sync --frozen)
+          make cdk-deploy ENV=demo CDK_FLAGS="--require-approval never"
+          git diff --quiet infra/config/demo.yaml || {
+            echo "::notice::Commit these hosts to infra/config/demo.yaml:"; git diff -U0 infra/config/demo.yaml; }
 
       - name: Migrate (migrations + role logins)
         run: make migrate-remote ENV=demo

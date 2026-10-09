@@ -1,0 +1,21 @@
+# Synth-test fixture: a Free plan account before its first deploy. No custom domains, no models;
+# the hosts AWS assigns are not known yet (scripts/default_hosts.py writes them in afterwards).
+env: dev
+account: "123456789012"
+region: us-east-1
+
+mcp_domain: null
+auth_domain: null
+harness_domain: null
+certificate_arn: null
+
+lwa_layer_arn: arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25
+
+models:
+  sonnet: us.anthropic.claude-sonnet-5-5
+  haiku: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+alert_email: alerts@watchfloor.example
+models_enabled: false
+provisioned_concurrency: 0
+removal_protection: false

@@ -36,7 +36,18 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
+      # models_enabled: false in infra/config/dev.yaml (an AWS Free plan account): no agents image.
+      - name: Models enabled?
+        id: models
+        run: |
+          if grep -qE '^models_enabled:[[:space:]]*false' infra/config/dev.yaml; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push the agents image (when the repository exists)
+        if: steps.models.outputs.enabled == 'true'
         run: |
           REPO=$(aws ecr describe-repositories --repository-names wf-dev-agents \
                    --query 'repositories[0].repositoryUri' --output text 2>/dev/null || true)
@@ -46,9 +57,14 @@ jobs:
             echo "::warning::wf-dev-agents does not exist yet: deploy once with -c wf:agentRuntime=false (README)"
           fi
 
+      # Without custom domains, make cdk-deploy writes the hosts AWS assigned into infra/config/dev.yaml
+      # (twice-deploying on the first run, which assigns them); the steps below read them from there.
       - name: cdk deploy
-        working-directory: infra
-        run: uv sync --frozen && npx --yes aws-cdk@2 deploy --all -c env=dev --require-approval never
+        run: |
+          (cd infra && uv sync --frozen)
+          make cdk-deploy ENV=dev CDK_FLAGS="--require-approval never"
+          git diff --quiet infra/config/dev.yaml || {
+            echo "::notice::Commit these hosts to infra/config/dev.yaml:"; git diff -U0 infra/config/dev.yaml; }
 
       - name: Migrate (migrations + role logins)
         run: make migrate-remote ENV=dev

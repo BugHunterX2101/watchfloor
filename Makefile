@@ -3,7 +3,7 @@ ENV ?= local
 
 .PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency evals test test-all test-agents agents-sync agents-image lint snapshot snapshot-check \
         demo-reset demo-clock demo-watch-now demo-status harness-sync harness-web test-harness ui \
-        infra-sync package synth test-infra deploy agents-push migrate-remote seed-remote
+        infra-sync package synth test-infra deploy cdk-deploy default-hosts agents-push migrate-remote seed-remote
 
 bootstrap:            ## install Python dependencies (the workspace, then the agents' and harness's own projects)
 	uv sync
@@ -111,7 +111,20 @@ test-infra:           ## synth both environments and assert the properties the s
 deploy:               ## package, then deploy every stack of ENV=dev|demo; AGENT_RUNTIME=false on the very first deploy
 	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
 	$(MAKE) package
-	cd infra && $(CDK) deploy --all -c env=$(ENV) $(if $(filter false,$(AGENT_RUNTIME)),-c wf:agentRuntime=false,)
+	$(MAKE) cdk-deploy
+
+# Without custom domains (certificate_arn: null), the hosts AWS assigned go into the config first; a
+# first deploy is the one that assigns them, so it is followed by a second that uses them.
+CDK_DEPLOY = cd infra && $(CDK) deploy --all -c env=$(ENV) $(if $(filter false,$(AGENT_RUNTIME)),-c wf:agentRuntime=false,) $(CDK_FLAGS)
+cdk-deploy:           ## deploy ENV=dev|demo from infra/build as it is (CI: CDK_FLAGS="--require-approval never")
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	uv run python scripts/default_hosts.py --env $(ENV)
+	$(CDK_DEPLOY)
+	@if ! uv run python scripts/default_hosts.py --env $(ENV) --check; then \
+	  uv run python scripts/default_hosts.py --env $(ENV) && $(CDK_DEPLOY); fi
+
+default-hosts:        ## write the hosts AWS assigned to ENV=dev|demo into its config (no custom domains)
+	uv run python scripts/default_hosts.py --env $(ENV)
 
 agents-push:          ## push the agents image built by agents-image: make agents-push ENV=dev REPO=<RepositoryUri output>
 	@test -n "$(REPO)" || { echo "set REPO to the wf-$(ENV)-agents stack's RepositoryUri output"; exit 2; }

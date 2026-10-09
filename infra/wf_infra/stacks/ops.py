@@ -205,6 +205,8 @@ class OpsStack(Stack):
                 budget_type="COST",
                 time_unit="MONTHLY",
                 budget_limit=budgets.CfnBudget.SpendProperty(amount=max(cfg.budgets_usd), unit="USD"),
+                # Usage before credits: on an account paid for by credits, spend net of them reads $0.
+                cost_types=budgets.CfnBudget.CostTypesProperty(include_credit=False, include_refund=False),
             ),
             notifications_with_subscribers=[
                 budgets.CfnBudget.NotificationWithSubscribersProperty(

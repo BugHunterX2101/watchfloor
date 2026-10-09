@@ -133,8 +133,9 @@ def config_value(env: str, key: str) -> str | None:
     path = ROOT / "infra" / "config" / f"{env}.yaml"
     if not path.is_file():
         return None
-    match = re.search(rf"^{key}:\s*([^\s#]+)", path.read_text(encoding="utf-8"), re.MULTILINE)
-    return match.group(1).strip("'\"") if match else None
+    match = re.search(rf"^{key}:[ \t]*([^\s#]+)", path.read_text(encoding="utf-8"), re.MULTILINE)
+    value = match.group(1).strip("'\"") if match else None
+    return None if value in ("null", "~") else value
 
 
 def invoke(function: str, event: dict[str, Any], *, region: str | None, timeout: int = OP_TIMEOUT_S) -> Any:

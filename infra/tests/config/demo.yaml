@@ -1,0 +1,28 @@
+# Synth-test fixture: the full demo design (custom domains, models on). The shipped config
+# may differ (infra/config/demo.yaml); these pin what the stacks build when everything is switched on.
+env: demo
+account: "123456789012"
+region: us-east-1
+
+mcp_domain: mcp.watchfloor.example
+auth_domain: auth.watchfloor.example
+harness_domain: harness.watchfloor.example
+certificate_arn: arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000
+hosted_zone_id: null
+hosted_zone_name: null
+
+lwa_layer_arn: arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25
+
+models:
+  sonnet: us.anthropic.claude-sonnet-5-5
+  haiku: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+alert_email: alerts@watchfloor.example
+canary_email: daniel@lumenridge.example     # seeded user the canary signs in as (own generated password)
+alexa_redirect_uris: []
+budgets_usd: []                    # the account-wide budget lives in dev.yaml
+models_enabled: true
+demo_mode: true                    # honours workspace clock offsets (DD §24)
+provisioned_concurrency: 1
+agent_image_tag: demo
+removal_protection: true

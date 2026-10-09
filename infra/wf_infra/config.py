@@ -3,7 +3,9 @@
 Domain names are fixed strings rather than API Gateway tokens on purpose: the
 issuer, the resource URI (token audience) and the harness redirect URI must be
 known to several stacks at once, and fixed values keep the stacks free of
-cross-stack cycles.
+cross-stack cycles. That holds without custom domains too: the hosts AWS assigns
+stay the same for the life of the stacks, so they are written into the config
+after the first deploy (scripts/default_hosts.py).
 """
 
 from __future__ import annotations
@@ -13,9 +15,10 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+PENDING_HOST = "pending.invalid"  # a host AWS has yet to assign (RFC 2606 reserves .invalid)
 
 
 class Models(BaseModel):
@@ -31,10 +34,15 @@ class EnvConfig(BaseModel):
     env: Literal["dev", "demo"]
     account: str = Field(pattern=r"^\d{12}$")
     region: Literal["us-east-1"] = "us-east-1"
-    mcp_domain: str
-    auth_domain: str
-    harness_domain: str
-    certificate_arn: str  # ACM certificate in us-east-1 covering the three domains
+    # With certificate_arn (an ACM certificate in us-east-1 covering all three), the host names are custom
+    # domains. Without one (no domain to buy), they are the hosts AWS assigns, execute-api and
+    # cloudfront.net: the first deploy creates them, scripts/default_hosts.py writes them here, and a
+    # second deploy points every Lambda at them (`make cdk-deploy` does all three). Until then they
+    # read as pending.invalid.
+    mcp_domain: str | None = None
+    auth_domain: str | None = None
+    harness_domain: str | None = None
+    certificate_arn: str | None = None
     # Route 53 zone; without it, the DNS records are created by hand from the DnsTarget outputs.
     hosted_zone_id: str | None = None
     hosted_zone_name: str | None = None
@@ -63,26 +71,50 @@ class EnvConfig(BaseModel):
 
     @field_validator("mcp_domain", "auth_domain", "harness_domain")
     @classmethod
-    def _hostname(cls, v: str) -> str:
-        if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", v):
+    def _hostname(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", v):
             raise ValueError(f"{v!r} is not a bare host name")
         return v
+
+    @model_validator(mode="after")
+    def _domains(self) -> EnvConfig:
+        if self.certificate_arn and not (self.mcp_domain and self.auth_domain and self.harness_domain):
+            raise ValueError("a certificate_arn needs all three host names (mcp, auth and harness_domain)")
+        if (self.hosted_zone_id or self.hosted_zone_name) and not self.certificate_arn:
+            raise ValueError("a hosted zone is for custom domains: set certificate_arn too")
+        return self
+
+    @property
+    def custom_domains(self) -> bool:
+        return self.certificate_arn is not None
 
     @property
     def prefix(self) -> str:
         return f"wf-{self.env}"
 
     @property
+    def mcp_host(self) -> str:
+        return self.mcp_domain or PENDING_HOST
+
+    @property
+    def auth_host(self) -> str:
+        return self.auth_domain or PENDING_HOST
+
+    @property
+    def harness_host(self) -> str:
+        return self.harness_domain or PENDING_HOST
+
+    @property
     def issuer(self) -> str:
-        return f"https://{self.auth_domain}"
+        return f"https://{self.auth_host}"
 
     @property
     def resource_uri(self) -> str:
-        return f"https://{self.mcp_domain}/mcp"
+        return f"https://{self.mcp_host}/mcp"
 
     @property
     def harness_url(self) -> str:
-        return f"https://{self.harness_domain}"
+        return f"https://{self.harness_host}"
 
     def queue_url(self, name: str) -> str:
         """SQS URLs are deterministic for named queues, so the MCP stack needs no Async reference."""

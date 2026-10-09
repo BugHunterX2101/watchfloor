@@ -12,6 +12,9 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
 from wf_infra import common
+from wf_infra.config import CONFIG_DIR, PENDING_HOST
+
+FIXTURES = Path(__file__).resolve().parent / "config"  # the full design; infra/config is the shipped one
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -24,7 +27,15 @@ def _no_packaged_bundles(tmp_path_factory: pytest.TempPathFactory) -> Iterator[P
 
 
 def _synth(env: str, **context: Any) -> dict[str, Template]:
-    application = cdk.App(context={"env": env, "account": "123456789012", "wf:stubAssets": "true", **context})
+    application = cdk.App(
+        context={
+            "env": env,
+            "account": "123456789012",
+            "wf:stubAssets": "true",
+            "wf:configDir": str(FIXTURES),
+            **context,
+        }
+    )
     stacks = infra_app.build(application)
     return {name.split("-", 2)[2]: Template.from_stack(stack) for name, stack in stacks.items()}
 
@@ -197,6 +208,10 @@ def test_alarms_cover_the_td_list(dev: dict[str, Template]) -> None:
     assert {f"wf-dev-{n}" for n in expected} <= names
     assert any(n.startswith("wf-dev-hot-p95") for n in names)
     dev["ops"].resource_count_is("AWS::Budgets::Budget", 1)
+    dev["ops"].has_resource_properties(  # usage before credits, or a credits-funded account reads $0
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"CostTypes": {"IncludeCredit": False, "IncludeRefund": False}})},
+    )
     assert "AWS::Budgets::Budget" not in str(_synth("demo")["ops"].to_json())
 
 
@@ -219,3 +234,37 @@ def test_without_models_nothing_needs_agentcore_or_claude() -> None:
         "AWS::Lambda::Function",
         {"Environment": {"Variables": Match.object_like({"WF_MODELS_ENABLED": "false"})}},
     )
+
+
+@pytest.mark.parametrize("env", ["dev", "demo"])
+def test_the_shipped_configs_synthesize(env: str) -> None:
+    stacks = _synth(env, **{"wf:configDir": str(CONFIG_DIR)})
+    assert {"net", "data", "auth", "mcp", "async", "harness", "ops"} <= set(stacks)
+
+
+def test_without_custom_domains_the_services_answer_on_the_hosts_aws_assigns() -> None:
+    """No certificate_arn: no custom domains or DNS records, a DefaultHost output per entry point, and
+    pending.invalid in every URL until scripts/default_hosts.py writes the assigned hosts in."""
+    free = _synth("dev", **{"wf:configDir": str(FIXTURES / "free")})
+    for name in ("auth", "mcp", "harness"):
+        free[name].resource_count_is("AWS::ApiGatewayV2::DomainName", 0)
+        free[name].resource_count_is("AWS::Route53::RecordSet", 0)
+        assert "DefaultHost" in free[name].to_json()["Outputs"]
+    dist = next(iter(free["harness"].find_resources("AWS::CloudFront::Distribution").values()))
+    assert "Aliases" not in dist["Properties"]["DistributionConfig"]
+    free["mcp"].has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Environment": {
+                "Variables": Match.object_like(
+                    {
+                        "WF_ISSUER": f"https://{PENDING_HOST}",
+                        "WF_RESOURCE_URI": f"https://{PENDING_HOST}/mcp",
+                        "WF_ALLOWED_HOSTS": PENDING_HOST,
+                    }
+                )
+            }
+        },
+    )
+    alias = next(iter(free["mcp"].find_resources("AWS::Lambda::Alias").values()))
+    assert "ProvisionedConcurrencyConfig" not in alias["Properties"]

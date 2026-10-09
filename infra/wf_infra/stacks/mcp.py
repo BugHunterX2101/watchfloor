@@ -15,7 +15,7 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from constructs import Construct
 
-from ..common import PythonLambda, api_domain
+from ..common import PythonLambda, default_host_output, domain_mapping
 from ..config import EnvConfig
 from .data import DataStack
 from .net import NetStack
@@ -49,7 +49,7 @@ class McpStack(Stack):
             reserved_concurrency=20,
             environment={
                 "WF_DB_SECRET_ARN": data.app_secret.secret_arn,
-                "WF_ALLOWED_HOSTS": cfg.mcp_domain,
+                "WF_ALLOWED_HOSTS": cfg.mcp_host,
                 "WF_ALLOWED_ORIGINS": cfg.harness_url,
                 "WF_PROTOCOL_VERSIONS": "2025-11-25",
                 "WF_RATE_LIMIT_USER": str(cfg.rate_limit_user),
@@ -79,9 +79,7 @@ class McpStack(Stack):
             self,
             "Api",
             api_name=f"{cfg.prefix}-mcp",
-            default_domain_mapping=apigwv2.DomainMappingOptions(
-                domain_name=api_domain(self, cfg, cfg.mcp_domain)
-            ),
+            default_domain_mapping=domain_mapping(self, cfg, cfg.mcp_domain),
         )
         self.api.add_routes(
             path="/mcp",
@@ -96,3 +94,4 @@ class McpStack(Stack):
             throttling_burst_limit=50, throttling_rate_limit=25
         )
         CfnOutput(self, "ResourceUri", value=cfg.resource_uri)
+        default_host_output(self, cfg, self.api)

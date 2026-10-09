@@ -127,9 +127,25 @@ available, follow-up drafts use a template, and the harness runs its offline eng
 the account to the Paid plan, set `models_enabled: true` and follow the first-deploy steps below
 from the agents image onwards.
 
+**Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
+and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and
+the harness on its CloudFront host (`<id>.cloudfront.net`). Those hosts exist only once the stacks
+do, and never change after that, so `make cdk-deploy` (run by `make deploy` and both deploy
+workflows) writes them into the config as `mcp_domain`, `auth_domain` and `harness_domain`: before
+deploying, from stacks that already exist, and after a first deploy, which it then repeats so every
+Lambda uses them. Commit them when the workflow's notice shows them. With a domain, set the three
+host names and `certificate_arn` instead (and `hosted_zone_*` to have CDK create the DNS records).
+
+What `dev` costs, before credits: about $25–30 a month (Postgres `t4g.micro` and its storage, the
+NAT instance and its public IPv4 address, about ten secrets, a KMS key, alarms and logs). `dev` ships without provisioned
+concurrency, which would add about $9; `demo` keeps it for its latency gate, so deploy one
+environment at a time on a credits-only account. The budget in `dev.yaml` e-mails at $15, $25 and
+$35 of monthly usage, before credits.
+
 **Before the first deploy**
-1. Fill in `infra/config/<env>.yaml`: account, the three host names, an ACM certificate in
-   `us-east-1` that covers them, the alert e-mail, and the Bedrock model ids (⚠ Verify S6).
+1. Fill in `infra/config/<env>.yaml`: account, the alert e-mail, the Bedrock model ids (⚠ Verify
+   S6), and either nothing for the host names (see above) or three of your own with an ACM certificate
+   in `us-east-1` that covers them.
 2. `npx aws-cdk@2 bootstrap aws://<account>/us-east-1` once per account.
 3. The GitHub OIDC deploy role, once per environment (`CreateOidcProvider=false` for the second):
    ```bash
@@ -162,8 +178,8 @@ SEED_EVENT='{"seed": false}'` registers them without touching the data. Pushes t
 `dev`; a `demo` release only re-registers clients and logins, and `make demo-reset ENV=demo`
 resets the demo data before a recording.
 
-The only secret left to fill in by hand is `wf-<env>/slack/webhook` (the webhook URL). Without a
-hosted zone in the config, point each host name at its stack's `DnsTarget` output.
+The only secret left to fill in by hand is `wf-<env>/slack/webhook` (the webhook URL). With custom
+domains but no hosted zone in the config, point each host name at its stack's `DnsTarget` output.
 
 `make synth ENV=dev` checks the stacks without building anything; `make test-infra` synthesizes both
 environments and asserts what the specs pin down (TLS-only Postgres, ES256 KMS key, alias with

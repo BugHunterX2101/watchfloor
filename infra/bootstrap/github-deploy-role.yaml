@@ -69,6 +69,10 @@ Resources:
                 Effect: Allow
                 Action: sts:AssumeRole
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
+              - Sid: AssignedHosts # make cdk-deploy without custom domains (scripts/default_hosts.py)
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/wf-${Env}-*/*
               - Sid: EcrLogin # make agents-push
                 Effect: Allow
                 Action: ecr:GetAuthorizationToken

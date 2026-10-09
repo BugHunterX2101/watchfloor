@@ -8,9 +8,10 @@ Synth without built Lambda zips: ``-c wf:stubAssets=true`` (CI's synth check).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import aws_cdk as cdk
-from wf_infra.config import load_config
+from wf_infra.config import CONFIG_DIR, load_config
 from wf_infra.stacks.agents import AgentsStack
 from wf_infra.stacks.async_ import AsyncStack
 from wf_infra.stacks.auth import AuthStack
@@ -23,8 +24,11 @@ from wf_infra.stacks.ops import OpsStack
 
 def build(app: cdk.App) -> dict[str, cdk.Stack]:
     env_name = app.node.try_get_context("env") or "dev"
+    config_dir = app.node.try_get_context("wf:configDir")  # the synth tests' own configs
     cfg = load_config(
-        env_name, account=app.node.try_get_context("account") or os.environ.get("CDK_DEFAULT_ACCOUNT")
+        env_name,
+        account=app.node.try_get_context("account") or os.environ.get("CDK_DEFAULT_ACCOUNT"),
+        directory=Path(config_dir) if config_dir else CONFIG_DIR,
     )
     override = app.node.try_get_context("wf:modelsEnabled")  # one synth, either way
     if override is not None:

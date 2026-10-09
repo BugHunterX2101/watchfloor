@@ -1,13 +1,16 @@
 # Watchfloor demo environment: recording and judging, frozen Oct 22 – Nov 20 (DD §18.2, TD §17.5).
 # Placeholders marked ⚠ must be replaced before `make deploy ENV=demo`.
 env: demo
-account: "000000000000"            # ⚠ your AWS account id
+account: "863063109036"            # the Free plan account (profile `watchfloor`)
 region: us-east-1
 
-mcp_domain: mcp.watchfloor.example            # ⚠ your domains
-auth_domain: auth.watchfloor.example
-harness_domain: harness.watchfloor.example
-certificate_arn: arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000  # ⚠
+# No custom domains: a domain costs money the account's credits can't pay. certificate_arn stays
+# null and the services answer on the hosts AWS assigns; `make cdk-deploy` writes them in below on
+# the first deploy (scripts/default_hosts.py; README, Deploy). Commit them once they are there.
+mcp_domain: null
+auth_domain: null
+harness_domain: null
+certificate_arn: null
 hosted_zone_id: null
 hosted_zone_name: null
 

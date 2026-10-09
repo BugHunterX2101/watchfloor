@@ -113,6 +113,7 @@ class PythonLambda(Construct):
 
 
 def certificate(scope: Construct, cfg: EnvConfig) -> acm.ICertificate:
+    assert cfg.certificate_arn is not None  # callers check cfg.custom_domains
     return acm.Certificate.from_certificate_arn(scope, "Certificate", cfg.certificate_arn)
 
 
@@ -144,3 +145,16 @@ def api_domain(scope: Construct, cfg: EnvConfig, host: str) -> apigwv2.DomainNam
         scope, "DnsTarget", value=domain.regional_domain_name, description=f"CNAME or alias target for {host}"
     )
     return domain
+
+
+def domain_mapping(scope: Construct, cfg: EnvConfig, host: str | None) -> apigwv2.DomainMappingOptions | None:
+    """The custom domain of an HTTP API, or None (no certificate_arn): it answers on its execute-api host."""
+    if not cfg.custom_domains:
+        return None
+    assert host is not None  # EnvConfig requires all three host names with a certificate
+    return apigwv2.DomainMappingOptions(domain_name=api_domain(scope, cfg, host))
+
+
+def default_host_output(scope: Construct, cfg: EnvConfig, api: apigwv2.HttpApi) -> None:
+    """The host AWS assigned (scripts/default_hosts.py reads it into the config when there is no domain)."""
+    CfnOutput(scope, "DefaultHost", value=f"{api.api_id}.execute-api.{cfg.region}.amazonaws.com")

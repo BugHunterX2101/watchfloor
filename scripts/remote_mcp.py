@@ -47,7 +47,10 @@ def default_url(env: str | None) -> str:
         return LOCAL_URL
     domain = config_value(env, "mcp_domain")
     if not domain:
-        raise SystemExit(f"no mcp_domain in infra/config/{env}.yaml; pass --url")
+        raise SystemExit(
+            f"no mcp_domain in infra/config/{env}.yaml (without custom domains, `make default-hosts "
+            f"ENV={env}` writes it after the first deploy); or pass --url"
+        )
     return f"https://{domain}/mcp"
 
 
@@ -61,9 +64,14 @@ def is_local(url: str) -> bool:
     return (urlsplit(url).hostname or "") in {"localhost", "127.0.0.1", "::1"}
 
 
-def harness_redirect(url: str) -> str:
+def harness_redirect(url: str, env: str | None = None) -> str:
+    """The harness client's registered redirect URI: set, from the config's harness_domain (the only way
+    to know it on hosts AWS assigned), from a custom mcp.<domain>, or the local one."""
     if os.environ.get("WF_HARNESS_REDIRECT_URI"):
         return os.environ["WF_HARNESS_REDIRECT_URI"]
+    harness = config_value(env, "harness_domain") if env in {"dev", "demo"} else None
+    if harness:
+        return f"https://{harness}/oauth/callback"
     host = urlsplit(url).hostname or ""
     if host.startswith("mcp."):
         return f"https://harness.{host.removeprefix('mcp.')}/oauth/callback"
@@ -144,7 +152,7 @@ async def _settings(http: httpx.AsyncClient, url: str, env: str | None) -> Any:
         issuer=prm["authorization_servers"][0],
         resource_uri=prm["resource"],
         mcp_url=url,
-        harness_redirect_uri=harness_redirect(url),
+        harness_redirect_uri=harness_redirect(url, env),
         **creds,
     )
 

@@ -158,4 +158,20 @@ def test_remote_url_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     assert remote.harness_redirect("http://localhost:8080/mcp") == "http://localhost:8082/oauth/callback"
     assert remote.is_local("http://127.0.0.1:8080/mcp") and not remote.is_local("https://mcp.dev.example/mcp")
     assert remote.default_url("local") == "http://localhost:8080/mcp"
-    assert remote.default_url("dev") == "https://mcp.dev.watchfloor.example/mcp"
+
+
+def test_remote_urls_come_from_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hosts AWS assigned (no custom domains) say nothing about each other: both come from the config."""
+    monkeypatch.delenv("WF_HARNESS_REDIRECT_URI", raising=False)
+    config = {
+        "mcp_domain": "abc123defg.execute-api.us-east-1.amazonaws.com",
+        "harness_domain": "d1a2b3c4d5e6f7.cloudfront.net",
+    }
+    monkeypatch.setattr(remote, "config_value", lambda env, key: config.get(key))
+    assert remote.default_url("dev") == "https://abc123defg.execute-api.us-east-1.amazonaws.com/mcp"
+    assert remote.harness_redirect(remote.default_url("dev"), "dev") == (
+        "https://d1a2b3c4d5e6f7.cloudfront.net/oauth/callback"
+    )
+    monkeypatch.setattr(remote, "config_value", lambda env, key: None)  # before the first deploy
+    with pytest.raises(SystemExit, match="default-hosts"):
+        remote.default_url("dev")

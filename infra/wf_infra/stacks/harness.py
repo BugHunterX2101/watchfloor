@@ -103,9 +103,12 @@ class HarnessStack(Stack):
             ),
             additional_behaviors={path: api_behavior for path in API_PATHS},
             default_root_object="index.html",
-            domain_names=[cfg.harness_domain],
-            certificate=certificate(self, cfg),
-            minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+            # Without custom domains it answers on its cloudfront.net host, under CloudFront's certificate.
+            domain_names=[cfg.harness_host] if cfg.custom_domains else None,
+            certificate=certificate(self, cfg) if cfg.custom_domains else None,
+            minimum_protocol_version=(
+                cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021 if cfg.custom_domains else None
+            ),
         )
         if (WEB_DIST / "index.html").is_file():
             s3deploy.BucketDeployment(
@@ -122,8 +125,11 @@ class HarnessStack(Stack):
                 self,
                 "Alias",
                 zone=zone,
-                record_name=cfg.harness_domain,
+                record_name=cfg.harness_host,
                 target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(self.distribution)),
             )
         CfnOutput(self, "Url", value=cfg.harness_url)
         CfnOutput(self, "DnsTarget", value=self.distribution.distribution_domain_name)
+        CfnOutput(
+            self, "DefaultHost", value=self.distribution.distribution_domain_name
+        )  # scripts/default_hosts.py
