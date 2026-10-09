@@ -7,11 +7,13 @@ The issued access tokens are used against the real MCP app, closing the loop.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html
 import re
 import secrets
+import time
 from collections.abc import AsyncIterator
 from itertools import count
 from typing import Any
@@ -311,6 +313,11 @@ async def test_login_needs_csrf_and_is_rate_limited(auth_app: Any) -> None:
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
+    # The limit counts per calendar minute (storage.rate_hit): six attempts that straddle a minute
+    # boundary land in two windows, so start them clear of the boundary.
+    second = time.time() % 60  # Postgres runs on the same clock (a local or CI container)
+    if second >= 55:
+        await asyncio.sleep(61 - second)
     async with _browser(auth_app) as browser:
         page = await browser.get("/authorize", params=params)
         form = {**_hidden(page.text), "email": "nobody@example.com", "password": "nope"}
