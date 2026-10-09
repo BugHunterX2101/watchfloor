@@ -99,7 +99,7 @@ CDK := npx --yes aws-cdk@2
 infra-sync:           ## infra/ is its own uv project (aws-cdk-lib stays out of the dev environment)
 	cd infra && uv sync --frozen
 
-package: ui           ## build the Lambda zip directories in infra/build/ (arm64; package on Linux for deploys)
+package: ui harness-web  ## build the Lambda zip directories in infra/build/ (arm64; package on Linux for deploys)
 	uv run python scripts/package_lambdas.py
 
 synth:                ## synthesize ENV=dev|demo with stub Lambda code (structure check; no build needed)

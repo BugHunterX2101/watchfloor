@@ -3,6 +3,10 @@
 CloudFront serves both from one domain: ``/converse``, ``/api/*``, ``/oauth/*`` and
 ``/healthz`` go to the API, everything else to the bucket. The session cookie
 therefore stays first-party, as it is locally.
+
+With ``cdn: false`` (an account AWS has not verified for CloudFront yet, ADR-015) there is no
+bucket or distribution: the Lambda serves the page it was packaged with, as it does locally, on
+the API's own host.
 """
 
 from __future__ import annotations
@@ -23,11 +27,12 @@ from aws_cdk import aws_s3_deployment as s3deploy
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import PythonLambda, certificate, hosted_zone
+from ..common import PythonLambda, certificate, default_host_output, domain_mapping, hosted_zone
 from ..config import EnvConfig
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "services" / "harness" / "web" / "dist"
 API_PATHS = ("/converse", "/api/*", "/oauth/*", "/healthz")
+PACKAGED_WEB_DIST = "/var/task/harness_web"  # scripts/package_lambdas.py copies the page there
 
 
 class HarnessStack(Stack):
@@ -70,13 +75,25 @@ class HarnessStack(Stack):
                     ],
                 )
             )
-        self.api = apigwv2.HttpApi(self, "Api", api_name=f"{cfg.prefix}-harness")
-        self.api.add_routes(
-            path="/{proxy+}",
-            methods=[apigwv2.HttpMethod.ANY],
-            integration=integrations.HttpLambdaIntegration("Integ", fn),
+        integration = integrations.HttpLambdaIntegration("Integ", fn)
+        self.api = apigwv2.HttpApi(
+            self,
+            "Api",
+            api_name=f"{cfg.prefix}-harness",
+            default_domain_mapping=None if cfg.cdn else domain_mapping(self, cfg, cfg.harness_host),
         )
+        self.api.add_routes(path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=integration)
+        self.distribution: cloudfront.Distribution | None = None
+        if cfg.cdn:
+            self.distribution = self._cdn(cfg)
+        else:
+            fn.add_environment("WF_HARNESS_WEB_DIST", PACKAGED_WEB_DIST)
+            self.api.add_routes(path="/", methods=[apigwv2.HttpMethod.GET], integration=integration)
+            if not cfg.custom_domains:
+                default_host_output(self, cfg, self.api)  # scripts/default_hosts.py
+        CfnOutput(self, "Url", value=cfg.harness_url)
 
+    def _cdn(self, cfg: EnvConfig) -> cloudfront.Distribution:
         bucket = s3.Bucket(
             self,
             "Site",
@@ -94,7 +111,7 @@ class HarnessStack(Stack):
             origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
             viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         )
-        self.distribution = cloudfront.Distribution(
+        distribution = cloudfront.Distribution(
             self,
             "Cdn",
             default_behavior=cloudfront.BehaviorOptions(
@@ -116,7 +133,7 @@ class HarnessStack(Stack):
                 "Deploy",
                 sources=[s3deploy.Source.asset(str(WEB_DIST))],
                 destination_bucket=bucket,
-                distribution=self.distribution,
+                distribution=distribution,
                 distribution_paths=["/index.html"],
             )
         zone = hosted_zone(self, cfg)
@@ -126,10 +143,10 @@ class HarnessStack(Stack):
                 "Alias",
                 zone=zone,
                 record_name=cfg.harness_host,
-                target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(self.distribution)),
+                target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(distribution)),
             )
-        CfnOutput(self, "Url", value=cfg.harness_url)
-        CfnOutput(self, "DnsTarget", value=self.distribution.distribution_domain_name)
+        CfnOutput(self, "DnsTarget", value=distribution.distribution_domain_name)
         CfnOutput(
-            self, "DefaultHost", value=self.distribution.distribution_domain_name
+            self, "DefaultHost", value=distribution.distribution_domain_name
         )  # scripts/default_hosts.py
+        return distribution

@@ -268,3 +268,18 @@ def test_without_custom_domains_the_services_answer_on_the_hosts_aws_assigns() -
     )
     alias = next(iter(free["mcp"].find_resources("AWS::Lambda::Alias").values()))
     assert "ProvisionedConcurrencyConfig" not in alias["Properties"]
+
+
+def test_without_cloudfront_the_harness_lambda_serves_its_page(tmp_path: Path) -> None:
+    """cdn: false (ADR-015): no bucket or distribution; the Lambda serves the packaged page on its API host."""
+    text = (FIXTURES / "free" / "dev.yaml").read_text(encoding="utf-8")
+    (tmp_path / "dev.yaml").write_text(text + "\ncdn: false\n", encoding="utf-8")
+    h = _synth("dev", **{"wf:configDir": str(tmp_path)})["harness"]
+    h.resource_count_is("AWS::CloudFront::Distribution", 0)
+    h.resource_count_is("AWS::S3::Bucket", 0)
+    h.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Environment": {"Variables": Match.object_like({"WF_HARNESS_WEB_DIST": "/var/task/harness_web"})}},
+    )
+    h.has_resource_properties("AWS::ApiGatewayV2::Route", {"RouteKey": "GET /"})
+    assert "DefaultHost" in h.to_json()["Outputs"]

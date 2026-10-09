@@ -59,6 +59,8 @@ BUNDLES = {
             "harness_api",
             [],  # its own uv project (ADR-011), exported from its directory
             run_sh=ROOT / "services/harness/api/run.sh",
+            # the page, served by the Lambda itself when an environment has no CloudFront (ADR-015)
+            extras={"harness_web": ROOT / "services/harness/web/dist"},
             cwd=ROOT / "services/harness/api",
         ),
     )

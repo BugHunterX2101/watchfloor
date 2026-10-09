@@ -52,6 +52,9 @@ class EnvConfig(BaseModel):
     # Marketplace. No Agents stack then; deep triage is refused, drafts use a template, and the
     # harness uses its offline engine. `-c wf:modelsEnabled=true|false` overrides it for one synth.
     models_enabled: bool = True
+    # false while AWS Support has not verified the account for CloudFront (a new account's
+    # distributions are refused until then): the harness Lambda serves its page on its API's host.
+    cdn: bool = True
     alert_email: str
     # Seeded user the canary signs in as, with its own generated password (wf-<env>/canary/login).
     canary_email: str = "daniel@lumenridge.example"
