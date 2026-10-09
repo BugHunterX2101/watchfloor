@@ -61,6 +61,8 @@ class EnvConfig(BaseModel):
     demo_mode: bool = False
     db_instance_class: str = "t4g.micro"
     db_storage_gb: int = 20
+    # Automated backup retention. A Free plan account caps it, so dev.yaml sets 1.
+    db_backup_days: int = Field(default=7, ge=1, le=35)
     provisioned_concurrency: int = 1
     # MCP calls per minute (DD §18.1). Raise them only for a load-test window: the Locust profile's
     # 20 rps is twice the per-workspace default (tests/load/locustfile.py).

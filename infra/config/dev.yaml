@@ -27,5 +27,6 @@ budgets_usd: [15, 25, 35]          # monthly usage before credits, account-wide;
 models_enabled: false              # Free plan account: no AgentCore, no Claude (README, Deploy)
 demo_mode: false
 provisioned_concurrency: 0         # saves ~$9/month of the credits; cold starts instead
+db_backup_days: 1                  # Free plan account: RDS backup retention is capped
 agent_image_tag: dev
 removal_protection: false          # dev can be torn down; demo keeps its database

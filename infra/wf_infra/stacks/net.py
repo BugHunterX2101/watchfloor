@@ -15,7 +15,8 @@ from ..config import EnvConfig
 class NetStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, *, cfg: EnvConfig, **kwargs: Any) -> None:
         super().__init__(scope, construct_id, **kwargs)
-        nat = FckNatInstanceProvider(instance_type=ec2.InstanceType("t4g.nano"))
+        # t4g.micro, not nano: a Free plan account launches only free-tier-eligible types (ADR-014).
+        nat = FckNatInstanceProvider(instance_type=ec2.InstanceType("t4g.micro"))
         self.vpc = ec2.Vpc(
             self,
             "Vpc",

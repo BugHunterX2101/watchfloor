@@ -43,7 +43,7 @@ class DataStack(Stack):
             allocated_storage=cfg.db_storage_gb,
             storage_type=rds.StorageType.GP3,
             storage_encrypted=True,
-            backup_retention=Duration.days(7),
+            backup_retention=Duration.days(cfg.db_backup_days),
             multi_az=False,
             publicly_accessible=False,
             parameter_group=params,
