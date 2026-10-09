@@ -55,6 +55,9 @@ class EnvConfig(BaseModel):
     # false while AWS Support has not verified the account for CloudFront (a new account's
     # distributions are refused until then): the harness Lambda serves its page on its API's host.
     cdn: bool = True
+    # false while the account's Lambda concurrency quota is 10 (a new account's): reserving any would
+    # take the unreserved pool below its minimum of 10, so the functions share the 10 instead (ADR-016).
+    reserve_concurrency: bool = True
     alert_email: str
     # Seeded user the canary signs in as, with its own generated password (wf-<env>/canary/login).
     canary_email: str = "daniel@lumenridge.example"

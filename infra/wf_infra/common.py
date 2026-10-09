@@ -107,7 +107,7 @@ class PythonLambda(Construct):
             security_groups=security_groups,
             layers=layers,
             tracing=lambda_.Tracing.ACTIVE,
-            reserved_concurrent_executions=reserved_concurrency,
+            reserved_concurrent_executions=reserved_concurrency if cfg.reserve_concurrency else None,
             log_group=log_group,
         )
 

@@ -283,3 +283,16 @@ def test_without_cloudfront_the_harness_lambda_serves_its_page(tmp_path: Path) -
     )
     h.has_resource_properties("AWS::ApiGatewayV2::Route", {"RouteKey": "GET /"})
     assert "DefaultHost" in h.to_json()["Outputs"]
+
+
+def test_without_reserved_concurrency_no_function_reserves_any(tmp_path: Path) -> None:
+    """reserve_concurrency: false (ADR-016): a 10-execution account quota leaves nothing to reserve."""
+    text = (FIXTURES / "free" / "dev.yaml").read_text(encoding="utf-8")
+    (tmp_path / "dev.yaml").write_text(text + "\nreserve_concurrency: false\n", encoding="utf-8")
+    stacks = _synth("dev", **{"wf:configDir": str(tmp_path)})
+    assert "ReservedConcurrentExecutions" not in json.dumps([t.to_json() for t in stacks.values()])
+
+
+def test_by_default_the_mcp_server_and_dispatcher_reserve_concurrency(dev: dict[str, Template]) -> None:
+    dev["mcp"].has_resource_properties("AWS::Lambda::Function", {"ReservedConcurrentExecutions": 20})
+    dev["async"].has_resource_properties("AWS::Lambda::Function", {"ReservedConcurrentExecutions": 3})

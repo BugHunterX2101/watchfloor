@@ -26,6 +26,7 @@ alexa_redirect_uris: []           # ⚠ S2: Alexa+ account-linking redirect URIs
 budgets_usd: [15, 25, 35]          # monthly usage before credits, account-wide; demo.yaml leaves this empty
 models_enabled: false              # Free plan account: no AgentCore, no Claude (README, Deploy)
 cdn: false                         # CloudFront refused until AWS Support verifies the account (ADR-015)
+reserve_concurrency: false         # Lambda concurrency quota is 10 on a new account (ADR-016)
 demo_mode: false
 provisioned_concurrency: 0         # saves ~$9/month of the credits; cold starts instead
 db_backup_days: 1                  # Free plan account: RDS backup retention is capped
