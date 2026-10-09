@@ -36,6 +36,7 @@ export function listenOnce(onInterim: (text: string) => void): Promise<string> {
   if (!Ctor) return Promise.reject(new Error("Speech recognition is not available in this browser."));
   return new Promise((resolve, reject) => {
     const rec = new Ctor();
+    active = rec;
     rec.lang = navigator.language || "en-US";
     rec.interimResults = true;
     rec.continuous = false;
@@ -49,18 +50,43 @@ export function listenOnce(onInterim: (text: string) => void): Promise<string> {
       }
       onInterim((final + interim).trim());
     };
-    rec.onerror = (e) => (e.error === "no-speech" ? resolve("") : reject(new Error(e.error)));
-    rec.onend = () => resolve(final.trim());
+    rec.onerror = (e) => (e.error === "no-speech" || e.error === "aborted" ? resolve("") : reject(new Error(e.error)));
+    rec.onend = () => {
+      active = null;
+      resolve(final.trim());
+    };
     rec.start();
   });
 }
 
-export function speak(text: string): void {
-  if (!("speechSynthesis" in window) || !text) return;
+let active: Recognition | null = null;
+
+/** Stop listening early; whatever was already heard is still delivered. */
+export function stopListening(): void {
+  active?.stop();
+}
+
+export interface SpeakEvents {
+  onStart?: () => void;
+  onWord?: () => void; // each word boundary, where the voice reports them
+  onEnd?: () => void; // finished, cancelled or failed
+}
+
+export function speak(text: string, events: SpeakEvents = {}): void {
+  if (!("speechSynthesis" in window) || !text) {
+    events.onEnd?.();
+    return;
+  }
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || "en-US";
   u.rate = 1.05;
+  u.onstart = () => events.onStart?.();
+  u.onboundary = (e) => {
+    if (e.name === "word") events.onWord?.();
+  };
+  u.onend = () => events.onEnd?.();
+  u.onerror = () => events.onEnd?.();
   window.speechSynthesis.speak(u);
 }
 

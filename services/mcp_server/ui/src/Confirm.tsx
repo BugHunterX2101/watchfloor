@@ -55,7 +55,7 @@ export function Confirm(props: { data: Proposal; busy: boolean; approve: () => v
           <button type="button" class="secondary" disabled={busy} onClick={props.dismiss}>
             Not now
           </button>
-          <button type="button" disabled={busy || left.expired} onClick={props.approve}>
+          <button type="button" class="primary" disabled={busy || left.expired} onClick={props.approve}>
             Approve
           </button>
         </div>

@@ -7,14 +7,51 @@
 //
 // The iframe gets sandbox="allow-scripts" only: no same-origin access, no forms, no popups and no
 // top navigation. Its origin is "null", so the transport matches messages by source window.
+//
+// Device preview: "fit" lays the view out at the stage's width. Compact, Standard and Large lay it
+// out at the Echo Show widths of DD §15.1 and scale the frame down to fit, so the view's own
+// width-based type scale shows what that device would render.
 
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { callTool, type Call } from "./api";
 
+export type Device = "fit" | "compact" | "standard" | "large";
+
+const WIDTHS: Record<Exclude<Device, "fit">, number> = { compact: 960, standard: 1280, large: 1920 };
+
 let current: AppBridge | null = null;
+let frame: HTMLIFrameElement | null = null;
+let box: HTMLElement | null = null;
+let device: Device = "fit";
+let contentHeight = 0;
+const observer = new ResizeObserver(() => layout());
 
 function theme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function layout(): void {
+  if (!frame || !box) return;
+  if (device === "fit") {
+    frame.style.width = "100%";
+    frame.style.transform = "";
+    box.style.height = "";
+    if (contentHeight) frame.style.height = `${contentHeight}px`;
+    return;
+  }
+  const width = WIDTHS[device];
+  const scale = Math.min(1, box.clientWidth / width);
+  frame.style.width = `${width}px`;
+  frame.style.transform = `scale(${scale})`;
+  if (contentHeight) {
+    frame.style.height = `${contentHeight}px`;
+    box.style.height = `${Math.ceil(contentHeight * scale)}px`;
+  }
+}
+
+export function setDevice(next: Device): void {
+  device = next;
+  layout();
 }
 
 export async function renderView(
@@ -30,13 +67,19 @@ export async function renderView(
     data = {};
   }
 
-  const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", "allow-scripts");
-  frame.setAttribute("referrerpolicy", "no-referrer");
-  frame.title = view.uri;
-  frame.srcdoc = view.html;
-  container.replaceChildren(frame);
-  const target = frame.contentWindow;
+  const el = document.createElement("iframe");
+  el.setAttribute("sandbox", "allow-scripts");
+  el.setAttribute("referrerpolicy", "no-referrer");
+  el.title = `Watchfloor view: ${view.uri}`;
+  el.srcdoc = view.html;
+  container.replaceChildren(el);
+  frame = el;
+  box = container;
+  contentHeight = 0;
+  observer.disconnect();
+  observer.observe(container);
+  layout();
+  const target = el.contentWindow;
   if (!target) return;
 
   const bridge = new AppBridge(
@@ -58,9 +101,9 @@ export async function renderView(
     };
   };
   bridge.onsizechange = ({ height }) => {
-    // The view reports its content height; the frame's own border sits outside that (border-box).
-    const border = frame.offsetHeight - frame.clientHeight;
-    if (height) frame.style.height = `${Math.min(Math.ceil(height), 1600) + border}px`;
+    if (!height) return;
+    contentHeight = Math.min(Math.ceil(height), 2400);
+    layout();
   };
   await bridge.connect(new PostMessageTransport(target, target));
   current = bridge;
@@ -69,13 +112,13 @@ export async function renderView(
 async function clear(): Promise<void> {
   const old = current;
   current = null;
+  frame = null;
+  observer.disconnect();
   if (old) await old.close().catch(() => undefined);
 }
 
-export async function clearView(container: HTMLElement, note: string): Promise<void> {
+export async function clearView(container: HTMLElement): Promise<void> {
   await clear();
-  const p = document.createElement("p");
-  p.className = "muted";
-  p.textContent = note;
-  container.replaceChildren(p);
+  container.style.height = "";
+  container.replaceChildren();
 }

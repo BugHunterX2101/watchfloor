@@ -1,12 +1,14 @@
 /* Design tokens (DD §15.2). Colors only through these properties. The host's theme arrives as
    data-theme on <html> (ext-apps applyDocumentTheme); without it, prefers-color-scheme decides. */
 :root {
-  --bg: #f5f6f9;
+  --bg: #faf9fb;
   --surface: #ffffff;
   --ink: #131a27;
   --muted: #586377;
   --accent: #2445c7;
   --accent-ink: #ffffff;
+  --btn: #e6ebf5;
+  --btn-ink: #1d3aa8;
   --crit: #ae2216;
   --warn: #965a00;
   --ok: #1d7448;
@@ -20,40 +22,46 @@
   --fs-title: clamp(20px, 2.5vw, 40px);
   --fs-body: clamp(15px, 1.875vw, 30px);
   --fs-meta: clamp(13px, 1.5625vw, 25px);
-  --touch: clamp(44px, 5vw, 80px);
+  /* Alexa+ Visual Foundations: 48 px minimum touch target, 12 px medium radius at the 768 px base
+     canvas (≈20 px on Echo Show 8 once the host scales it). */
+  --touch: clamp(48px, 5vw, 80px);
   --gap: clamp(8px, 1.25vw, 20px);
-  --radius: clamp(8px, 0.9vw, 14px);
+  --radius: clamp(12px, 1.5625vw, 30px);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d111a;
-    --surface: #141a25;
+    --bg: #14181e;
+    --surface: #1b2028;
     --ink: #e5e9f1;
     --muted: #9ba6b9;
     --accent: #93a6ff;
     --accent-ink: #0d111a;
+    --btn: #2d415e;
+    --btn-ink: #e5e9f1;
     --crit: #ff8f84;
     --warn: #f1b25f;
     --ok: #62cf95;
-    --line: #262e3d;
-    --track: #222a38;
+    --line: #2a313c;
+    --track: #262d38;
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #0d111a;
-  --surface: #141a25;
+  --bg: #14181e;
+  --surface: #1b2028;
   --ink: #e5e9f1;
   --muted: #9ba6b9;
   --accent: #93a6ff;
   --accent-ink: #0d111a;
+  --btn: #2d415e;
+  --btn-ink: #e5e9f1;
   --crit: #ff8f84;
   --warn: #f1b25f;
   --ok: #62cf95;
-  --line: #262e3d;
-  --track: #222a38;
+  --line: #2a313c;
+  --track: #262d38;
   color-scheme: dark;
 }
 
@@ -69,20 +77,37 @@ body {
   font: var(--fs-body) / 1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Alexa+ brand rule: bright colour only on the final action (Approve: .primary). Other actions are
+   muted fills; dismissals and Back are outlines. */
 button {
   font: inherit;
   min-height: var(--touch);
   padding: 0 calc(var(--gap) * 1.5);
   border-radius: var(--radius);
-  border: 2px solid var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border: 2px solid var(--btn);
+  background: var(--btn);
+  color: var(--btn-ink);
   cursor: pointer;
 }
 
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 button.secondary {
+  border-color: var(--line);
   background: transparent;
-  color: var(--accent);
+  color: var(--ink);
+}
+
+button:not(.row) {
+  font-weight: 700;
+}
+
+button:active:not(:disabled) {
+  filter: brightness(0.92);
 }
 
 button:disabled {

@@ -3,40 +3,84 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Watchfloor harness</title>
-    <meta name="description" content="Simulated Alexa+ experience for Watchfloor." />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%230b6bcb'/%3E%3C/svg%3E" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Watchfloor · Simulated Alexa+</title>
+    <meta name="description" content="Simulated Alexa+ experience for Watchfloor: ask about pipeline risk by voice or text." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.35' cy='.3'%3E%3Cstop offset='0' stop-color='%23b8fff1'/%3E%3Cstop offset='.55' stop-color='%2333d1bb'/%3E%3Cstop offset='1' stop-color='%23176b8f'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23g)'/%3E%3C/svg%3E" />
   </head>
-  <body>
+  <body data-voice="idle">
+    <a class="skip" href="#message">Skip to the message box</a>
+    <div class="atmosphere" aria-hidden="true"></div>
+
     <header id="banner"></header>
-    <main>
-      <section class="chat" aria-label="Conversation">
-        <div id="signin" class="signin" hidden>
-          <p>Sign in with your Watchfloor account to start. This uses the same account-linking flow as Alexa+.</p>
-          <a class="button" href="/oauth/login">Sign in</a>
+
+    <main class="shell">
+      <section class="stage" aria-labelledby="stage-title">
+        <div class="stage-head">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">Watchfloor</p>
+              <h1 id="stage-title" class="stage-title">Pipeline watch</h1>
+            </div>
+          </div>
+          <div class="device" role="radiogroup" aria-label="Preview the view at an Echo Show size">
+            <button type="button" role="radio" aria-checked="true" data-device="fit">Fit</button>
+            <button type="button" role="radio" aria-checked="false" data-device="compact" title="Echo Show 5 · 960 wide">Compact</button>
+            <button type="button" role="radio" aria-checked="false" data-device="standard" title="Echo Show 8 · 1280 wide">Standard</button>
+            <button type="button" role="radio" aria-checked="false" data-device="large" title="Echo Show 15 · 1920 wide">Large</button>
+          </div>
         </div>
-        <ol id="transcript" class="transcript" aria-live="polite"></ol>
+
+        <div class="screen" aria-label="Watchfloor view">
+          <div id="view" class="frame"></div>
+          <div id="idle" class="idle">
+            <div class="orb orb-hero" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
+            <p class="idle-title">Ask about your pipeline.</p>
+            <p class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="rail" aria-label="Conversation">
+        <div class="presence">
+          <div class="orb orb-small" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
+          <div>
+            <p id="voice-state" class="voice-state" aria-live="polite">Ready</p>
+            <p id="engine" class="engine"></p>
+          </div>
+        </div>
+
+        <div id="signin" class="signin" hidden>
+          <h2 class="signin-title">Link your Watchfloor account</h2>
+          <p>The same account-linking flow Alexa+ uses: OAuth with PKCE, against the real sign-in server.</p>
+          <a class="btn btn-primary" href="/oauth/login">Sign in</a>
+        </div>
+
+        <ol id="transcript" class="transcript" aria-live="polite" aria-relevant="additions"></ol>
+
+        <div id="suggestions" class="suggestions" aria-label="Try asking" hidden></div>
+
         <form id="composer" class="composer" autocomplete="off">
-          <button id="mic" type="button" class="icon" aria-label="Speak" title="Speak">🎙</button>
-          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" aria-label="Message" />
-          <button type="submit" class="button">Send</button>
+          <button id="mic" type="button" class="mic" aria-label="Speak" aria-pressed="false"></button>
+          <label class="sr-only" for="message">Message</label>
+          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" enterkeyhint="send" />
+          <button id="send" type="submit" class="send" aria-label="Send"></button>
         </form>
+
         <div class="controls">
-          <label><input id="voice" type="checkbox" checked /> Read replies aloud</label>
-          <span id="engine" class="engine"></span>
+          <label class="switch"><input id="voice" type="checkbox" checked /><span aria-hidden="true"></span>Read replies aloud</label>
           <button id="logout" type="button" class="link" hidden>Sign out</button>
         </div>
       </section>
-      <aside class="side">
-        <section class="view" aria-label="Watchfloor view">
-          <h2>View</h2>
-          <div id="view" class="frame"><p class="muted">Views from Watchfloor tools appear here.</p></div>
-        </section>
-        <details id="drawer" class="drawer" open>
-          <summary>Tool calls and latency</summary>
-          <ol id="calls" class="calls"></ol>
-        </details>
-      </aside>
+
+      <section class="trace" aria-labelledby="trace-title">
+        <div class="trace-head">
+          <h2 id="trace-title">Trace</h2>
+          <p class="trace-note">Every MCP tool call with its server latency, newest first.</p>
+        </div>
+        <ol id="calls" class="calls"><li class="calls-empty">Tool calls appear here once you ask something.</li></ol>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
