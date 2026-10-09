@@ -50,7 +50,8 @@ jobs:
       # Clients and logins only: a release never resets the demo data. Seed by hand once, after the
       # first deploy (`make seed-remote ENV=demo`), and before recording (`make demo-reset ENV=demo`).
       - name: OAuth clients and logins
-        run: make seed-remote ENV=demo SEED_EVENT='{"seed": false}'
+        run: |  # a block scalar: the JSON's ": " would end a plain one
+          make seed-remote ENV=demo SEED_EVENT='{"seed": false}'
 
       # Release gates (TD §12.3). All three sign in as the canary user (secret wf-demo/canary/login;
       # the deploy role needs secretsmanager:GetSecretValue on it) and read the MCP domain from
