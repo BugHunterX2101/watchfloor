@@ -1,0 +1,101 @@
+# The GitHub Actions deploy role for one environment (README, Deploy). Not a CDK stack: CI needs it
+# before it can deploy anything. Create it once per environment, after `cdk bootstrap`:
+#
+#   aws cloudformation deploy --template-file infra/bootstrap/github-deploy-role.yaml \
+#     --stack-name wf-dev-github-deploy --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides Env=dev CreateOidcProvider=true      # false for the second environment
+#
+# then set the stack's RoleArn output as the repository secret AWS_DEPLOY_ROLE_DEV (or _DEMO).
+#
+# Only jobs that run in the GitHub environment named Env can assume it (both workflows set
+# `environment:`), so a pull request or another branch never gets AWS credentials. CloudFormation
+# changes go through the CDK bootstrap roles; the rest is what the workflows call directly.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Watchfloor GitHub Actions deploy role (OIDC)
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, demo]
+  GitHubRepo:
+    Type: String
+    Default: BugHunterX2101/watchfloor
+    Description: owner/name of the repository whose workflows deploy
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: an account holds one GitHub OIDC provider; "false" when it already exists
+  CdkQualifier:
+    Type: String
+    Default: hnb659fds
+    Description: the qualifier `cdk bootstrap` used (its default unless you changed it)
+
+Conditions:
+  NewProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidc:
+    Type: AWS::IAM::OIDCProvider
+    Condition: NewProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      # IAM trusts GitHub's certificate authority itself; the list only has to be well formed.
+      ThumbprintList: [6938fd4d98bab03faadb97b34396831e3780aea1, 1c58a3a8518e8759bf075b76b750d4f2df264fcd]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub wf-${Env}-github-deploy
+      MaxSessionDuration: 7200 # a first deploy with the image build runs past an hour
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${Env}
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CdkBootstrapRoles # cdk deploy: assets, lookups and CloudFormation changes
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
+              - Sid: EcrLogin # make agents-push
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: AgentsImage
+                Effect: Allow
+                Action:
+                  - ecr:DescribeRepositories
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/wf-${Env}-agents
+              - Sid: MigrateAndSeed # make migrate-remote, make seed-remote
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:wf-${Env}-migrator
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:wf-${Env}-seeder
+              - Sid: CanaryLogin # conformance, evals and the latency probe sign in as the canary
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:wf-${Env}/canary/login-*
+
+Outputs:
+  RoleArn:
+    Description: the repository secret AWS_DEPLOY_ROLE_DEV or AWS_DEPLOY_ROLE_DEMO
+    Value: !GetAtt DeployRole.Arn

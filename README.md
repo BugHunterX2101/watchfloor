@@ -123,8 +123,14 @@ harness, ops. Pushes to `main` deploy `dev`, and `v*.*.*` tags deploy `demo` (`.
 **Before the first deploy**
 1. Fill in `infra/config/<env>.yaml`: account, the three host names, an ACM certificate in
    `us-east-1` that covers them, the alert e-mail, and the Bedrock model ids (⚠ Verify S6).
-2. `npx aws-cdk@2 bootstrap aws://<account>/us-east-1` once per account. Add a GitHub OIDC deploy role
-   as the `AWS_DEPLOY_ROLE_DEV` / `AWS_DEPLOY_ROLE_DEMO` secrets and `AWS_ACCOUNT_ID` as a variable.
+2. `npx aws-cdk@2 bootstrap aws://<account>/us-east-1` once per account.
+3. The GitHub OIDC deploy role, once per environment (`CreateOidcProvider=false` for the second):
+   ```bash
+   aws cloudformation deploy --template-file infra/bootstrap/github-deploy-role.yaml      --stack-name wf-dev-github-deploy --capabilities CAPABILITY_NAMED_IAM      --parameter-overrides Env=dev CreateOidcProvider=true
+   ```
+   Its `RoleArn` output is the repository secret `AWS_DEPLOY_ROLE_DEV` (`_DEMO` for demo); add
+   `AWS_ACCOUNT_ID` as a repository variable, and GitHub environments named `dev` and `demo` (the
+   role trusts only jobs running in them; give `demo` required reviewers).
 
 **First deploy of an environment** (the agent runtime needs its image to exist first)
 ```bash
