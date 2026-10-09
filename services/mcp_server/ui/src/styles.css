@@ -1,0 +1,275 @@
+/* Layout for the three views. Colors come from tokens.css only.
+   No viewport-relative heights: ext-apps autoResize measures the document and the host sizes the
+   frame to match, so a 100vh minimum would feed the frame's own height back into the measurement. */
+
+.eyebrow {
+  margin: 0 0 calc(var(--gap) / 2);
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+p {
+  margin: 0 0 calc(var(--gap) / 2);
+}
+
+.back {
+  margin: var(--gap) var(--gap) 0;
+}
+
+.error {
+  margin: var(--gap) var(--gap) 0;
+  padding: calc(var(--gap) / 2) var(--gap);
+  border-left: 4px solid var(--crit);
+  color: var(--crit);
+}
+
+/* ------------------------------------------------------------ board */
+
+.board-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) / 2);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "score band who amount chips"
+    "score why why why why";
+  align-items: center;
+  gap: 0 var(--gap);
+  width: 100%;
+  min-height: var(--touch);
+  padding: calc(var(--gap) * 0.75) var(--gap);
+  text-align: left;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--ok);
+}
+
+.row.at_risk {
+  border-left-color: var(--crit);
+}
+
+.row.watch {
+  border-left-color: var(--warn);
+}
+
+.row:hover:not(:disabled) {
+  background: var(--track);
+}
+
+.row .score {
+  grid-area: score;
+  font-size: var(--fs-title);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.row .band {
+  grid-area: band;
+}
+
+.row .who {
+  grid-area: who;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row .amount {
+  grid-area: amount;
+  font-weight: 700;
+}
+
+.row .chips {
+  grid-area: chips;
+  display: flex;
+  gap: 4px;
+}
+
+.row .why {
+  grid-area: why;
+}
+
+.hint {
+  margin-top: var(--gap);
+}
+
+/* ------------------------------------------------------------ detail */
+
+.detail {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: calc(var(--gap) * 2);
+}
+
+.big {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap);
+  margin: var(--gap) 0 0;
+}
+
+.big .score {
+  font-size: var(--fs-score);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend {
+  margin: var(--gap) 0;
+  color: var(--accent);
+}
+
+.trend svg {
+  width: min(100%, 280px);
+  height: auto;
+  display: block;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+}
+
+.actions.split {
+  justify-content: space-between;
+  margin: var(--gap) 0;
+}
+
+.status {
+  margin-top: var(--gap);
+  color: var(--ok);
+}
+
+.factors {
+  list-style: none;
+  margin: 0 0 var(--gap);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) * 0.75);
+}
+
+.factor {
+  display: grid;
+  grid-template-columns: 1.5em minmax(0, 1fr) 3em;
+  grid-template-areas:
+    "name bar value"
+    ". why why";
+  align-items: center;
+  gap: 2px var(--gap);
+}
+
+.factor-name {
+  grid-area: name;
+  font-weight: 800;
+}
+
+.bar {
+  grid-area: bar;
+  height: 0.6em;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.value {
+  grid-area: value;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.factor-why {
+  grid-area: why;
+}
+
+.findings {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+/* ------------------------------------------------------------ plan and confirm */
+
+.plan-actions {
+  list-style: none;
+  margin: 0 0 var(--gap);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) / 2);
+}
+
+.plan-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+.plan-title {
+  font-weight: 700;
+}
+
+.sheet {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: calc(var(--gap) * 1.5);
+}
+
+.quote {
+  font-size: var(--fs-title);
+}
+
+.skeleton {
+  height: calc(var(--touch) * 1.4);
+  margin-bottom: calc(var(--gap) / 2);
+  background: var(--track);
+}
+
+/* Narrow hosts (an inline card, a phone, Echo Show 5 in portrait) stack the columns. */
+@media (max-width: 700px) {
+  .detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "score band amount"
+      "score who who"
+      "score why why"
+      "score chips chips";
+  }
+
+  .plan-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

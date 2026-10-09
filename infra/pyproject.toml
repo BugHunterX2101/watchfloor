@@ -1,0 +1,23 @@
+[project]
+name = "watchfloor-infra"
+version = "1.0.0"
+description = "Watchfloor AWS infrastructure (CDK, TD §11): net, data, auth, mcp, async, agents, harness, ops."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "aws-cdk-lib>=2.200",
+  "constructs>=10.4",
+  "cdk-fck-nat>=1.5",
+  "pyyaml>=6.0",
+  "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+# Not a workspace member: aws-cdk-lib is large and only infra work needs it (see docs/implementation-notes.md).
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

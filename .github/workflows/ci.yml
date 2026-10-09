@@ -1,0 +1,72 @@
+# Pull-request gate (TD §12.1). Also called by the deploy workflows, so nothing deploys untested.
+name: ci
+on:
+  pull_request:
+  workflow_call:
+permissions: { contents: read }
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:  # mirrors docker-compose.yml; tests/conftest.py builds a throwaway watchfloor_test on it
+        image: postgres:16
+        env: { POSTGRES_USER: wf_owner, POSTGRES_PASSWORD: devpassword, POSTGRES_DB: watchfloor }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wf_owner -d watchfloor" --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv lock --check
+      - name: Tool schema snapshot unchanged
+        run: |
+          (cd services/mcp_server && uv run python -m mcp_server.tools.snapshot --check) || {
+            echo "::error::Tool schemas changed. Run 'make snapshot' and 'make addon-deploy'."; exit 1; }
+      - run: uv run pytest -q   # unit, conformance, integration, security (Postgres above)
+
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen && uv run --frozen pytest -q
+        working-directory: services/agents
+
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: uv sync --frozen && uv run --frozen pytest -q
+        working-directory: services/harness/api
+      - run: npm ci && npm run build
+        working-directory: services/harness/web
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      # build = typecheck + three single-file views + scripts/check.mjs (≤ 150 KB gzip, no network loaders)
+      - run: npm ci && npm run build
+        working-directory: services/mcp_server/ui
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      # Synthesizes dev and demo with stub Lambda code and asserts the spec'd properties.
+      - run: uv sync --frozen && uv run --frozen pytest -q
+        working-directory: infra

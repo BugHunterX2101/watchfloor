@@ -1,0 +1,18 @@
+# RIGS risk model parameters (DD §7, TD §7.2). Bump model_version on any change;
+# the watcher recomputes every open deal and stamps the new version on each score.
+model_version: rigs-1.1
+weights: { r: 0.30, i: 0.25, g: 0.25, s: 0.20 }
+bands:
+  at_risk: { enter: 65, exit_below: 60 }
+  watch:   { enter: 40, exit_below: 36 }
+engagement_points: { email_inbound: 1.0, meeting: 2.0, call_inbound: 1.5, doc_view: 0.2, doc_view_cap: 10 }
+engagement_window_days: 14
+stages:
+  discovery:   { norm_days: 10, intent_baseline: 3.0 }
+  demo:        { norm_days: 8,  intent_baseline: 3.5 }
+  proposal:    { norm_days: 6,  intent_baseline: 4.0 }
+  negotiation: { norm_days: 4,  intent_baseline: 5.0 }
+  closing:     { norm_days: 3,  intent_baseline: 5.0 }
+slippage: { push: 0.35, stage_regression: 0.40, amount_cut: 0.25, amount_cut_threshold: 0.15,
+            magnitude_kicker: 0.10, magnitude_days: 30, window_days: 90 }
+gaps: { per_gap: 0.25, overdue_grace_days: 2 }

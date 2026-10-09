@@ -1,0 +1,205 @@
+"""Synth both environments with stub assets and check the properties the specs pin down."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import app as infra_app
+import aws_cdk as cdk
+import pytest
+from aws_cdk.assertions import Match, Template
+from wf_infra import common
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _no_packaged_bundles(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Ignore infra/build: a local `make package` would otherwise swap the stubs for ~190 MB of assets."""
+    with pytest.MonkeyPatch.context() as mp:
+        empty = tmp_path_factory.mktemp("build")
+        mp.setattr(common, "BUILD_DIR", empty)
+        yield empty
+
+
+def _synth(env: str, **context: Any) -> dict[str, Template]:
+    application = cdk.App(context={"env": env, "account": "123456789012", "wf:stubAssets": "true", **context})
+    stacks = infra_app.build(application)
+    return {name.split("-", 2)[2]: Template.from_stack(stack) for name, stack in stacks.items()}
+
+
+@pytest.fixture(scope="module")
+def dev() -> dict[str, Template]:
+    return _synth("dev")
+
+
+def test_every_stack_synthesizes_for_both_environments(dev: dict[str, Template]) -> None:
+    assert set(dev) == {"net", "data", "auth", "mcp", "agents", "async", "harness", "ops"}
+    demo = _synth("demo")
+    demo["data"].has_resource_properties("AWS::RDS::DBInstance", {"DeletionProtection": True})
+    dev["data"].has_resource_properties("AWS::RDS::DBInstance", {"DeletionProtection": False})
+
+
+def test_database_is_private_encrypted_and_forces_tls(dev: dict[str, Template]) -> None:
+    data = dev["data"]
+    data.has_resource_properties(
+        "AWS::RDS::DBInstance",
+        {
+            "Engine": "postgres",
+            "StorageEncrypted": True,
+            "PubliclyAccessible": False,
+            "DBInstanceClass": "db.t4g.micro",
+        },
+    )
+    data.has_resource_properties("AWS::RDS::DBParameterGroup", {"Parameters": {"rds.force_ssl": "1"}})
+    data.resource_count_is("AWS::SecretsManager::SecretTargetAttachment", 3)  # owner, app, auth
+
+
+def test_mcp_lambda_alias_and_routes(dev: dict[str, Template]) -> None:
+    mcp = dev["mcp"]
+    mcp.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "wf-dev-mcp-server",
+            "Architectures": ["arm64"],
+            "Handler": "run.sh",
+            "MemorySize": 1024,
+            "Environment": {
+                "Variables": Match.object_like(
+                    {
+                        "WF_RESOURCE_URI": "https://mcp.dev.watchfloor.example/mcp",
+                        "WF_ISSUER": "https://auth.dev.watchfloor.example",
+                        "WF_JOBS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789012/wf-dev-jobs",
+                        "WF_RATE_LIMIT_USER": "60",
+                        "WF_RATE_LIMIT_WS": "600",
+                        "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
+                    }
+                )
+            },
+        },
+    )
+    mcp.has_resource_properties(
+        "AWS::Lambda::Alias",
+        {"Name": "live", "ProvisionedConcurrencyConfig": {"ProvisionedConcurrentExecutions": 1}},
+    )
+    routes = {r["Properties"]["RouteKey"] for r in mcp.find_resources("AWS::ApiGatewayV2::Route").values()}
+    assert {"POST /mcp", "GET /mcp", "DELETE /mcp", "GET /.well-known/{proxy+}", "GET /healthz"} <= routes
+    mcp.has_resource_properties(
+        "AWS::ApiGatewayV2::Stage",
+        {"DefaultRouteSettings": {"ThrottlingBurstLimit": 50, "ThrottlingRateLimit": 25}},
+    )
+
+
+def test_signing_key_is_es256_in_kms(dev: dict[str, Template]) -> None:
+    dev["auth"].has_resource_properties(
+        "AWS::KMS::Key", {"KeySpec": "ECC_NIST_P256", "KeyUsage": "SIGN_VERIFY"}
+    )
+
+
+def test_seeder_reads_generated_secrets_only(dev: dict[str, Template]) -> None:
+    auth = dev["auth"]
+    auth.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "wf-dev-seeder",
+            "Handler": "auth_server.seeder.handler",
+            "VpcConfig": Match.any_value(),
+            "Environment": {
+                "Variables": Match.object_like(
+                    {"WF_HARNESS_REDIRECT_URI": "https://harness.dev.watchfloor.example/oauth/callback"}
+                )
+            },
+        },
+    )
+    generated = {
+        r["Properties"]["Name"]: r["Properties"]["GenerateSecretString"]
+        for r in auth.find_resources("AWS::SecretsManager::Secret").values()
+        if "GenerateSecretString" in r["Properties"]
+    }
+    assert generated["wf-dev/auth/alexa-client"]["GenerateStringKey"] == "client_secret"
+    assert generated["wf-dev/auth/dispatcher-client"]["GenerateStringKey"] == "client_secret"
+    assert generated["wf-dev/auth/demo-login"]["GenerateStringKey"] == "password"
+    assert (
+        generated["wf-dev/canary/login"]["SecretStringTemplate"] == '{"email": "daniel@lumenridge.example"}'
+    )
+    # Async and Ops reuse Auth's secrets instead of creating empty ones.
+    for stack in ("async", "ops"):
+        names = {
+            r["Properties"].get("Name")
+            for r in dev[stack].find_resources("AWS::SecretsManager::Secret").values()
+        }
+        assert not names & {"wf-dev/auth/dispatcher-client", "wf-dev/canary/login"}
+
+
+def test_queue_timeouts_exceed_the_dispatcher(dev: dict[str, Template]) -> None:
+    a = dev["async"]
+    a.has_resource_properties("AWS::SQS::Queue", {"QueueName": "wf-dev-jobs", "VisibilityTimeout": 180})
+    a.has_resource_properties("AWS::SQS::Queue", {"QueueName": "wf-dev-outbox", "VisibilityTimeout": 130})
+    a.has_resource_properties("AWS::Lambda::Function", {"FunctionName": "wf-dev-dispatcher", "Timeout": 120})
+    a.has_resource_properties(
+        "AWS::Lambda::EventSourceMapping",
+        {"BatchSize": 1, "FunctionResponseTypes": ["ReportBatchItemFailures"]},
+    )
+
+
+def test_agent_runtime_role_has_no_database_or_vpc(dev: dict[str, Template]) -> None:
+    agents = dev["agents"]
+    agents.has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {"AgentRuntimeName": "wf_dev_triage", "NetworkConfiguration": {"NetworkMode": "PUBLIC"}},
+    )
+    agents.has_resource_properties(
+        "AWS::BedrockAgentCore::Memory",
+        {
+            "MemoryStrategies": Match.array_with(
+                [
+                    Match.object_like(
+                        {
+                            "SemanticMemoryStrategy": Match.object_like(
+                                {"Namespaces": ["/actors/{actorId}/facts"]}
+                            )
+                        }
+                    )
+                ]
+            )
+        },
+    )
+    policies = str(agents.find_resources("AWS::IAM::Policy"))
+    assert "secretsmanager" not in policies and "ec2:" not in policies
+
+
+def test_first_deploy_can_skip_the_runtime() -> None:
+    bare = _synth("dev", **{"wf:agentRuntime": "false"})
+    bare["agents"].resource_count_is("AWS::BedrockAgentCore::Runtime", 0)
+    assert "WF_AGENT_RUNTIME_ARN" not in str(bare["async"].find_resources("AWS::Lambda::Function"))
+
+
+def test_harness_serves_api_paths_through_cloudfront(dev: dict[str, Template]) -> None:
+    h = dev["harness"]
+    dist = next(iter(h.find_resources("AWS::CloudFront::Distribution").values()))["Properties"][
+        "DistributionConfig"
+    ]
+    assert {b["PathPattern"] for b in dist["CacheBehaviors"]} == {
+        "/converse",
+        "/api/*",
+        "/oauth/*",
+        "/healthz",
+    }
+    assert dist["Aliases"] == ["harness.dev.watchfloor.example"]
+
+
+def test_alarms_cover_the_td_list(dev: dict[str, Template]) -> None:
+    names = {
+        r["Properties"]["AlarmName"] for r in dev["ops"].find_resources("AWS::CloudWatch::Alarm").values()
+    }
+    expected = {"5xx", "spillover", "canary", "jobs-dlq", "outbox-dlq", "outbox-dead", "triage-fail"}
+    assert {f"wf-dev-{n}" for n in expected} <= names
+    assert any(n.startswith("wf-dev-hot-p95") for n in names)
+    dev["ops"].resource_count_is("AWS::Budgets::Budget", 1)
+    assert "AWS::Budgets::Budget" not in str(_synth("demo")["ops"].to_json())
+
+
+def test_missing_assets_fail_loudly() -> None:
+    application = cdk.App(context={"env": "dev", "account": "123456789012"})
+    with pytest.raises(RuntimeError, match="make package"):
+        infra_app.build(application)

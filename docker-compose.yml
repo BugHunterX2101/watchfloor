@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wf_owner
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: watchfloor
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    # Host port 55432 avoids clashing with a locally installed Postgres on 5432.
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wf_owner -d watchfloor"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata: {}

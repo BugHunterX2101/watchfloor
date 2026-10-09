@@ -1,0 +1,69 @@
+# Watchfloor playbook (DD §10.8). Plays are guidance for the Playbook Strategist;
+# every recommended action still goes through propose_action and a human "yes".
+version: playbook-1.0
+plays:
+  - id: P01
+    name: Multi-thread to the economic buyer
+    triggers: [NO_ECONOMIC_BUYER]
+    guidance: At Proposal or later with no economic buyer, ask the owner to identify and meet the budget holder.
+    guardrail: Suggest a role (for example "the CFO"), never a fabricated name.
+    action_types: [create_task]
+  - id: P02
+    name: Mutual action plan
+    triggers: [NO_DECISION_PROCESS, CLOSE_DATE_PUSHED]
+    guidance: Agree a dated plan with the buyer covering every step to signature.
+    action_types: [create_task, draft_followup]
+  - id: P03
+    name: Executive sponsor outreach
+    triggers: [AT_RISK_HIGH_VALUE]
+    guidance: For At Risk deals of $50K or more, have a senior leader reach out to their peer.
+    guardrail: Only the owner, a manager or the founder may be the sender.
+    action_types: [create_task, notify_channel]
+  - id: P04
+    name: Re-engage with a value recap
+    triggers: [SILENT_DAYS, VIEWS_WITHOUT_REPLY]
+    guidance: The buyer is reading but not replying; send a short recap of agreed value with one clear question.
+    guardrail: Draft only. Nothing is sent to the buyer automatically.
+    action_types: [draft_followup, create_task]
+  - id: P05
+    name: Re-qualify
+    triggers: [STAGE_REGRESSED, AMOUNT_CUT]
+    guidance: Confirm need, budget, timing and authority again before investing more time.
+    action_types: [create_task]
+  - id: P06
+    name: Owner swap or pairing
+    triggers: [OWNER_OVERLOADED]
+    guidance: When the owner carries more than 25 open deals, pair them with a teammate or reassign.
+    guardrail: Needs confirmation; never reassign without the user's yes.
+    action_types: [reassign_owner, create_task]
+  - id: P07
+    name: Security review prep
+    triggers: [SECURITY_REVIEW]
+    guidance: Send the security pack early and book the review with the buyer's security team.
+    action_types: [create_task, draft_followup]
+  - id: P08
+    name: Champion check
+    triggers: [LOW_ENGAGEMENT, SILENT_DAYS]
+    guidance: Confirm the champion is still engaged and able to sell internally.
+    action_types: [create_task]
+  - id: P09
+    name: Pricing clarity
+    triggers: [VIEWS_WITHOUT_REPLY, AMOUNT_CUT]
+    guidance: Clarify pricing and packaging questions the buyer may be stuck on.
+    guardrail: No discounts or pricing commitments.
+    action_types: [draft_followup, create_task]
+  - id: P10
+    name: Procurement map
+    triggers: [NO_DECISION_PROCESS]
+    guidance: Map legal, security and procurement steps with owners and dates.
+    action_types: [create_task]
+  - id: P11
+    name: Timeline reset
+    triggers: [CLOSE_DATE_PUSHED, NEXT_STEP_DATE_MISSING_OR_OVERDUE]
+    guidance: Reset the close date honestly with the buyer and agree the next dated step.
+    action_types: [create_task, draft_followup]
+  - id: P12
+    name: Close-plan review
+    triggers: [NO_NEXT_STEP, NEXT_STEP_DATE_MISSING_OR_OVERDUE]
+    guidance: Review the close plan with the owner and set a concrete next step with a date.
+    action_types: [create_task, notify_channel]

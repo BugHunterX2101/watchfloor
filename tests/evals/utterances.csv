@@ -1,0 +1,31 @@
+id,utterance,context,expected_first_tool,expected_args_json,observed_tool,observed_args_json,pass,notes
+1,What's at risk in my pipeline?,,get_risk_briefing,,,,,
+2,Give me my morning briefing.,,get_risk_briefing,,,,,
+3,Anything new since yesterday?,,get_risk_briefing,,,,,answer draws on new_since_last_briefing
+4,Just the enterprise deals.,after 1,get_risk_briefing,"{""segment"": ""enterprise""}",,,,
+5,Why is Kestrel at risk?,,lookup_deal,"{""name_query"": ""Kestrel""}",,,,then explain_deal_risk
+6,How's the Harbor and Pine deal doing?,,lookup_deal,"{""name_query"": ""Harbor and Pine""}",,,,then explain_deal_risk
+7,Dig into Kestrel.,after 5,start_deep_triage,"{""deal_id"": ""<Kestrel>""}",,,,"deal_id from context; ETA spoken, points to Slack"
+8,What did the review find?,after 7,get_triage_result,"{""deal_id"": ""<Kestrel>""}",,,,deal_id from context
+9,Have Maya book a call with their CFO by Thursday.,after 5,propose_action,"{""deal_id"": ""<Kestrel>"", ""action_type"": ""create_task"", ""assignee_name"": ""Maya"", ""due_date"": ""<Thursday>""}",,,,"preview read aloud, ends in a question"
+10,"Yes, go ahead.",after 9,confirm_action,"{""confirmation_token"": ""<from 9>""}",,,,
+11,"No, make it Friday.",after 9,propose_action,"{""deal_id"": ""<Kestrel>"", ""action_type"": ""create_task"", ""assignee_name"": ""Maya"", ""due_date"": ""<Friday>""}",,,,new proposal; the old one is superseded
+12,Give Orbital Dental to Maya.,,lookup_deal,"{""name_query"": ""Orbital Dental""}",,,,then propose_action reassign_owner new_owner_name=Maya
+13,Tell the team Kestrel needs exec help.,after 5,propose_action,"{""deal_id"": ""<Kestrel>"", ""action_type"": ""notify_channel""}",,,,
+14,Draft a follow-up to Kestrel about the security questions.,after 5,propose_action,"{""deal_id"": ""<Kestrel>"", ""action_type"": ""draft_followup""}",,,,intent mentions the security questions
+15,"From now on, flag any deal over 50K that goes five days without a reply.",,set_standing_order,"{""min_amount_usd"": 50000, ""quiet_days"": 5}",,,,
+16,What am I watching for?,,list_standing_orders,,,,,
+17,Stop the 50K rule.,after 15,list_standing_orders,,,,,then remove_standing_order rule_id
+18,Log for Harbor and Pine: they want a security review.,,lookup_deal,"{""name_query"": ""Harbor and Pine""}",,,,then log_deal_update with note and next_step
+19,Their decision moved to November 15.,after 18,log_deal_update,"{""deal_id"": ""<Harbor & Pine>"", ""close_date"": ""2026-11-15""}",,,,close_date change returns a pending proposal; confirm_action only after a yes
+20,Only give me two deals from now on.,,update_briefing_preferences,"{""briefing_limit"": 2}",,,,
+21,Don't read out amounts.,,update_briefing_preferences,"{""include_amounts"": false}",,,,
+22,Send alerts to #exec-pipeline.,,update_briefing_preferences,"{""alert_channel"": ""#exec-pipeline""}",,,,
+23,Why Kestral?,,lookup_deal,"{""name_query"": ""Kestral""}",,,,fuzzy match; suggestions offered
+24,Cancel that.,after 9,none,,,,,no tool; the token expires
+25,Which of Daniel's deals is Redwater?,,lookup_deal,"{""name_query"": ""Redwater"", ""owner_name"": ""Daniel""}",,,,
+26,Give me the top five risks.,,get_risk_briefing,"{""limit"": 5}",,,,5 is the maximum
+27,Warn me when a deal in negotiation scores over 70.,,set_standing_order,"{""stages"": [""negotiation""], ""min_score"": 70}",,,,
+28,Kestrel is now ninety thousand.,after 5,log_deal_update,"{""deal_id"": ""<Kestrel>"", ""amount_usd"": 90000}",,,,amount change returns a pending proposal
+29,Focus my briefings on mid-market.,,update_briefing_preferences,"{""focus_segment"": ""mid""}",,,,
+30,Mark Kestrel as closed won.,after 5,none,,,,,no tool changes stage; must say so and make no write call

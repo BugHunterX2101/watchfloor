@@ -1,0 +1,27 @@
+# Watchfloor dev environment (TD §11). Placeholders marked ⚠ must be replaced before `make deploy ENV=dev`.
+env: dev
+account: "000000000000"            # ⚠ your AWS account id (or pass -c account=…; CI sets it from the OIDC role)
+region: us-east-1
+
+mcp_domain: mcp.dev.watchfloor.example        # ⚠ your domains
+auth_domain: auth.dev.watchfloor.example
+harness_domain: harness.dev.watchfloor.example
+certificate_arn: arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000  # ⚠
+hosted_zone_id: null               # set with hosted_zone_name to have CDK create the DNS records
+hosted_zone_name: null
+
+# ⚠ Verify the current arm64 Lambda Web Adapter layer version (TD §10.2).
+lwa_layer_arn: arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25
+
+models:                            # ⚠ Verify (S6): inference profile ids available to the account
+  sonnet: us.anthropic.claude-sonnet-5-5-v1:0
+  haiku: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+alert_email: alerts@watchfloor.example        # ⚠ SNS alarm and budget notifications
+canary_email: daniel@lumenridge.example     # seeded user the canary signs in as (own generated password)
+alexa_redirect_uris: []           # ⚠ S2: Alexa+ account-linking redirect URIs, once the skill exists
+budgets_usd: [25, 60, 90]          # account-wide (covers demo too); demo.yaml leaves this empty
+demo_mode: false
+provisioned_concurrency: 1
+agent_image_tag: dev
+removal_protection: false          # dev can be torn down; demo keeps its database

@@ -1,0 +1,62 @@
+# main → dev (TD §12.2). Needs the repository secret AWS_DEPLOY_ROLE_DEV (GitHub OIDC role) and the
+# variable AWS_ACCOUNT_ID. First deploy of a new account: see README, Deploy (bootstrap, agent image).
+name: deploy-dev
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+permissions: { contents: read, id-token: write }
+concurrency: deploy-dev
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: dev
+    env: { ENV: dev, CDK_DEFAULT_ACCOUNT: "${{ vars.AWS_ACCOUNT_ID }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: "${{ secrets.AWS_DEPLOY_ROLE_DEV }}", aws-region: us-east-1 }
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: Tools for arm64 packaging (strip) and image builds (QEMU)
+        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the views, the harness page and the Lambda zips
+        run: |
+          uv sync --frozen
+          (cd services/mcp_server/ui && npm ci)
+          (cd services/harness/web && npm ci && npm run build)
+          (cd services/harness/api && uv sync --frozen)
+          make package
+
+      - name: Push the agents image (when the repository exists)
+        run: |
+          REPO=$(aws ecr describe-repositories --repository-names wf-dev-agents \
+                   --query 'repositories[0].repositoryUri' --output text 2>/dev/null || true)
+          if [ -n "$REPO" ] && [ "$REPO" != "None" ]; then
+            make agents-image ENV=dev && make agents-push ENV=dev REPO="$REPO"
+          else
+            echo "::warning::wf-dev-agents does not exist yet: deploy once with -c wf:agentRuntime=false (README)"
+          fi
+
+      - name: cdk deploy
+        working-directory: infra
+        run: uv sync --frozen && npx --yes aws-cdk@2 deploy --all -c env=dev --require-approval never
+
+      - name: Migrate (migrations + role logins)
+        run: make migrate-remote ENV=dev
+
+      - name: Seed (demo workspace reset, OAuth clients, logins)
+        run: make seed-remote ENV=dev
+
+      # Signs in as the canary user (secret wf-dev/canary/login; the deploy role needs
+      # secretsmanager:GetSecretValue on it). The MCP domain comes from infra/config/dev.yaml.
+      - name: Remote conformance (CF-01..15 except CF-04)
+        run: make conformance-remote ENV=dev

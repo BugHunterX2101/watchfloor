@@ -1,0 +1,73 @@
+[project]
+name = "watchfloor"
+version = "1.0.0"
+description = "Ambient pipeline-risk triage add-on for Alexa+ (MCP 2025-11-25)."
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "packages/core",
+  "services/mcp_server",
+  "services/auth_server",
+  "services/workers",
+]
+# services/agents and services/harness/api are their own uv projects: strands-agents pins mcp<2.2,
+# the MCP server needs mcp>=2.3 (ADR-011).
+exclude = ["services/agents", "services/harness/api"]
+
+[tool.uv.sources]
+watchfloor-core = { workspace = true }
+watchfloor-mcp-server = { workspace = true }
+watchfloor-auth-server = { workspace = true }
+watchfloor-workers = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "watchfloor-core",
+  "watchfloor-mcp-server",
+  "watchfloor-auth-server",
+  "watchfloor-workers",
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "hypothesis>=6.100",
+  "httpx>=0.27",
+  "ruff>=0.6",
+  "honcho>=2.0",
+  "locust>=2.32",
+  "boto3>=1.34",  # scripts reach dev/demo: the canary secret (remote_mcp.py), demo.py's Lambdas
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+# docs: verbatim specs, whose code blocks are illustrations. The rest are generated (vendored Lambda
+# dependencies, CDK output, builds); listed explicitly because .gitignore only applies inside a git checkout.
+extend-exclude = ["docs", "infra/build", "infra/cdk.out", "**/node_modules", "**/dist", "**/ui_dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "S", "TID"]
+# TID252: packages use relative imports internally; TID's job here is the banned-api list below.
+ignore = ["S101", "TID252"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S311"]
+"db/seed/**" = ["S311"]
+"packages/core/watchfloor_core/errors.py" = ["S105"]  # TOKEN_* are error codes, not secrets
+
+[tool.ruff.lint.pycodestyle]
+# The formatter wraps code at 110; lint tolerates unbreakable SQL and spoken text up to 120.
+max-line-length = 120
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "Use watchfloor_core.clock.Clock"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["."]

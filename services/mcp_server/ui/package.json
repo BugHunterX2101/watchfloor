@@ -1,0 +1,24 @@
+{
+  "name": "watchfloor-mcp-ui",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Watchfloor MCP Apps views (DD §15): triage board, deal detail, confirm sheet. Single-file HTML each.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build --mode board && vite build --mode detail && vite build --mode confirm && node scripts/check.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/core": "^2.3.1",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "preact": "^11.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

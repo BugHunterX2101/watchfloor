@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watchfloor harness</title>
+    <meta name="description" content="Simulated Alexa+ experience for Watchfloor." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%230b6bcb'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <header id="banner"></header>
+    <main>
+      <section class="chat" aria-label="Conversation">
+        <div id="signin" class="signin" hidden>
+          <p>Sign in with your Watchfloor account to start. This uses the same account-linking flow as Alexa+.</p>
+          <a class="button" href="/oauth/login">Sign in</a>
+        </div>
+        <ol id="transcript" class="transcript" aria-live="polite"></ol>
+        <form id="composer" class="composer" autocomplete="off">
+          <button id="mic" type="button" class="icon" aria-label="Speak" title="Speak">🎙</button>
+          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" aria-label="Message" />
+          <button type="submit" class="button">Send</button>
+        </form>
+        <div class="controls">
+          <label><input id="voice" type="checkbox" checked /> Read replies aloud</label>
+          <span id="engine" class="engine"></span>
+          <button id="logout" type="button" class="link" hidden>Sign out</button>
+        </div>
+      </section>
+      <aside class="side">
+        <section class="view" aria-label="Watchfloor view">
+          <h2>View</h2>
+          <div id="view" class="frame"><p class="muted">Views from Watchfloor tools appear here.</p></div>
+        </section>
+        <details id="drawer" class="drawer" open>
+          <summary>Tool calls and latency</summary>
+          <ol id="calls" class="calls"></ol>
+        </details>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+[project]
+name = "watchfloor-mcp-server"
+version = "1.0.0"
+description = "Watchfloor MCP server (Streamable HTTP, stateless, MCP 2025-11-25)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "watchfloor-core",
+  "mcp>=2.3,<3",
+  "starlette>=0.40",
+  "uvicorn>=0.30",
+  "pyjwt[crypto]>=2.8",
+  "httpx>=0.27",
+  "orjson>=3.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_server"]

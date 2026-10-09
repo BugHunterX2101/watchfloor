@@ -1,0 +1,82 @@
+# Tag v*.*.* → demo (TD §12.3). The `demo` GitHub environment carries the protection rules: required
+# reviewers, and no deploys during the Oct 22 – Nov 20 freeze except approved ops/* hotfixes (TD §17.5).
+name: release-demo
+on:
+  push: { tags: ["v*.*.*"] }
+permissions: { contents: read, id-token: write }
+concurrency: release-demo
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: demo
+    env: { ENV: demo, CDK_DEFAULT_ACCOUNT: "${{ vars.AWS_ACCOUNT_ID }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: "${{ secrets.AWS_DEPLOY_ROLE_DEMO }}", aws-region: us-east-1 }
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the views, the harness page and the Lambda zips
+        run: |
+          uv sync --frozen
+          (cd services/mcp_server/ui && npm ci)
+          (cd services/harness/web && npm ci && npm run build)
+          (cd services/harness/api && uv sync --frozen)
+          make package
+
+      - name: Push the agents image
+        run: |
+          REPO=$(aws ecr describe-repositories --repository-names wf-demo-agents \
+                   --query 'repositories[0].repositoryUri' --output text)
+          make agents-image ENV=demo && make agents-push ENV=demo REPO="$REPO"
+
+      - name: cdk deploy
+        working-directory: infra
+        run: uv sync --frozen && npx --yes aws-cdk@2 deploy --all -c env=demo --require-approval never
+
+      - name: Migrate (migrations + role logins)
+        run: make migrate-remote ENV=demo
+
+      # Clients and logins only: a release never resets the demo data. Seed by hand once, after the
+      # first deploy (`make seed-remote ENV=demo`), and before recording (`make demo-reset ENV=demo`).
+      - name: OAuth clients and logins
+        run: make seed-remote ENV=demo SEED_EVENT='{"seed": false}'
+
+      # Release gates (TD §12.3). All three sign in as the canary user (secret wf-demo/canary/login;
+      # the deploy role needs secretsmanager:GetSecretValue on it) and read the MCP domain from
+      # infra/config/demo.yaml. The evals post each review's plan to the demo Slack channel.
+      - name: Remote conformance
+        run: make conformance-remote ENV=demo
+
+      - name: Deep-triage evals (DD §22.5 thresholds)
+        run: make evals ENV=demo OUT=tests/evals/results/${GITHUB_REF_NAME}.json
+
+      - name: Latency probe (p95 ≤ 150 ms, p99 ≤ 300 ms)
+        run: make latency ENV=demo N=200
+
+      - name: Keep the eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: "evals-${{ github.ref_name }}", path: tests/evals/results/, if-no-files-found: ignore }
+
+      # ⚠ The Local Inspector's command name is unverified (TD §12.3): set the repository variable
+      # ALEXA_INSPECTOR_CMD to it, writing its report to inspector-report/. `alexa-ai deploy` stays a
+      # manual step behind the demo environment's required reviewers.
+      - name: Alexa+ Local Inspector
+        if: vars.ALEXA_INSPECTOR_CMD != ''
+        run: mkdir -p inspector-report && ${{ vars.ALEXA_INSPECTOR_CMD }}
+
+      - name: Keep the Inspector report
+        if: always() && vars.ALEXA_INSPECTOR_CMD != ''
+        uses: actions/upload-artifact@v4
+        with: { name: "inspector-${{ github.ref_name }}", path: inspector-report/ }

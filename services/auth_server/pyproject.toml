@@ -1,0 +1,21 @@
+[project]
+name = "watchfloor-auth-server"
+version = "1.0.0"
+description = "Watchfloor OAuth 2.1 authorization server (PKCE S256, RFC 8414, RFC 8707)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "watchfloor-core",
+  "starlette>=0.40",
+  "uvicorn>=0.30",
+  "pyjwt[crypto]>=2.8",
+  "argon2-cffi>=23.1",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["auth_server"]

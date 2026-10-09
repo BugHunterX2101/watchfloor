@@ -1,0 +1,33 @@
+[project]
+name = "watchfloor-agents"
+version = "1.0.0"
+description = "Watchfloor deep-triage agents: a Strands Triage Lead and four specialists on AgentCore Runtime."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "watchfloor-core",
+  "strands-agents>=1.0",
+  "bedrock-agentcore>=1.0",
+  "mcp>=1.23",  # whatever strands-agents supports; the MCP server itself is on 2.3+
+  "httpx>=0.27",
+  "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agents"]
+
+# Not a workspace member (see the root pyproject): this project has its own uv.lock.
+[tool.uv.sources]
+watchfloor-core = { path = "../../packages/core", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]

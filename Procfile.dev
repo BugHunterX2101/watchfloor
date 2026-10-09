@@ -1,0 +1,5 @@
+auth: uv run uvicorn auth_server.app:app --host 127.0.0.1 --port 8081 --reload
+mcp:  uv run uvicorn mcp_server.app:app --host 127.0.0.1 --port 8080 --reload
+workers: uv run python -m workers
+agents: uv run --project services/agents --frozen python -m agents.main
+harness: uv run --project services/harness/api --frozen uvicorn harness_api.app:app --host 127.0.0.1 --port 8082 --reload

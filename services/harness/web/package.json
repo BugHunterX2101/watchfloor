@@ -1,0 +1,22 @@
+{
+  "name": "watchfloor-harness-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Simulated Alexa+ experience: the browser side of the Watchfloor harness (DD §17).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/core": "^2.3.1",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "zod": "^4.6.5"
+  }
+}
