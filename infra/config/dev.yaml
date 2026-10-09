@@ -6,9 +6,9 @@ region: us-east-1
 # No custom domains: a domain costs money the account's credits can't pay. certificate_arn stays
 # null and the services answer on the hosts AWS assigns; `make cdk-deploy` writes them in below on
 # the first deploy (scripts/default_hosts.py; README, Deploy). Commit them once they are there.
-mcp_domain: null
-auth_domain: null
-harness_domain: null
+mcp_domain: k04yht6ng0.execute-api.us-east-1.amazonaws.com
+auth_domain: b4sp3enfx6.execute-api.us-east-1.amazonaws.com
+harness_domain: rgroug1dvd.execute-api.us-east-1.amazonaws.com
 certificate_arn: null
 hosted_zone_id: null
 hosted_zone_name: null

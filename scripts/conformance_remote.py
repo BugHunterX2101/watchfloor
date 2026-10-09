@@ -158,9 +158,15 @@ async def cf14(m: Remote) -> None:
 async def cf15(m: Remote) -> str:
     tools = {t["name"]: t for t in await m.tools()}
 
-    async def run(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def run(name: str, args: dict[str, Any], *, may_fail_with: str = "") -> dict[str, Any] | None:
         result = await m.call(name, args)
         structured = result["structuredContent"]
+        if (
+            may_fail_with
+            and result.get("isError")
+            and structured.get("error", {}).get("code") == may_fail_with
+        ):
+            return None  # a documented tool error, not a schema result
         _check(not result.get("isError"), f"{name}: {structured}")
         errors = list(Draft202012Validator(tools[name]["outputSchema"]).iter_errors(structured))
         _check(not errors, f"{name}: {[e.message for e in errors[:3]]}")
@@ -171,12 +177,15 @@ async def cf15(m: Remote) -> str:
 
     await run("get_risk_briefing", {})
     found = await run("lookup_deal", {"name_query": "kestrel"})
+    assert found is not None
     _check(bool(found["candidates"]), "lookup_deal found no Kestrel deal: is the workspace seeded?")
     deal_id = found["candidates"][0]["deal_id"]
     await run("explain_deal_risk", {"deal_id": deal_id})
-    await run("get_triage_result", {"deal_id": deal_id})
+    # A freshly seeded workspace has no deep review yet (the seed creates no triage jobs, and a
+    # read-only check cannot start one), so the documented JOB_NOT_FOUND answer is a pass too.
+    triage = await run("get_triage_result", {"deal_id": deal_id}, may_fail_with="JOB_NOT_FOUND")
     await run("list_standing_orders", {})
-    return "5 read tools"
+    return "5 read tools" if triage is not None else "4 read tools; get_triage_result: no review yet"
 
 
 CASES: list[tuple[str, str, Case]] = [
