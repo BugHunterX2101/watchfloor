@@ -21,6 +21,14 @@ Parameters:
     Type: String
     Default: BugHunterX2101/watchfloor
     Description: owner/name of the repository whose workflows deploy
+  GitHubOwnerId:
+    Type: String
+    Default: "188735107"
+    Description: the owner's numeric id (GET /users/<owner> → id)
+  GitHubRepoId:
+    Type: String
+    Default: "1411744130"
+    Description: the repository's numeric id (GET /repos/<owner>/<name> → id)
   CreateOidcProvider:
     Type: String
     AllowedValues: ["true", "false"]
@@ -59,7 +67,14 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${Env}
+                # Newer repositories get a subject with immutable ids (owner@id/name@id); accept either
+                # form, both pinned to this repository.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubRepo}:environment:${Env}
+                  - !Sub
+                    - repo:${Owner}@${GitHubOwnerId}/${Name}@${GitHubRepoId}:environment:${Env}
+                    - Owner: !Select [0, !Split ["/", !Ref GitHubRepo]]
+                      Name: !Select [1, !Split ["/", !Ref GitHubRepo]]
       Policies:
         - PolicyName: deploy
           PolicyDocument:
