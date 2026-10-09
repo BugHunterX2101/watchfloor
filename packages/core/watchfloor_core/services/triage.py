@@ -12,6 +12,7 @@ from ..errors import ErrorCode, WatchfloorError
 from ..models import tools as m
 from ..models.triage import TriageOutput
 from ..repos import deals, jobs, misc, outbox, prefs, scores
+from ..settings import get_settings
 from . import slack_blocks
 from .context import ServiceContext
 from .read import open_card
@@ -24,6 +25,12 @@ HARD_TIMEOUT = timedelta(seconds=90)
 
 async def start(ctx: ServiceContext, args: m.StartTriageIn) -> m.StartTriageOut:
     card = await open_card(ctx, args.deal_id)
+    if not get_settings().models_enabled:  # no agents here: say so now, not as a failed job later
+        raise WatchfloorError(
+            ErrorCode.TEMPORARILY_UNAVAILABLE,
+            f"Deep reviews aren't available in this environment, so I can't review {card['account']} in depth.",
+            recovery="Ask me why the deal is at risk for its scored reasons instead.",
+        )
     await deals.lock(ctx.conn, args.deal_id)  # serialises concurrent starts for one deal
     existing = await jobs.find_reusable(ctx.conn, args.deal_id, ctx.now, DEDUPE_WINDOW)
     if existing is not None:

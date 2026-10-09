@@ -34,7 +34,19 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
+      # models_enabled: false in infra/config/demo.yaml (an AWS Free plan account) skips the agents
+      # image and the deep-triage evals: there is no AgentCore and no Claude to run them on.
+      - name: Models enabled?
+        id: models
+        run: |
+          if grep -qE '^models_enabled:[[:space:]]*false' infra/config/demo.yaml; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push the agents image
+        if: steps.models.outputs.enabled == 'true'
         run: |
           REPO=$(aws ecr describe-repositories --repository-names wf-demo-agents \
                    --query 'repositories[0].repositoryUri' --output text)
@@ -60,6 +72,7 @@ jobs:
         run: make conformance-remote ENV=demo
 
       - name: Deep-triage evals (DD §22.5 thresholds)
+        if: steps.models.outputs.enabled == 'true'
         run: make evals ENV=demo OUT=tests/evals/results/${GITHUB_REF_NAME}.json
 
       - name: Latency probe (p95 ≤ 150 ms, p99 ≤ 300 ms)

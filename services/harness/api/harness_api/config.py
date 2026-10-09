@@ -38,7 +38,10 @@ class HarnessConfig:
 
     @property
     def engine(self) -> str | None:
-        """``strands`` with a Haiku-class model id, ``offline`` locally without one, else None."""
+        """``strands`` with a Haiku-class model id; ``offline`` locally without one, or wherever models
+        are switched off (``WF_MODELS_ENABLED=false``); else None."""
+        if not self.core.models_enabled:
+            return "offline"
         if self.core.haiku_model_id:
             return "strands"
         if self.core.env in ("local", "test"):

@@ -49,26 +49,27 @@ class HarnessStack(Stack):
             memory_size=512,
             timeout=Duration.seconds(60),
             environment={
-                "WF_HAIKU_MODEL_ID": cfg.models.haiku,
                 "WF_HARNESS_SESSION_SECRET": session.secret_value.unsafe_unwrap(),  # dynamic reference
                 "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
                 "WF_HARNESS_WEB_URL": "/",
             },
         ).function
-        fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "bedrock:InvokeModel",
-                    "bedrock:InvokeModelWithResponseStream",
-                    "bedrock:Converse",
-                    "bedrock:ConverseStream",
-                ],
-                resources=[
-                    f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{cfg.models.haiku}",
-                    "arn:aws:bedrock:*::foundation-model/*",
-                ],
+        if cfg.models_enabled:  # otherwise the harness runs its offline engine (WF_MODELS_ENABLED=false)
+            fn.add_environment("WF_HAIKU_MODEL_ID", cfg.models.haiku)
+            fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "bedrock:InvokeModel",
+                        "bedrock:InvokeModelWithResponseStream",
+                        "bedrock:Converse",
+                        "bedrock:ConverseStream",
+                    ],
+                    resources=[
+                        f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{cfg.models.haiku}",
+                        "arn:aws:bedrock:*::foundation-model/*",
+                    ],
+                )
             )
-        )
         self.api = apigwv2.HttpApi(self, "Api", api_name=f"{cfg.prefix}-harness")
         self.api.add_routes(
             path="/{proxy+}",

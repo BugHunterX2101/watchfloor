@@ -26,6 +26,9 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     cfg = load_config(
         env_name, account=app.node.try_get_context("account") or os.environ.get("CDK_DEFAULT_ACCOUNT")
     )
+    override = app.node.try_get_context("wf:modelsEnabled")  # one synth, either way
+    if override is not None:
+        cfg = cfg.model_copy(update={"models_enabled": str(override).lower() in ("true", "1")})
     aws_env = cdk.Environment(account=cfg.account, region=cfg.region)
     p = cfg.prefix
 
@@ -33,7 +36,8 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     data = DataStack(app, f"{p}-data", cfg=cfg, net=net, env=aws_env)
     auth = AuthStack(app, f"{p}-auth", cfg=cfg, net=net, data=data, env=aws_env)
     mcp = McpStack(app, f"{p}-mcp", cfg=cfg, net=net, data=data, env=aws_env)
-    agents = AgentsStack(app, f"{p}-agents", cfg=cfg, env=aws_env)
+    # Without models (a Free plan account) there is no AgentCore to deploy.
+    agents = AgentsStack(app, f"{p}-agents", cfg=cfg, env=aws_env) if cfg.models_enabled else None
     asyncs = AsyncStack(app, f"{p}-async", cfg=cfg, net=net, data=data, auth=auth, agents=agents, env=aws_env)
     harness = HarnessStack(app, f"{p}-harness", cfg=cfg, env=aws_env)
     ops = OpsStack(app, f"{p}-ops", cfg=cfg, auth=auth, mcp=mcp, asyncs=asyncs, env=aws_env)
@@ -41,7 +45,7 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     # them. A send before the queues exist only logs; the sweeper republishes the outbox row (ADR-008).
     cdk.Tags.of(app).add("project", "watchfloor")
     cdk.Tags.of(app).add("env", cfg.env)
-    return {s.stack_name: s for s in (net, data, auth, mcp, agents, asyncs, harness, ops)}
+    return {s.stack_name: s for s in (net, data, auth, mcp, agents, asyncs, harness, ops) if s is not None}
 
 
 if __name__ == "__main__":

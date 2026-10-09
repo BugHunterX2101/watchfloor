@@ -40,6 +40,10 @@ class EnvConfig(BaseModel):
     hosted_zone_name: str | None = None
     lwa_layer_arn: str  # Lambda Web Adapter, arm64 (⚠ Verify the current version)
     models: Models
+    # false on an AWS Free plan account: AgentCore is Paid-plan only and Claude is billed through
+    # Marketplace. No Agents stack then; deep triage is refused, drafts use a template, and the
+    # harness uses its offline engine. `-c wf:modelsEnabled=true|false` overrides it for one synth.
+    models_enabled: bool = True
     alert_email: str
     # Seeded user the canary signs in as, with its own generated password (wf-<env>/canary/login).
     canary_email: str = "daniel@lumenridge.example"

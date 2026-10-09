@@ -14,13 +14,14 @@ hosted_zone_name: null
 lwa_layer_arn: arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25
 
 models:                            # ⚠ Verify (S6): inference profile ids available to the account
-  sonnet: us.anthropic.claude-sonnet-5-5-v1:0
+  sonnet: us.anthropic.claude-sonnet-5-5
   haiku: us.anthropic.claude-haiku-4-5-20251001-v1:0
 
 alert_email: alerts@watchfloor.example        # ⚠ SNS alarm and budget notifications
 canary_email: daniel@lumenridge.example     # seeded user the canary signs in as (own generated password)
 alexa_redirect_uris: []           # ⚠ S2: Alexa+ account-linking redirect URIs, once the skill exists
 budgets_usd: [25, 60, 90]          # account-wide (covers demo too); demo.yaml leaves this empty
+models_enabled: false              # Free plan account: no AgentCore, no Claude (README, Deploy)
 demo_mode: false
 provisioned_concurrency: 1
 agent_image_tag: dev

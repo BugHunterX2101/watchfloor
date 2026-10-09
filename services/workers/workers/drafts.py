@@ -107,6 +107,8 @@ def _converse(model_id: str, prompt: str) -> str:
 
 
 def drafter_from_settings(s: Settings) -> Drafter:
+    if not s.models_enabled:  # no Claude in this environment (WF_MODELS_ENABLED=false)
+        return template_draft
     if s.haiku_model_id:
         model_id = s.haiku_model_id
 

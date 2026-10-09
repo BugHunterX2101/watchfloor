@@ -210,6 +210,17 @@ def test_draft_prompt_wraps_crm_text_and_intent() -> None:
     assert prompt.count("</crm_data>") == 2  # the planted closing tag was neutralised
 
 
+def test_drafts_use_the_template_without_models() -> None:
+    from watchfloor_core.settings import Settings
+    from workers.drafts import drafter_from_settings
+
+    off = Settings(
+        env="dev", models_enabled=False, haiku_model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    )
+    assert drafter_from_settings(off) is template_draft
+    assert drafter_from_settings(Settings(env="dev", haiku_model_id="h")) is not template_draft
+
+
 async def test_template_draft_is_labelled_and_link_free() -> None:
     draft = await template_draft(REQ)
     assert draft.startswith("Subject: Following up on Kestrel Platform")

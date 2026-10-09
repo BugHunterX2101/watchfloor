@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,12 +31,12 @@ def _synth(env: str, **context: Any) -> dict[str, Template]:
 
 @pytest.fixture(scope="module")
 def dev() -> dict[str, Template]:
-    return _synth("dev")
+    return _synth("dev", **{"wf:modelsEnabled": "true"})  # the full design; the configs may switch it off
 
 
 def test_every_stack_synthesizes_for_both_environments(dev: dict[str, Template]) -> None:
     assert set(dev) == {"net", "data", "auth", "mcp", "agents", "async", "harness", "ops"}
-    demo = _synth("demo")
+    demo = _synth("demo", **{"wf:modelsEnabled": "true"})
     demo["data"].has_resource_properties("AWS::RDS::DBInstance", {"DeletionProtection": True})
     dev["data"].has_resource_properties("AWS::RDS::DBInstance", {"DeletionProtection": False})
 
@@ -169,7 +170,7 @@ def test_agent_runtime_role_has_no_database_or_vpc(dev: dict[str, Template]) -> 
 
 
 def test_first_deploy_can_skip_the_runtime() -> None:
-    bare = _synth("dev", **{"wf:agentRuntime": "false"})
+    bare = _synth("dev", **{"wf:agentRuntime": "false", "wf:modelsEnabled": "true"})
     bare["agents"].resource_count_is("AWS::BedrockAgentCore::Runtime", 0)
     assert "WF_AGENT_RUNTIME_ARN" not in str(bare["async"].find_resources("AWS::Lambda::Function"))
 
@@ -203,3 +204,18 @@ def test_missing_assets_fail_loudly() -> None:
     application = cdk.App(context={"env": "dev", "account": "123456789012"})
     with pytest.raises(RuntimeError, match="make package"):
         infra_app.build(application)
+
+
+def test_without_models_nothing_needs_agentcore_or_claude() -> None:
+    """A Free plan account (models_enabled: false): no Agents stack, no Bedrock grants, every Lambda told."""
+    off = _synth("dev", **{"wf:modelsEnabled": "false"})
+    assert set(off) == {"net", "data", "auth", "mcp", "async", "harness", "ops"}
+    for name in ("async", "harness"):
+        text = json.dumps(off[name].to_json())
+        assert (
+            "bedrock" not in text and "WF_HAIKU_MODEL_ID" not in text and "WF_AGENT_RUNTIME_ARN" not in text
+        )
+    off["mcp"].has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Environment": {"Variables": Match.object_like({"WF_MODELS_ENABLED": "false"})}},
+    )

@@ -133,3 +133,11 @@ def test_history_becomes_alternating_strands_messages() -> None:
         {"role": "user", "content": [{"text": "a\nb"}]},
         {"role": "assistant", "content": [{"text": "c"}]},
     ]
+
+
+def test_the_offline_engine_runs_wherever_models_are_off(tmp_path: Path) -> None:
+    """An AWS Free plan environment (WF_MODELS_ENABLED=false) still converses, and says which engine."""
+    haiku = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert make_config(tmp_path, env="dev", models_enabled=False, haiku_model_id=haiku).engine == "offline"
+    assert make_config(tmp_path, env="dev", haiku_model_id=haiku).engine == "strands"
+    assert make_config(tmp_path, env="dev").engine is None

@@ -44,6 +44,7 @@ def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
         "WF_JWKS_URL": f"{cfg.issuer}/jwks.json",
         "WF_MCP_URL": cfg.resource_uri,
         "WF_DEMO_MODE": "true" if cfg.demo_mode else "false",
+        "WF_MODELS_ENABLED": "true" if cfg.models_enabled else "false",
         "POWERTOOLS_SERVICE_NAME": service,
         "POWERTOOLS_METRICS_NAMESPACE": NAMESPACE,
         "LOG_LEVEL": "INFO",

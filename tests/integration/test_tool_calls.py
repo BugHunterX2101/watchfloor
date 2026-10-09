@@ -101,3 +101,32 @@ async def test_healthz_reports_database(seeded: str, client: httpx.AsyncClient) 
     r = await client.get("/healthz")
     assert r.status_code == 200
     assert r.json()["ok"] is True and r.json()["db"] == "ok"
+
+
+async def test_deep_triage_is_refused_up_front_without_models(
+    seeded: str, mcp: Mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WF_MODELS_ENABLED=false (an AWS Free plan account): no job is queued that could only fail later."""
+    from watchfloor_core.settings import reset_settings
+
+    monkeypatch.setenv("WF_MODELS_ENABLED", "false")
+    reset_settings()
+    try:
+        before = await _job_count()
+        result = await mcp.call("start_deep_triage", {"deal_id": HARBOR})
+        assert result["isError"] is True
+        err = result["structuredContent"]["error"]
+        assert err["code"] == "TEMPORARILY_UNAVAILABLE" and "aren't available" in err["message"]
+        assert "scored reasons" in err["recovery"]
+        assert await _job_count() == before
+    finally:
+        monkeypatch.delenv("WF_MODELS_ENABLED")
+        reset_settings()
+
+
+async def _job_count() -> int:
+    conn = await asyncpg.connect(OWNER_URL)
+    try:
+        return await conn.fetchval("SELECT count(*) FROM triage_jobs")
+    finally:
+        await conn.close()

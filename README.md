@@ -120,6 +120,13 @@ Offsets take effect only where `demo_mode: true` (`demo`, not `dev`); `demo-cloc
 Eight CDK stacks per environment (`dev`, `demo`) in `us-east-1`: net, data, auth, mcp, agents, async,
 harness, ops. Pushes to `main` deploy `dev`, and `v*.*.*` tags deploy `demo` (`.github/workflows`).
 
+**On an AWS Free plan account** (new accounts since July 2025 start on it): AgentCore is Paid-plan
+only and Claude is billed through AWS Marketplace, so both configs ship with `models_enabled: false`.
+Everything deploys except the Agents stack. `start_deep_triage` answers that deep reviews aren't
+available, follow-up drafts use a template, and the harness runs its offline engine. After upgrading
+the account to the Paid plan, set `models_enabled: true` and follow the first-deploy steps below
+from the agents image onwards.
+
 **Before the first deploy**
 1. Fill in `infra/config/<env>.yaml`: account, the three host names, an ACM certificate in
    `us-east-1` that covers them, the alert e-mail, and the Bedrock model ids (⚠ Verify S6).
