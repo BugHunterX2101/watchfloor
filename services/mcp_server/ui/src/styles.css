@@ -96,6 +96,7 @@ p {
 .row .amount {
   grid-area: amount;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .row .chips {
@@ -172,17 +173,18 @@ p {
 
 .factor {
   display: grid;
-  grid-template-columns: 1.5em minmax(0, 1fr) 3em;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "name bar value"
-    ". why why";
+    "name value"
+    "bar bar"
+    "why why";
   align-items: center;
-  gap: 2px var(--gap);
+  gap: 4px var(--gap);
 }
 
 .factor-name {
   grid-area: name;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .bar {
@@ -245,6 +247,61 @@ p {
 
 .quote {
   font-size: var(--fs-title);
+}
+
+/* Time left to approve: a bar that empties once a second (stepped, not animated), amber in the
+   last minute alongside the "Expires in" text. */
+.expiry {
+  height: 4px;
+  margin-top: var(--gap);
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.expiry > span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+  transform-origin: left;
+}
+
+.expiry.low > span {
+  background: var(--warn);
+}
+
+.timer {
+  margin-top: calc(var(--gap) / 2);
+  font-variant-numeric: tabular-nums;
+}
+
+.timer.low {
+  color: var(--warn);
+}
+
+.done {
+  text-align: center;
+}
+
+.done-mark {
+  width: calc(var(--touch) * 1.1);
+  height: calc(var(--touch) * 1.1);
+  margin-bottom: calc(var(--gap) / 2);
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .skeleton {

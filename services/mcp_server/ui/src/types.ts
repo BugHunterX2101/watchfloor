@@ -93,6 +93,7 @@ export type View =
   | { kind: "detail"; data: Explain; plan?: TriageResult }
   | { kind: "plan"; data: TriageResult }
   | { kind: "confirm"; data: Proposal }
+  | { kind: "done"; data: Confirmed }
   | { kind: "message"; text: string };
 
 /** Which screen a tool result belongs on, from its shape (the UI renders only structuredContent). */
@@ -106,6 +107,9 @@ export function viewFor(d: Data): View | null {
   const pending = d.pending_proposal as Data | null | undefined;
   if (pending && typeof pending.confirmation_token === "string") {
     return { kind: "confirm", data: pending as unknown as Proposal };
+  }
+  if ((d.status === "executed" || d.status === "already_executed") && typeof d.action_type === "string") {
+    return { kind: "done", data: d as unknown as Confirmed };
   }
   if (typeof d.summary === "string") return { kind: "message", text: d.summary };
   return null;

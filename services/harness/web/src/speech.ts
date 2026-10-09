@@ -68,7 +68,9 @@ export function stopListening(): void {
 
 export interface SpeakEvents {
   onStart?: () => void;
-  onWord?: () => void; // each word boundary, where the voice reports them
+  /** Each word boundary, where the voice reports them (many network voices don't): the word's
+   *  character offset and length in the spoken text. */
+  onWord?: (index: number, length: number) => void;
   onEnd?: () => void; // finished, cancelled or failed
 }
 
@@ -83,7 +85,10 @@ export function speak(text: string, events: SpeakEvents = {}): void {
   u.rate = 1.05;
   u.onstart = () => events.onStart?.();
   u.onboundary = (e) => {
-    if (e.name === "word") events.onWord?.();
+    if (e.name !== "word") return;
+    // charLength is missing in some engines: fall back to the run of non-spaces from charIndex.
+    const length = e.charLength || (/^\S+/.exec(text.slice(e.charIndex))?.[0].length ?? 1);
+    events.onWord?.(e.charIndex, length);
   };
   u.onend = () => events.onEnd?.();
   u.onerror = () => events.onEnd?.();

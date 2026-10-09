@@ -6,7 +6,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Board } from "./Board";
 import { connect, type Bridge } from "./bridge";
-import { Confirm } from "./Confirm";
+import { Confirm, Done } from "./Confirm";
 import { Detail, Plan } from "./Detail";
 import "./tokens.css";
 import "./styles.css";
@@ -105,6 +105,8 @@ function Root({ initial }: { initial: string }) {
         dismiss={() => setStack((s) => [...s, { kind: "message", text: "Okay, nothing was changed." }])}
       />
     );
+  } else if (view.kind === "done") {
+    body = <Done data={view.data} />;
   } else {
     body = (
       <section class="screen">

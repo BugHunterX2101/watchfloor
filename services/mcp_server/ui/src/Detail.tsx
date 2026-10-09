@@ -10,12 +10,18 @@ function Trend({ points }: { points: number[] }) {
   const step = w / (points.length - 1);
   const y = (v: number) => h - (Math.min(100, Math.max(0, v)) / 100) * h;
   const path = points.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const first = points[0];
+  const last = points[points.length - 1];
   return (
     <figure class="trend">
-      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`14-day trend from ${points[0]} to ${points[points.length - 1]}`}>
-        <path d={path} fill="none" stroke="currentColor" stroke-width="2" />
+      <svg viewBox={`-4 -4 ${w + 8} ${h + 8}`} role="img" aria-label={`14-day trend from ${first} to ${last}`}>
+        <path d={path} fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        {/* Today, marked: where the line ends is the score shown above. */}
+        <circle cx={w} cy={y(last)} r="3.5" fill="currentColor" />
       </svg>
-      <figcaption class="meta">14-day trend</figcaption>
+      <figcaption class="meta">
+        14-day trend · {first} → {last}
+      </figcaption>
     </figure>
   );
 }
@@ -56,9 +62,8 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
             const value = risk.components[f.toLowerCase()] ?? 0;
             return (
               <li key={f} class="factor">
-                <span class="factor-name" title={FACTOR_NAME[f]}>
-                  {f}
-                </span>
+                {/* Spelled out: an Echo Show has no hover, so a letter with a tooltip hides its meaning. */}
+                <span class="factor-name">{FACTOR_NAME[f]}</span>
                 <span class="bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(value)}
                   aria-label={`${FACTOR_NAME[f]} ${value.toFixed(2)}`}>
                   <span style={{ width: `${percent(value)}%` }} />
@@ -142,7 +147,7 @@ export function Plan(props: { data: TriageResult; busy: boolean; propose: (a: Re
           <ul class="findings">
             {data.drivers.map((d, i) => (
               <li key={i}>
-                <strong>{d.factor}</strong> {d.claim}
+                <strong>{FACTOR_NAME[d.factor]}</strong> · {d.claim}
               </li>
             ))}
           </ul>

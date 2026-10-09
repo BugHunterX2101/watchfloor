@@ -30,6 +30,11 @@
             <button type="button" role="radio" aria-checked="false" data-device="standard" title="Echo Show 8 · 1280 wide">Standard</button>
             <button type="button" role="radio" aria-checked="false" data-device="large" title="Echo Show 15 · 1920 wide">Large</button>
           </div>
+          <div class="theme" role="radiogroup" aria-label="Colour theme">
+            <button type="button" role="radio" aria-checked="true" data-theme-choice="auto" aria-label="Follow the system theme" title="System"></button>
+            <button type="button" role="radio" aria-checked="false" data-theme-choice="light" aria-label="Light theme" title="Light"></button>
+            <button type="button" role="radio" aria-checked="false" data-theme-choice="dark" aria-label="Dark theme" title="Dark"></button>
+          </div>
         </div>
 
         <div class="screen" aria-label="Watchfloor view">
@@ -39,6 +44,9 @@
             <p class="idle-title">Ask about your pipeline.</p>
             <p class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
           </div>
+          <!-- What the microphone is hearing, shown on the screen as Echo devices do (the message box
+               carries the same text for assistive technology). -->
+          <p id="hearing" class="hearing" aria-hidden="true"></p>
         </div>
       </section>
 
@@ -64,12 +72,13 @@
         <form id="composer" class="composer" autocomplete="off">
           <button id="mic" type="button" class="mic" aria-label="Speak" aria-pressed="false"></button>
           <label class="sr-only" for="message">Message</label>
-          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" enterkeyhint="send" />
+          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" enterkeyhint="send" aria-keyshortcuts="/" />
+          <kbd class="kbd" title="Press / to type">/</kbd>
           <button id="send" type="submit" class="send" aria-label="Send"></button>
         </form>
 
         <div class="controls">
-          <label class="switch"><input id="voice" type="checkbox" checked /><span aria-hidden="true"></span>Read replies aloud</label>
+          <label class="switch"><input id="voice" type="checkbox" checked /><span aria-hidden="true"></span>Read replies aloud, with sound cues</label>
           <button id="logout" type="button" class="link" hidden>Sign out</button>
         </div>
       </section>

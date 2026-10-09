@@ -12,11 +12,14 @@ const LABELS: Record<VoiceState, string> = {
 };
 
 let label: HTMLElement | null = null;
+const TITLE = document.title;
 
 export function setVoice(state: VoiceState, text?: string): void {
   label ??= document.getElementById("voice-state");
   document.body.dataset.voice = state;
   if (label) label.textContent = text ?? LABELS[state];
+  // The tab says it too, so a demo running in a background tab still shows it is listening.
+  document.title = state === "idle" ? TITLE : `${text ?? LABELS[state]} · Watchfloor`;
 }
 
 export function voiceState(): VoiceState {

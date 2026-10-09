@@ -24,11 +24,46 @@ let frame: HTMLIFrameElement | null = null;
 let box: HTMLElement | null = null;
 let device: Device = "fit";
 let contentHeight = 0;
+let themeChoice: "auto" | "light" | "dark" = "auto";
 const observer = new ResizeObserver(() => layout());
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 function theme(): "light" | "dark" {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  if (themeChoice !== "auto") return themeChoice;
+  return darkQuery.matches ? "dark" : "light";
 }
+
+/** What the view is told about its surface. An Echo Show size is a touch screen without hover, so
+ *  the view sees the same capabilities it would on the device; Fit is this browser window. */
+function hostContext() {
+  const echo = device !== "fit";
+  const width = device === "fit" ? (box?.clientWidth ?? 768) : WIDTHS[device];
+  return {
+    theme: theme(),
+    displayMode: "inline" as const,
+    platform: "web" as const,
+    deviceCapabilities: { touch: echo || matchMedia("(pointer: coarse)").matches, hover: !echo },
+    containerDimensions: { width, maxHeight: 2400 },
+    locale: navigator.language,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
+function pushContext(): void {
+  current?.setHostContext(hostContext());
+}
+
+/** Light, dark or follow the system: applied to this page and sent to the view as host context. */
+export function setTheme(choice: "auto" | "light" | "dark"): void {
+  themeChoice = choice;
+  if (choice === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  pushContext();
+}
+
+darkQuery.addEventListener("change", () => {
+  if (themeChoice === "auto") pushContext();
+});
 
 function layout(): void {
   if (!frame || !box) return;
@@ -52,6 +87,7 @@ function layout(): void {
 export function setDevice(next: Device): void {
   device = next;
   layout();
+  pushContext();
 }
 
 export async function renderView(
@@ -86,7 +122,7 @@ export async function renderView(
     null,
     { name: "watchfloor-harness", version: "1.0.0" },
     { serverTools: {} },
-    { hostContext: { theme: theme(), displayMode: "inline" } },
+    { hostContext: hostContext() },
   );
   bridge.oninitialized = () => {
     void bridge.sendToolResult({ content: [], structuredContent: data });

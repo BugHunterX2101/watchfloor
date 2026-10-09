@@ -2,15 +2,18 @@
 
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
-import "@fontsource-variable/fraunces";
+// The optical-size cut: display forms for the big headings, sturdier text forms in the transcript.
+import "@fontsource-variable/fraunces/opsz.css";
 import "./styles.css";
-import { converse, logout, session, SignedOut, type Line } from "./api";
-import { clearView, renderView, setDevice, type Device } from "./apphost";
+import { converse, logout, session, SignedOut, type Call, type Line } from "./api";
+import { clearView, renderView, setDevice, setTheme, type Device } from "./apphost";
 import { renderBanner } from "./banner";
+import { caption } from "./captions";
 import { ICONS } from "./icons";
 import { beat, setVoice } from "./orb";
+import { earcon, setSounds } from "./sound";
 import { canListen, listenOnce, speak, stopListening, stopSpeaking } from "./speech";
-import { clearTrace, showTrace } from "./trace";
+import { clearTrace, pendingTrace, showTrace } from "./trace";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -30,6 +33,7 @@ const logoutButton = $<HTMLButtonElement>("logout");
 const viewBox = $<HTMLDivElement>("view");
 const calls = $<HTMLOListElement>("calls");
 const suggestions = $<HTMLDivElement>("suggestions");
+const hearing = $<HTMLParagraphElement>("hearing");
 
 // Phrasings the offline keyword router understands too (harness_api/offline.py), so every
 // suggestion works with or without a model.
@@ -104,20 +108,34 @@ function setSignedIn(signedIn: boolean, engine: string | null): void {
 
 function setBusy(next: boolean): void {
   busy = next;
-  sendButton.disabled = next;
+  sendButton.disabled = next || !navigator.onLine;
   input.disabled = next;
 }
 
-function reply(text: string): void {
+function reply(line: HTMLElement, text: string): void {
   if (!voice.checked) {
     setVoice("idle");
     return;
   }
+  const cap = caption(line, text);
   speak(text, {
     onStart: () => setVoice("speaking"),
-    onWord: beat,
-    onEnd: () => setVoice("idle"),
+    onWord: (index) => {
+      beat();
+      cap.word(index);
+    },
+    onEnd: () => {
+      cap.end();
+      setVoice("idle");
+    },
   });
+}
+
+/** Calls made from inside the view (row tap, Propose, Approve) land in the trace; an approved
+ *  action that ran gets the "done" earcon. */
+function viewCall(call: Call): void {
+  showTrace(calls, [call], call.ms, "View");
+  if (call.tool === "confirm_action" && call.ok) earcon.done();
 }
 
 async function send(message: string): Promise<void> {
@@ -129,22 +147,24 @@ async function send(message: string): Promise<void> {
   setVoice("thinking");
   addLine("user", text);
   const pending = pendingLine();
+  const running = pendingTrace(calls);
   const t0 = performance.now();
   try {
     const turn = await converse(text, history);
+    running.remove();
     pending.classList.remove("pending");
     pending.removeAttribute("aria-label");
     pending.textContent = turn.reply;
     history.push({ role: "user", text }, { role: "assistant", text: turn.reply });
     showTrace(calls, turn.calls, performance.now() - t0);
     if (turn.ui) {
-      // Calls the view makes (row tap, Propose, Approve) land in the trace too.
-      renderView(viewBox, turn.ui, (call) => showTrace(calls, [call], call.ms, "View")).catch((e: Error) =>
+      renderView(viewBox, turn.ui, viewCall).catch((e: Error) =>
         addLine("system", `The view could not start: ${e.message}`, "error"),
       );
     }
-    reply(turn.reply);
+    reply(pending, turn.reply);
   } catch (err) {
+    running.remove();
     pending.remove();
     setVoice("error");
     if (err instanceof SignedOut) {
@@ -185,9 +205,15 @@ mic.addEventListener("click", async () => {
   mic.setAttribute("aria-label", "Stop listening");
   mic.innerHTML = ICONS.stop;
   setVoice("listening");
+  earcon.listen();
   try {
-    const heard = await listenOnce((interim) => (input.value = interim));
+    const heard = await listenOnce((interim) => {
+      input.value = interim;
+      hearing.textContent = interim;
+    });
+    earcon.stop();
     input.value = "";
+    hearing.textContent = "";
     listening = false;
     if (heard) await send(heard);
     else setVoice("idle", "Didn't catch that. Try again?");
@@ -197,44 +223,94 @@ mic.addEventListener("click", async () => {
     window.setTimeout(() => setVoice("idle"), 2400);
   } finally {
     listening = false;
+    hearing.textContent = "";
     mic.setAttribute("aria-pressed", "false");
     mic.setAttribute("aria-label", "Speak");
     mic.innerHTML = ICONS.mic;
   }
 });
 
+voice.addEventListener("change", () => {
+  setSounds(voice.checked);
+  if (!voice.checked) stopSpeaking();
+});
+
+const typing = (t: EventTarget | null): boolean =>
+  t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+
 document.addEventListener("keydown", (e) => {
+  // "/" jumps to the message box, as in most search-first tools.
+  if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target) && !form.hidden) {
+    e.preventDefault();
+    input.focus();
+    return;
+  }
   if (e.key !== "Escape") return;
   stopSpeaking();
   if (listening) stopListening();
   if (document.body.dataset.voice === "speaking") setVoice("idle");
 });
 
-// Device preview: a radio group (arrow keys move between sizes, as WAI-ARIA radios do).
-const deviceButtons = [...document.querySelectorAll<HTMLButtonElement>(".device [data-device]")];
-
-function chooseDevice(button: HTMLButtonElement): void {
-  for (const b of deviceButtons) {
-    const on = b === button;
-    b.setAttribute("aria-checked", String(on));
-    b.tabIndex = on ? 0 : -1;
-  }
-  setDevice(button.dataset.device as Device);
+// Device preview and theme: radio groups (arrow keys move between options, as WAI-ARIA radios do).
+function radioGroup(selector: string, onChoose: (b: HTMLButtonElement) => void): (b: HTMLButtonElement) => void {
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(selector)];
+  const choose = (button: HTMLButtonElement): void => {
+    for (const b of buttons) {
+      const on = b === button;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    onChoose(button);
+  };
+  buttons.forEach((b, i) => {
+    b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1;
+    b.addEventListener("click", () => choose(b));
+    b.addEventListener("keydown", (e) => {
+      const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+      const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+      if (!forward && !back) return;
+      e.preventDefault();
+      const next = buttons[(i + (forward ? 1 : -1) + buttons.length) % buttons.length];
+      choose(next);
+      next.focus();
+    });
+  });
+  return choose;
 }
 
-deviceButtons.forEach((b, i) => {
-  b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1;
-  b.addEventListener("click", () => chooseDevice(b));
-  b.addEventListener("keydown", (e) => {
-    const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
-    const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
-    if (!forward && !back) return;
-    e.preventDefault();
-    const next = deviceButtons[(i + (forward ? 1 : -1) + deviceButtons.length) % deviceButtons.length];
-    chooseDevice(next);
-    next.focus();
-  });
+radioGroup(".device [data-device]", (b) => setDevice(b.dataset.device as Device));
+
+type ThemeChoice = "auto" | "light" | "dark";
+const THEME_ICON: Record<ThemeChoice, string> = { auto: ICONS.auto, light: ICONS.sun, dark: ICONS.moon };
+for (const b of document.querySelectorAll<HTMLButtonElement>(".theme [data-theme-choice]")) {
+  b.innerHTML = THEME_ICON[b.dataset.themeChoice as ThemeChoice];
+}
+const chooseTheme = radioGroup(".theme [data-theme-choice]", (b) => {
+  const choice = b.dataset.themeChoice as ThemeChoice;
+  setTheme(choice);
+  try {
+    localStorage.setItem("wf-theme", choice);
+  } catch {
+    // Storage blocked: the choice lasts for this page only.
+  }
 });
+try {
+  const saved = localStorage.getItem("wf-theme");
+  const button = document.querySelector<HTMLButtonElement>(`.theme [data-theme-choice="${saved}"]`);
+  if (saved && button) chooseTheme(button);
+} catch {
+  // Storage blocked: follow the system.
+}
+
+// Offline: say so plainly and hold the composer, rather than letting a send fail.
+function connectivity(): void {
+  const offline = !navigator.onLine;
+  sendButton.disabled = offline || busy;
+  if (offline) setVoice("error", "Offline · check your connection");
+  else if (document.body.dataset.voice === "error") setVoice("idle");
+}
+window.addEventListener("offline", connectivity);
+window.addEventListener("online", connectivity);
 
 logoutButton.addEventListener("click", async () => {
   stopSpeaking();
@@ -250,6 +326,7 @@ logoutButton.addEventListener("click", async () => {
 async function start(): Promise<void> {
   renderBanner($("banner"));
   renderSuggestions();
+  setSounds(voice.checked);
   setVoice("idle");
   const params = new URLSearchParams(location.search);
   const error = params.get("signin");
