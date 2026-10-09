@@ -106,7 +106,8 @@ class OpsStack(Stack):
             )
         api = mcp.api
         five_xx = cw.MathExpression(
-            expression="100 * errors / MAX([requests, 1])",
+            # IF guards the division: alarm math refuses MAX over a [series, scalar] array.
+            expression="IF(requests > 0, 100 * FILL(errors, 0) / requests, 0)",
             using_metrics={
                 "errors": api.metric_server_error(period=FIVE_MIN, statistic="Sum"),
                 "requests": api.metric_count(period=FIVE_MIN, statistic="Sum"),
@@ -149,7 +150,10 @@ class OpsStack(Stack):
         alarm("OutboxDead", "outbox-dead", _metric("OutboxDead", "Maximum", service="sweeper"), 0, 1)
         hour = Duration.hours(1)
         triage_fail = cw.MathExpression(
-            expression="100 * (dead + timedout) / MAX([sent + dead + timedout, 1])",
+            expression=(
+                "IF((FILL(sent, 0) + FILL(dead, 0) + FILL(timedout, 0)) > 0, "
+                "100 * (FILL(dead, 0) + FILL(timedout, 0)) / (FILL(sent, 0) + FILL(dead, 0) + FILL(timedout, 0)), 0)"
+            ),
             using_metrics={
                 "dead": _metric("OutboxDeadLettered", period=hour, service="dispatcher", kind="triage_job"),
                 "sent": _metric("OutboxSent", period=hour, service="dispatcher", kind="triage_job"),
