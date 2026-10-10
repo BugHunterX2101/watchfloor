@@ -15,7 +15,7 @@ the background, and a deep-triage agent team reviews a deal on request.
 
 ```mermaid
 flowchart LR
-  A["Alexa+"] -->|"MCP 2025-11-25 · OAuth 2.1"| M["MCP server<br/>12 user tools"]
+  A["Alexa+"] -->|"MCP 2025-11-25 · OAuth 2.1"| M["MCP server<br/>14 user tools"]
   M --> P[("Postgres 16<br/>RLS per workspace")]
   M -->|"outbox"| W["Workers<br/>watcher · dispatcher · sweeper"]
   W -->|"Slack"| S["#deals-at-risk"]
@@ -222,7 +222,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (12 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev/demo through the seeder and watcher Lambdas) · CDK stacks, seeder and CI/CD workflows (synthesized and tested, not yet deployed) · remote conformance, latency probe, triage evals, load profile, utterance sheet (run locally; not yet against AWS) | First AWS deploy · model-backed eval run · Local Inspector (command unverified) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev/demo through the seeder and watcher Lambdas) · CDK stacks, seeder and CI/CD workflows (synthesized and tested, not yet deployed) · remote conformance, latency probe, triage evals, load profile, utterance sheet (run locally; not yet against AWS) | First AWS deploy · model-backed eval run · Local Inspector (command unverified) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along
