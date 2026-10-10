@@ -85,10 +85,6 @@ p {
   border-left-color: var(--warn);
 }
 
-.row:hover:not(:disabled) {
-  background: var(--track);
-}
-
 .row .rank {
   grid-area: rank;
   align-self: start;

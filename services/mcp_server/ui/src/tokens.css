@@ -13,6 +13,7 @@
   --warn: #965a00;
   --ok: #1d7448;
   --line: #dde1ea;
+  --edge: #848da0;
   --track: #e6e9f0;
   color-scheme: light;
 
@@ -43,6 +44,7 @@
     --warn: #f1b25f;
     --ok: #62cf95;
     --line: #2a313c;
+    --edge: #667287;
     --track: #262d38;
     color-scheme: dark;
   }
@@ -61,6 +63,7 @@
   --warn: #f1b25f;
   --ok: #62cf95;
   --line: #2a313c;
+  --edge: #667287;
   --track: #262d38;
   color-scheme: dark;
 }
@@ -88,6 +91,7 @@ button {
   background: var(--btn);
   color: var(--btn-ink);
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 button.primary {
@@ -96,8 +100,9 @@ button.primary {
   color: var(--accent-ink);
 }
 
+/* --edge, not --line: an outline-only button needs a 3:1 boundary to read as a button. */
 button.secondary {
-  border-color: var(--line);
+  border-color: var(--edge);
   background: transparent;
   color: var(--ink);
 }
@@ -108,6 +113,17 @@ button:not(.row) {
 
 button:active:not(:disabled) {
   filter: brightness(0.92);
+}
+
+/* Hover only where there is a pointer that hovers; on a touch screen it would stick after a tap. */
+@media (hover: hover) {
+  button.secondary:hover:not(:disabled) {
+    background: var(--track);
+  }
+
+  .row:hover:not(:disabled) {
+    background: var(--track);
+  }
 }
 
 button:disabled {

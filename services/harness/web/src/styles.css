@@ -32,6 +32,7 @@
   --orb-2: #3aa8e8;
   --orb-3: #7c8cff;
   --crit: #ff8f84;
+  --crit-ink: #1a0503;
   --warn: #f1b25f;
   --ok: #62cf95;
   --banner: #1d1708;
@@ -73,6 +74,7 @@
     --signal-ink: #ffffff;
     --signal-soft: rgb(11 127 115 / 0.1);
     --crit: #ae2216;
+    --crit-ink: #ffffff;
     --warn: #965a00;
     --ok: #1d7448;
     --banner: #fff4d6;
@@ -101,6 +103,7 @@
   --signal-ink: #ffffff;
   --signal-soft: rgb(11 127 115 / 0.1);
   --crit: #ae2216;
+  --crit-ink: #ffffff;
   --warn: #965a00;
   --ok: #1d7448;
   --banner: #fff4d6;
@@ -128,6 +131,12 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+}
+
+button,
+summary,
+.btn {
+  touch-action: manipulation;
 }
 
 body {
@@ -890,9 +899,11 @@ body[data-voice="listening"] .voice-state {
   animation-delay: 120ms;
 }
 
-.chip:hover {
-  border-color: var(--signal);
-  background: var(--signal-soft);
+@media (hover: hover) {
+  .chip:hover {
+    border-color: var(--signal);
+    background: var(--signal-soft);
+  }
 }
 
 .chip:active {
@@ -968,6 +979,20 @@ body[data-voice="listening"] .composer {
   .kbd {
     display: none;
   }
+
+  .device button,
+  .chip {
+    min-height: 44px;
+  }
+
+  .theme button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .span summary {
+    padding: 10px 0;
+  }
 }
 
 .mic,
@@ -998,13 +1023,9 @@ body[data-voice="listening"] .composer {
   color: var(--signal-ink);
 }
 
-.mic:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--signal) 85%, white);
-}
-
 .mic[aria-pressed="true"] {
   background: var(--crit);
-  color: #1a0503;
+  color: var(--crit-ink);
 }
 
 .send {
@@ -1012,8 +1033,15 @@ body[data-voice="listening"] .composer {
   color: var(--text);
 }
 
-.send:hover:not(:disabled) {
-  background: var(--line-strong);
+/* Hover never overrides the recording state: red stays red under the pointer. */
+@media (hover: hover) {
+  .mic:hover:not(:disabled, [aria-pressed="true"]) {
+    background: color-mix(in srgb, var(--signal) 85%, white);
+  }
+
+  .send:hover:not(:disabled) {
+    background: var(--line-strong);
+  }
 }
 
 .mic:active:not(:disabled),
