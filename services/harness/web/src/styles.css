@@ -1489,7 +1489,11 @@ body[data-voice="listening"] .composer {
   .theme {
     margin-left: auto;
   }
+}
 
+/* Phones, and phones turned sideways (812 x 375): the stage gives up its height so the message
+   box is in reach without scrolling past an empty screen. */
+@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
   .screen {
     min-height: 0;
   }
