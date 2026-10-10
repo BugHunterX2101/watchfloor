@@ -60,6 +60,7 @@ class ServiceContext:
     tz: ZoneInfo
     trace_id: str | None = None
     outbox_ids: list[int] = field(default_factory=list)
+    held_outbox_ids: list[int] = field(default_factory=list)  # deliverable after the undo window
 
     @property
     def ws(self) -> str:

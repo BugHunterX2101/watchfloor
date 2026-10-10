@@ -93,7 +93,7 @@ Founders and sales managers at 10 to 60 person B2B companies discover deal risk 
 | C10 | Up to 15 calendar days of build | Calendar | Thin vertical slices; cut lines (§28) |
 
 ### 1.3 In scope / out of scope
-**In scope:** the MCP server and its 12 tools, authorization server, RIGS engine, action engine, standing orders and watcher, deep-triage agents on AgentCore, Slack notifications, MCP App UI (triage board, deal detail, confirmation), the simulated harness, CDK infrastructure, synthetic seed and demo tooling.
+**In scope:** the MCP server and its 14 tools, authorization server, RIGS engine, action engine, standing orders and watcher, deep-triage agents on AgentCore, Slack notifications, MCP App UI (triage board, deal detail, confirmation), the simulated harness, CDK infrastructure, synthetic seed and demo tooling.
 **Out of scope:** external CRM sync (P2), A2A split (P2), clinic-ops pack (P2), interactive Slack buttons (P2), multi-region, real customer data.
 
 ---
@@ -433,7 +433,7 @@ Each tool is registered with a required scope. `tools/list` returns only the too
 | `watchfloor.write` | Alexa+ and harness users | + 5 write tools |
 | `watchfloor.agent.read` | Job-scoped service tokens for deep-triage agents | 5 agent-only read tools (§6.5) + `explain_deal_risk` |
 
-Alexa+ therefore sees exactly 12 tools. Agents never see write tools. That rule is enforced on the server, not just stated in a prompt.
+Alexa+ therefore sees exactly 14 tools (12 at launch, plus `extend_preview` and `undo_action` from ADR-021). Agents never see write tools. That rule is enforced on the server, not just stated in a prompt.
 
 ### 6.2 Customer-facing tools (Alexa+)
 
@@ -445,19 +445,21 @@ Alexa+ therefore sees exactly 12 tools. Agents never see write tools. That rule 
 | 4 | `start_deep_triage` | read | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | 100 ms |
 | 5 | `get_triage_result` | read | `readOnlyHint: true` | 100 ms |
 | 6 | `propose_action` | read | `readOnlyHint: true` (creates no business effect) | 120 ms |
-| 7 | `list_standing_orders` | read | `readOnlyHint: true` | 100 ms |
-| 8 | `confirm_action` | write | `destructiveHint: true`, `idempotentHint: true` | 300 ms |
-| 9 | `set_standing_order` | write | `destructiveHint: false` | 150 ms |
-| 10 | `remove_standing_order` | write | `destructiveHint: true` | 150 ms |
-| 11 | `log_deal_update` | write | `destructiveHint: false` | 200 ms |
-| 12 | `update_briefing_preferences` | write | `destructiveHint: false`, `idempotentHint: true` | 120 ms |
+| 7 | `extend_preview` | read | `readOnlyHint: true` (ADR-021) | 120 ms |
+| 8 | `list_standing_orders` | read | `readOnlyHint: true` | 100 ms |
+| 9 | `confirm_action` | write | `destructiveHint: true`, `idempotentHint: true` | 300 ms |
+| 10 | `undo_action` | write | `destructiveHint: true`, `idempotentHint: true` (ADR-021) | 300 ms |
+| 11 | `set_standing_order` | write | `destructiveHint: false` | 150 ms |
+| 12 | `remove_standing_order` | write | `destructiveHint: true` | 150 ms |
+| 13 | `log_deal_update` | write | `destructiveHint: false` | 200 ms |
+| 14 | `update_briefing_preferences` | write | `destructiveHint: false`, `idempotentHint: true` | 120 ms |
 
 > `get_risk_briefing` updates `users.last_briefing_at`, which is session bookkeeping, not business data. We keep `readOnlyHint: true` and document the exception here.
 > `propose_action` writes a `pending` row that has no business effect, so it is marked read-only from the customer's point of view.
 
 ### 6.3 Tool descriptions (exact text shipped)
 
-Descriptions drive Alexa+'s tool selection. Per Amazon's guide, each states *when to call*, *why*, and *what it returns*, with no overlap.
+Descriptions drive Alexa+'s tool selection. Per Amazon's guide, each states *when to call*, *why*, and *what it returns*, with no overlap. The shipped strings live in `services/mcp_server/mcp_server/tools/descriptions.py`. They were last changed by ADR-020 (say health) and ADR-021 (`extend_preview`, `undo_action`), and `schemas/tools.snapshot.json` is the source of truth.
 
 | Tool | Description |
 |---|---|
@@ -772,7 +774,10 @@ stateDiagram-v2
   pending --> executed: confirm_action (valid token, same user, within 5 min)
   pending --> expired: TTL 5 min elapsed (lazy on read + sweeper)
   pending --> superseded: new proposal for same deal+action_type by same user
+  pending --> pending: extend_preview (+5 min, at most 15 min after creation; ADR-021)
   pending --> failed: executor error (rolled back)
+  executed --> undone: undo_action (same user, within 30 s; ADR-021)
+  undone --> [*]
   executed --> [*]
   expired --> [*]
   superseded --> [*]
@@ -1793,7 +1798,7 @@ Repo hygiene: `.env.example` only, GitHub secret scanning and push protection on
 |---|---|---|
 | CF-01 | `initialize` with `protocolVersion: 2025-11-25` | 200; same version echoed; no `MCP-Session-Id` header |
 | CF-02 | `notifications/initialized` | 202, empty body |
-| CF-03 | `tools/list` with user scope | Exactly 12 tools; snapshot match |
+| CF-03 | `tools/list` with user scope | Exactly 14 tools; snapshot match |
 | CF-04 | `tools/list` with agent scope | 6 tools; no write tools |
 | CF-05 | Missing `MCP-Protocol-Version` on non-initialize | 400 (we require it) |
 | CF-06 | Unsupported version `2099-01-01` | 400 |

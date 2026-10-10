@@ -1390,6 +1390,44 @@
       "annotations": {
         "readOnlyHint": true
       },
+      "description": "Use when the user asks for more time to decide on a preview from propose_action or log_deal_update before it expires. Keeps the same confirmation_token valid for five more minutes, up to 15 minutes after the preview was made. Changes nothing else.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_token": {
+            "description": "The confirmation_token of the preview that needs more time.",
+            "maxLength": 100,
+            "minLength": 10,
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_token"
+        ],
+        "type": "object"
+      },
+      "name": "extend_preview",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "expires_at"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
       "description": "Use when the user asks what Watchfloor is watching for or which rules or alerts they have set. Returns the user's active standing orders with ids.",
       "inputSchema": {
         "additionalProperties": false,
@@ -1487,6 +1525,10 @@
           },
           "summary": {
             "type": "string"
+          },
+          "undo_until": {
+            "description": "Until when undo_action can reverse this action; absent when it can't be undone.",
+            "type": "string"
           }
         },
         "required": [
@@ -1496,6 +1538,62 @@
           "result",
           "audit_id",
           "side_effects"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "description": "Use only when the user asks to undo, reverse or take back an action they confirmed in the last 30 seconds. Requires that action's confirmation_token. Cancels the created task, restores the previous owner, close date or amount, and withdraws the Slack post before it is sent. A follow-up draft can't be undone.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_token": {
+            "description": "The confirmation_token of the action that was just confirmed.",
+            "maxLength": 100,
+            "minLength": 10,
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_token"
+        ],
+        "type": "object"
+      },
+      "name": "undo_action",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action_type": {
+            "type": "string"
+          },
+          "audit_id": {
+            "type": "string"
+          },
+          "reverted": {
+            "description": "What was reversed, e.g. task_cancelled, owner_restored, post_withdrawn.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "const": "undone",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "status",
+          "action_type",
+          "audit_id",
+          "reverted"
         ],
         "type": "object"
       }

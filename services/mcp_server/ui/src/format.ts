@@ -4,6 +4,17 @@ import type { Band, Factor } from "./types";
 
 export const BAND_LABEL: Record<Band, string> = { at_risk: "AT RISK", watch: "WATCH", healthy: "HEALTHY" };
 
+/** The band as the voice says it (speech.BAND_LABELS): for screen readers, which would spell out
+ *  "AT RISK" letter by letter, and for running text. */
+export const BAND_SPOKEN: Record<Band, string> = { at_risk: "At Risk", watch: "Watch", healthy: "Healthy" };
+
+/** How hard a RIGS factor (0–1) pulls health down, in a word: the screen's only number stays health. */
+export function dragLevel(v: number): "High" | "Some" | "Low" | "None" {
+  if (v >= 0.6) return "High";
+  if (v >= 0.3) return "Some";
+  return v > 0 ? "Low" : "None";
+}
+
 export const FACTOR_NAME: Record<Factor, string> = {
   R: "Responsiveness",
   I: "Intent",
@@ -89,10 +100,11 @@ export function isStale(iso: string, now: number = Date.now()): boolean {
   return !Number.isNaN(t) && now - t > STALE_MINUTES * 60_000;
 }
 
-/** Side effects (DD §8 preview.side_effects) as plain sentences, before and after they happen. */
-export function effectText(effect: string, done: boolean): string {
+/** Side effects (DD §8 preview.side_effects) as plain sentences, before and after they happen.
+ *  ``held``: done, but its Slack post waits until the undo window closes (ADR-021). */
+export function effectText(effect: string, done: boolean, held = false): string {
   const channel = effect.startsWith("slack_post:") ? effect.slice("slack_post:".length) : null;
-  if (channel) return done ? `Posting to ${channel}` : `Posts to ${channel}`;
+  if (channel) return !done ? `Posts to ${channel}` : held ? `Posts to ${channel} when undo closes` : `Posting to ${channel}`;
   const plan: Record<string, [string, string]> = {
     task_created: ["Creates a task on the deal", "Task created"],
     owner_changed: ["Changes the deal owner", "Owner changed"],
@@ -101,4 +113,21 @@ export function effectText(effect: string, done: boolean): string {
     risk_recomputed: ["Re-scores the deal's health", "Health re-scored"],
   };
   return plan[effect]?.[done ? 1 : 0] ?? effect.replace(/_/g, " ");
+}
+
+/** What an undo reversed (UndoOut.reverted), in the receipt's past tense. */
+export function revertedText(r: string): string {
+  const said: Record<string, string> = {
+    task_cancelled: "Task canceled",
+    owner_restored: "Previous owner restored",
+    post_withdrawn: "Slack post withdrawn before it was sent",
+    deal_restored: "Deal back to its earlier values",
+    risk_recomputed: "Health re-scored",
+  };
+  return said[r] ?? r.replace(/_/g, " ");
+}
+
+/** "since Tue" → "Since Tue", for a line that starts with it. */
+export function capitalize(text: string): string {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
 }

@@ -46,6 +46,17 @@ DESCRIPTIONS: dict[str, str] = {
         "or go ahead. Performs the action using the confirmation_token, records it in the audit log, and "
         "returns what was done. Tokens expire after 5 minutes and work once."
     ),
+    "extend_preview": (
+        "Use when the user asks for more time to decide on a preview from propose_action or log_deal_update "
+        "before it expires. Keeps the same confirmation_token valid for five more minutes, up to 15 minutes "
+        "after the preview was made. Changes nothing else."
+    ),
+    "undo_action": (
+        "Use only when the user asks to undo, reverse or take back an action they confirmed in the last 30 "
+        "seconds. Requires that action's confirmation_token. Cancels the created task, restores the previous "
+        "owner, close date or amount, and withdraws the Slack post before it is sent. A follow-up draft can't "
+        "be undone."
+    ),
     "set_standing_order": (
         "Use when the user asks Watchfloor to keep watching for something from now on, for example to flag "
         "deals above an amount that go quiet for some days. Saves a rule that is checked every 15 minutes; "

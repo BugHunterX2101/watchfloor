@@ -3,6 +3,7 @@
 - **Status:** Accepted (2026-10-10)
 - **Supersedes in part:** ADR-019 (the "/100 risk" label)
 - **Refines:** DESIGN.md §7 (RIGS), §15 (views), PRD voice responses
+- **Amended by:** ADR-021 (factor bars read High, Some, Low or None instead of decimals)
 
 ## Context
 

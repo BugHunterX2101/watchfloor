@@ -4,9 +4,11 @@ import { BandChip } from "./Band";
 import {
   ago,
   AT_RISK_HEALTH,
-  BAND_LABEL,
+  BAND_SPOKEN,
+  capitalize,
   clock,
   dealTitle,
+  dragLevel,
   FACTOR_NAME,
   FACTORS,
   healthOf,
@@ -42,7 +44,7 @@ function Trend({ risk, stale }: { risk: number[]; stale: boolean }) {
         <rect class="zone" x="0" y={y(AT_RISK_HEALTH)} width={w} height={h - y(AT_RISK_HEALTH)} />
         <line class="threshold" x1="0" x2={w} y1={y(WATCH_HEALTH)} y2={y(WATCH_HEALTH)} />
         <path d={path} fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-        {/* Today, marked: where the line ends is the score shown above; hollow when it is stale. */}
+        {/* Today, marked: where the line ends is the health shown above; hollow when it is stale. */}
         <circle class={stale ? "end stale" : "end"} cx={w} cy={y(last)} r="3.5" />
       </svg>
       <figcaption class="meta">
@@ -70,7 +72,7 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
           {[deal.amount_display, deal.stage, deal.owner].filter(Boolean).join(" · ")}
         </p>
         {/* Health, as CRM deal scores read: higher is healthier, and it says so beside the number. */}
-        <p class="big" aria-label={`Health ${health} out of 100, ${BAND_LABEL[risk.band]}`}>
+        <p class="big" aria-label={`Health ${health} out of 100, ${BAND_SPOKEN[risk.band]}`}>
           <span class="score">{health}</span>
           <span class="of">
             /100
@@ -80,7 +82,8 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
           <BandChip band={risk.band} />
         </p>
         <p class={`meta fresh${stale ? " stale" : ""}`}>
-          {since(risk.band_since)} · scored {stale ? ago(risk.computed_at) : clock(risk.computed_at)}
+          {capitalize(since(risk.band_since))} · scored{" "}
+          {stale ? ago(risk.computed_at) : clock(risk.computed_at)}
         </p>
         <Trend risk={data.trend_14d} stale={stale} />
         <div class="actions">
@@ -95,7 +98,7 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
       </div>
 
       <div class="detail-right">
-        <p class="eyebrow">WHY IT'S {BAND_LABEL[risk.band]}</p>
+        <p class="eyebrow">WHAT PULLS HEALTH DOWN</p>
         <ul class="factors">
           {FACTORS.map((f) => {
             const v = value(f);
@@ -107,11 +110,11 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
                   {FACTOR_NAME[f]}
                   {top && <span class="driver"> · biggest driver</span>}
                 </span>
-                <span class="bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(v)}
-                  aria-label={`${FACTOR_NAME[f]} ${v.toFixed(2)}`}>
+                <span class="bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(v)} aria-valuetext={dragLevel(v)}
+                  aria-label={`${FACTOR_NAME[f]}: ${dragLevel(v).toLowerCase()} pull on health`}>
                   <span style={{ width: `${percent(v)}%` }} />
                 </span>
-                <span class="value">{v.toFixed(2)}</span>
+                <span class="value">{dragLevel(v)}</span>
                 <span class="factor-why meta">{reasonFor(f)}</span>
               </li>
             );

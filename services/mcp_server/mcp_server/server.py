@@ -27,6 +27,7 @@ from watchfloor_core.db import ws_tx
 from watchfloor_core.errors import ErrorCode, WatchfloorError
 from watchfloor_core.principal import Principal
 from watchfloor_core.repos import misc
+from watchfloor_core.services.actions import POST_HOLD
 from watchfloor_core.services.context import ServiceContext, UnknownWorkspace, clock, make_context
 from watchfloor_core.tokens import args_hash
 
@@ -95,6 +96,7 @@ async def _run(
     t0 = time.perf_counter()
     user_id: str | None = principal.user_id or None
     outbox_ids: list[int] = []
+    held_ids: list[int] = []
     try:
         async with ws_tx(principal.workspace_id) as conn:
             sctx: ServiceContext | None = None
@@ -106,6 +108,7 @@ async def _run(
                 outcome = ToolOutcome.error(exc)
             if sctx is not None:
                 outbox_ids = list(sctx.outbox_ids)
+                held_ids = list(sctx.held_outbox_ids)
             await _audit(conn, spec, principal, user_id, arguments, outcome, _ms(t0), trace_id)
     except UnknownWorkspace:
         # A valid signature for a workspace that no longer exists: nothing to read, nothing to audit.
@@ -114,7 +117,7 @@ async def _run(
     except DB_UNAVAILABLE as exc:
         log.warning("database unavailable during %s: %s", spec.name, type(exc).__name__)
         outcome = ToolOutcome.error(_unavailable())
-        outbox_ids = []
+        outbox_ids = held_ids = []
     except Exception:
         log.exception("tool %s failed", spec.name)
         await _audit_best_effort(spec, principal, user_id, arguments, _ms(t0), trace_id)
@@ -122,6 +125,8 @@ async def _run(
         raise MCPError(code=types.INTERNAL_ERROR, message="Internal error") from None
 
     await queue.publish(principal.workspace_id, outbox_ids)
+    # Slack posts held for the undo window are delivered when it closes (ADR-021).
+    await queue.publish(principal.workspace_id, held_ids, delay_s=int(POST_HOLD.total_seconds()))
     latency = _ms(t0)
     _record(
         spec, principal, user_id, latency, "error" if outcome.is_error else "ok", outcome.error_code, trace_id

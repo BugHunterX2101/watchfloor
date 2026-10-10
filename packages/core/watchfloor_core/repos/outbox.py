@@ -22,18 +22,32 @@ async def enqueue(
     payload: dict[str, Any],
     dedupe_key: str | None,
     at: datetime,
+    deliver_at: datetime | None = None,
 ) -> int | None:
-    """Returns the new row id, or None when the dedupe key already exists."""
+    """Returns the new row id, or None when the dedupe key already exists.
+
+    ``deliver_at`` holds the row back until then (an undo window): no worker can claim it earlier.
+    """
     return await conn.fetchval(
         """INSERT INTO outbox (workspace_id, kind, payload, dedupe_key, next_attempt_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, $5)
+           VALUES ($1, $2, $3, $4, $6, $5)
            ON CONFLICT (dedupe_key) DO NOTHING RETURNING id""",
         workspace_id,
         kind,
         payload,
         dedupe_key,
         at,
+        deliver_at or at,
     )
+
+
+async def cancel(conn: asyncpg.Connection, dedupe_key: str) -> bool:
+    """Withdraw a row no worker has tried yet (an undone action's Slack post). False if it is too late."""
+    status = await conn.execute(
+        "UPDATE outbox SET status = 'cancelled' WHERE dedupe_key = $1 AND status = 'pending' AND attempts = 0",
+        dedupe_key,
+    )
+    return status.endswith(" 1")
 
 
 async def due_ids(conn: asyncpg.Connection, before: datetime, limit: int = 100) -> list[int]:

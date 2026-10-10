@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (2026-10-10)
 - **Refines:** ADR-018 (interaction details), DESIGN.md §8 (propose → confirm), §15 (views), §17 (harness)
-- **Amended by:** ADR-020 (the number shown is deal health, not risk)
+- **Amended by:** ADR-020 (the number shown is deal health, not risk), ADR-021 (undo and more time, built)
 
 ## Context
 
@@ -90,6 +90,9 @@ interrupts cleanly.
 - **No contract change.** The error code and the tool schemas are unchanged.
 
 ## Deferred
+
+Both action items below were built in ADR-021.
+
 
 - **Undo.** Undo on the receipt, such as a delayed channel post or deleting a just-created task,
   needs new server tools and an outbox delay.

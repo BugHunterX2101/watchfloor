@@ -1,6 +1,6 @@
 // MCP Apps host (DD §6.6, §17), on the ext-apps AppBridge: renders a ui:// view in a sandboxed
 // iframe, hands it the tool result after the ui/initialize handshake, and forwards the view's
-// tool calls (row tap, Propose, Approve) to the harness API with the user's token.
+// tool calls (row tap, Propose, the sheet's action, Undo) to the harness API with the user's token.
 //
 // ⚠ Verify (S3): built against @modelcontextprotocol/ext-apps 2.0.3. Alexa+'s own host is what
 // the real add-on renders in; this host only mirrors it for Path B.

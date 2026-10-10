@@ -72,9 +72,39 @@ async def claim(
 
 async def get_by_token_hash(conn: asyncpg.Connection, token_hash: bytes) -> asyncpg.Record | None:
     return await conn.fetchrow(
-        """SELECT id, user_id, deal_id, action_type, status, result, expires_at
+        """SELECT id, user_id, deal_id, action_type, status, result, expires_at, created_at, executed_at
            FROM action_proposals WHERE token_hash = $1""",
         token_hash,
+    )
+
+
+async def extend(
+    conn: asyncpg.Connection, *, token_hash: bytes, user_id: str, now: datetime, until: datetime
+) -> datetime | None:
+    """Push a pending, unexpired proposal's expiry out to ``until``; None if it can't be extended."""
+    return await conn.fetchval(
+        """UPDATE action_proposals SET expires_at = $4
+           WHERE token_hash = $1 AND user_id = $2 AND status = 'pending' AND expires_at > $3 AND $4 > expires_at
+           RETURNING expires_at""",
+        token_hash,
+        user_id,
+        now,
+        until,
+    )
+
+
+async def claim_undo(
+    conn: asyncpg.Connection, *, token_hash: bytes, user_id: str, now: datetime, executed_after: datetime
+) -> asyncpg.Record | None:
+    """Atomically move this user's executed proposal to undone, if it ran after ``executed_after``."""
+    return await conn.fetchrow(
+        """UPDATE action_proposals SET status = 'undone', undone_at = $3
+           WHERE token_hash = $1 AND user_id = $2 AND status = 'executed' AND executed_at > $4
+           RETURNING id, deal_id, action_type, params, params_hash, preview, result, executed_at""",
+        token_hash,
+        user_id,
+        now,
+        executed_after,
     )
 
 

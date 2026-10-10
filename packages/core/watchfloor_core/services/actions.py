@@ -24,6 +24,14 @@ from .read import current_score, open_card
 UPDATE_FIELDS = "update_fields"  # internal action type, raised by log_deal_update (DD §6.4)
 _MENTIONS = re.compile(r"<[@!#][^>]*>|@(here|channel|everyone)\b", re.IGNORECASE)
 
+# ADR-021. An executed action can be undone for UNDO_WINDOW; its Slack post waits POST_HOLD (a little
+# longer) so an undo can still withdraw it. A preview can be given more time, never past MAX_PREVIEW.
+UNDO_WINDOW = timedelta(seconds=30)
+POST_HOLD = UNDO_WINDOW + timedelta(seconds=5)
+MAX_PREVIEW = timedelta(minutes=15)
+UNDOABLE = frozenset({"create_task", "reassign_owner", "notify_channel", UPDATE_FIELDS})
+HISTORY_IDS = "history_ids"  # deal_history rows an action wrote, stored with its result for undo
+
 
 def clean_message(text: str) -> str:
     return " ".join(_MENTIONS.sub("", text).split())[:300]
@@ -156,6 +164,7 @@ async def propose_field_update(
                 "field": "close_date",
                 "from": card["close_date"].isoformat(),
                 "to": new.isoformat(),
+                "from_display": date_display(card["close_date"]),
                 "to_display": date_display(new),
             }
         )
@@ -248,6 +257,7 @@ async def confirm(ctx: ServiceContext, args: m.ConfirmIn) -> m.ConfirmOut:
         trace_id=ctx.trace_id,
         at=ctx.now,
     )
+    history_ids = result.pop(HISTORY_IDS, [])  # kept for undo, never shown
     stored = {
         "summary": _done_summary(row["action_type"], row["preview"], result),
         "action_type": row["action_type"],
@@ -255,8 +265,125 @@ async def confirm(ctx: ServiceContext, args: m.ConfirmIn) -> m.ConfirmOut:
         "audit_id": f"aud_{audit_id}",
         "side_effects": side_effects,
     }
-    await proposals.set_result(ctx.conn, row["id"], stored)
+    if _undoable(row["action_type"], row["params"]):
+        stored["undo_until"] = ctx.local_iso(ctx.now + UNDO_WINDOW)
+    await proposals.set_result(ctx.conn, row["id"], {**stored, HISTORY_IDS: history_ids})
     return m.ConfirmOut(status="executed", **stored)
+
+
+def _undoable(action_type: str, params: dict[str, Any]) -> bool:
+    """Proposals stored before ADR-019 lack the "from" values an undo restores."""
+    if action_type == "reassign_owner":
+        return "from_owner_id" in params
+    if action_type == UPDATE_FIELDS:
+        return all(f"from_{k}" in params for k in ("close_date", "amount_cents") if k in params)
+    return action_type in UNDOABLE
+
+
+async def extend(ctx: ServiceContext, args: m.ExtendIn) -> m.ExtendOut:
+    """More time on a preview: five more minutes, never more than MAX_PREVIEW after it was made."""
+    th = tokens.hash_token(args.confirmation_token)
+    row = await proposals.get_by_token_hash(ctx.conn, th)
+    if row is None or row["user_id"] != ctx.user_id:
+        raise _mismatch()
+    if row["status"] in ("executed", "undone"):
+        raise WatchfloorError(
+            ErrorCode.INVALID_ACTION,
+            "That preview was already approved, so it needs no more time.",
+            recovery="Nothing else to do.",
+        )
+    if row["status"] != "pending" or row["expires_at"] <= ctx.now:
+        await _explain_unclaimed(ctx, th)  # raises for expired, superseded and failed previews
+        raise _mismatch()
+    ttl = timedelta(seconds=tokens.TOKEN_TTL_SECONDS)
+    until = min(row["expires_at"] + ttl, row["created_at"] + MAX_PREVIEW)
+    new = await proposals.extend(ctx.conn, token_hash=th, user_id=ctx.user_id, now=ctx.now, until=until)
+    if new is None:
+        raise WatchfloorError(
+            ErrorCode.INVALID_ACTION,
+            "That preview can't be extended again. Previews last at most 15 minutes.",
+            recovery="Confirm it now, or ask me to propose it again later.",
+        )
+    left = max(1, round((new - ctx.now).total_seconds() / 60))
+    return m.ExtendOut(
+        summary=f"Okay, the preview stays open for {left} more minute{'s' if left != 1 else ''}.",
+        expires_at=ctx.local_iso(new),
+    )
+
+
+async def undo(ctx: ServiceContext, args: m.UndoIn) -> m.UndoOut:
+    """Reverse a just-confirmed action inside UNDO_WINDOW. All or nothing: a refusal writes nothing."""
+    th = tokens.hash_token(args.confirmation_token)
+    async with ctx.conn.transaction():  # savepoint: a refusal also releases the claim
+        row = await proposals.claim_undo(
+            ctx.conn, token_hash=th, user_id=ctx.user_id, now=ctx.now, executed_after=ctx.now - UNDO_WINDOW
+        )
+        if row is None:
+            raise await _why_not_undone(ctx, th)
+        if not _undoable(row["action_type"], row["params"]):
+            raise WatchfloorError(
+                ErrorCode.INVALID_ACTION,
+                "A follow-up draft can't be undone, but it only goes to you, never to the customer.",
+                recovery="Just ignore the draft when it arrives.",
+            )
+        summary, reverted = await UNDOERS[row["action_type"]](ctx, row)
+    audit_id = await misc.record_audit(
+        ctx.conn,
+        workspace_id=ctx.ws,
+        user_id=ctx.user_id,
+        tool=f"undo:{row['action_type']}",
+        args_hash=bytes(row["params_hash"]),
+        outcome="undone",
+        error_code=None,
+        latency_ms=None,
+        trace_id=ctx.trace_id,
+        at=ctx.now,
+    )
+    return m.UndoOut(
+        summary=summary,
+        status="undone",
+        action_type=row["action_type"],
+        audit_id=f"aud_{audit_id}",
+        reverted=reverted,
+    )
+
+
+async def _why_not_undone(ctx: ServiceContext, token_hash: bytes) -> WatchfloorError:
+    row = await proposals.get_by_token_hash(ctx.conn, token_hash)
+    if row is None or row["user_id"] != ctx.user_id:
+        return _mismatch()
+    if row["status"] == "undone":
+        return WatchfloorError(
+            ErrorCode.INVALID_ACTION, "That action was already undone.", recovery="Nothing else to do."
+        )
+    if row["status"] == "executed":
+        return _too_late()
+    return WatchfloorError(
+        ErrorCode.INVALID_ACTION,
+        "That action never ran, so there is nothing to undo.",
+        recovery="Ask me to propose it again if you still want it.",
+    )
+
+
+def _too_late() -> WatchfloorError:
+    return WatchfloorError(
+        ErrorCode.INVALID_ACTION,
+        "It's too late to undo that. Undo is open for 30 seconds after you approve.",
+        recovery="Ask me to propose the reverse change instead.",
+    )
+
+
+def _changed_since_done(account: str, what: str) -> WatchfloorError:
+    return WatchfloorError(
+        ErrorCode.INVALID_ACTION,
+        f"{account}'s {what} changed again after that action, so nothing was undone.",
+        recovery="Ask me to propose the change you want instead.",
+    )
+
+
+async def _withdraw_post(ctx: ServiceContext, proposal_id: str) -> None:
+    if not await outbox.cancel(ctx.conn, f"pr:{proposal_id}"):
+        raise _too_late()
 
 
 def _mismatch() -> WatchfloorError:
@@ -272,7 +399,14 @@ async def _explain_unclaimed(ctx: ServiceContext, token_hash: bytes) -> m.Confir
     if row is None or row["user_id"] != ctx.user_id:
         raise _mismatch()
     if row["status"] == "executed" and row["result"]:
-        return m.ConfirmOut(status="already_executed", **row["result"])
+        shown = {k: v for k, v in row["result"].items() if k != HISTORY_IDS}
+        return m.ConfirmOut(status="already_executed", **shown)
+    if row["status"] == "undone":
+        raise WatchfloorError(
+            ErrorCode.TOKEN_ALREADY_USED,
+            "That action ran and was then undone, so nothing is in effect.",
+            recovery="Ask me to propose it again if you still want it.",
+        )
     if row["status"] == "superseded":
         raise WatchfloorError(
             ErrorCode.TOKEN_EXPIRED,
@@ -317,6 +451,7 @@ def _done_summary(action_type: str, preview: dict[str, Any], result: dict[str, A
 async def _enqueue_slack(
     ctx: ServiceContext, proposal_id: str, channel: str, message: dict[str, Any]
 ) -> None:
+    # Held for the undo window (ADR-021): until it ends, undo_action can still withdraw the post.
     oid = await outbox.enqueue(
         ctx.conn,
         workspace_id=ctx.ws,
@@ -324,9 +459,10 @@ async def _enqueue_slack(
         payload={"channel": channel, "message": message},
         dedupe_key=f"pr:{proposal_id}",
         at=ctx.now,
+        deliver_at=ctx.now + POST_HOLD,
     )
     if oid is not None:
-        ctx.outbox_ids.append(oid)
+        ctx.held_outbox_ids.append(oid)
 
 
 async def _requester(ctx: ServiceContext) -> str:
@@ -388,7 +524,7 @@ async def _exec_reassign(ctx: ServiceContext, row: Any) -> tuple[dict[str, Any],
     # stored before from_owner_id existed skip the check.
     if p.get("from_owner_id") and card["owner_id"] != p["from_owner_id"]:
         raise _changed_since_preview(pv["account"], "owner")
-    await deals.apply_fields(
+    hist = await deals.apply_fields(
         ctx.conn, row["deal_id"], {"owner_id": p["new_owner_id"]}, changed_by=ctx.user_id, at=ctx.now
     )
     await scoring.recompute(
@@ -402,7 +538,10 @@ async def _exec_reassign(ctx: ServiceContext, row: Any) -> tuple[dict[str, Any],
         requester=await _requester(ctx),
     )
     await _enqueue_slack(ctx, row["id"], p["channel"], msg)
-    return {"new_owner": new_owner["display_name"]}, ["owner_changed", f"slack_post:{p['channel']}"]
+    return {"new_owner": new_owner["display_name"], HISTORY_IDS: hist}, [
+        "owner_changed",
+        f"slack_post:{p['channel']}",
+    ]
 
 
 async def _exec_notify(ctx: ServiceContext, row: Any) -> tuple[dict[str, Any], list[str]]:
@@ -455,13 +594,18 @@ async def _exec_update_fields(ctx: ServiceContext, row: Any) -> tuple[dict[str, 
         changes["close_date"] = date.fromisoformat(p["close_date"])
     if "amount_cents" in p:
         changes["amount_cents"] = int(p["amount_cents"])
-    await deals.apply_fields(ctx.conn, row["deal_id"], changes, changed_by=ctx.user_id, at=ctx.now)
+    hist = await deals.apply_fields(ctx.conn, row["deal_id"], changes, changed_by=ctx.user_id, at=ctx.now)
     out = await scoring.recompute(
         ctx.conn, workspace_id=ctx.ws, now=ctx.now, today=ctx.today, deal_ids=[row["deal_id"]]
     )
     ch = out[row["deal_id"]]
     return (
-        {"fields": sorted(changes), "score_after": ch.score_after, "band_after": ch.band_after},
+        {
+            "fields": sorted(changes),
+            "score_after": ch.score_after,
+            "band_after": ch.band_after,
+            HISTORY_IDS: hist,
+        },
         ["deal_updated", "risk_recomputed"],
     )
 
@@ -472,4 +616,83 @@ EXECUTORS = {
     "notify_channel": _exec_notify,
     "draft_followup": _exec_draft,
     UPDATE_FIELDS: _exec_update_fields,
+}
+
+
+# ------------------------------------------------------------------ undoers (ADR-021)
+# Each puts the deal back as the preview found it and withdraws the held Slack post. Each refuses,
+# writing nothing, if someone changed the same thing again in the meantime.
+
+
+def _history_ids(row: Any) -> list[str]:
+    return list((row["result"] or {}).get(HISTORY_IDS, []))
+
+
+async def _undo_task(ctx: ServiceContext, row: Any) -> tuple[str, list[str]]:
+    await misc.cancel_tasks_from_proposal(ctx.conn, row["id"])
+    await _withdraw_post(ctx, row["id"])
+    who = row["preview"].get("assignee", "your teammate")
+    return f"Undone. The task for {who} is canceled, and nothing was posted.", [
+        "task_cancelled",
+        "post_withdrawn",
+    ]
+
+
+async def _undo_reassign(ctx: ServiceContext, row: Any) -> tuple[str, list[str]]:
+    p, pv = row["params"], row["preview"]
+    await deals.lock(ctx.conn, row["deal_id"])
+    card = await deals.get_card(ctx.conn, row["deal_id"])
+    if card["owner_id"] != p["new_owner_id"]:
+        raise _changed_since_done(pv["account"], "owner")
+    await deals.revert_fields(
+        ctx.conn,
+        row["deal_id"],
+        {"owner_id": p["from_owner_id"]},
+        history_ids=_history_ids(row),
+    )
+    await scoring.recompute(
+        ctx.conn, workspace_id=ctx.ws, now=ctx.now, today=ctx.today, deal_ids=[row["deal_id"]]
+    )
+    await _withdraw_post(ctx, row["id"])
+    return f"Undone. {pv['from_owner']} owns {pv['account']} again, and nothing was posted.", [
+        "owner_restored",
+        "post_withdrawn",
+    ]
+
+
+async def _undo_notify(ctx: ServiceContext, row: Any) -> tuple[str, list[str]]:
+    await _withdraw_post(ctx, row["id"])
+    return f"Undone. Nothing was posted to {row['params']['channel']}.", ["post_withdrawn"]
+
+
+async def _undo_update_fields(ctx: ServiceContext, row: Any) -> tuple[str, list[str]]:
+    p, account = row["params"], row["preview"]["account"]
+    await deals.lock(ctx.conn, row["deal_id"])
+    card = await deals.get_card(ctx.conn, row["deal_id"])
+    restore: dict[str, Any] = {}
+    if "close_date" in p:
+        if card["close_date"].isoformat() != p["close_date"]:
+            raise _changed_since_done(account, "close date")
+        restore["close_date"] = date.fromisoformat(p["from_close_date"])
+    if "amount_cents" in p:
+        if card["amount_cents"] != int(p["amount_cents"]):
+            raise _changed_since_done(account, "amount")
+        restore["amount_cents"] = int(p["from_amount_cents"])
+    await deals.revert_fields(ctx.conn, row["deal_id"], restore, history_ids=_history_ids(row))
+    out = await scoring.recompute(
+        ctx.conn, workspace_id=ctx.ws, now=ctx.now, today=ctx.today, deal_ids=[row["deal_id"]]
+    )
+    ch = out[row["deal_id"]]
+    return (
+        f"Undone. {account} is back as it was. Health is {health(ch.score_after)}, "
+        f"{band_label(ch.band_after)}.",
+        ["deal_restored", "risk_recomputed"],
+    )
+
+
+UNDOERS = {
+    "create_task": _undo_task,
+    "reassign_owner": _undo_reassign,
+    "notify_channel": _undo_notify,
+    UPDATE_FIELDS: _undo_update_fields,
 }

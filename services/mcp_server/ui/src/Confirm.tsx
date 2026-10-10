@@ -1,11 +1,11 @@
-// Confirm sheet (DD §15.5): the preview, Approve (confirm_action) or Not now (nothing is called).
+// Confirm sheet (DD §15.5): the preview, the named action (confirm_action) or Not now (nothing is called).
 // The sheet reads top to bottom as a contract: a verb-first title, what changes (before → after),
 // what else happens (side effects), then a button that names the action rather than "Approve".
 // The server already binds the token to this exact payload and lets an expired token run nothing.
 
-import { useEffect, useState } from "preact/hooks";
-import { channelOf, clock, countdown, effectText } from "./format";
-import type { Confirmed, Proposal } from "./types";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { channelOf, clock, countdown, effectText, revertedText } from "./format";
+import type { Confirmed, Proposal, Undone } from "./types";
 
 interface Sheet {
   title: string;
@@ -52,7 +52,7 @@ function sheet(p: Record<string, unknown>): Sheet {
         high: true,
         diff: changes.map((c) => ({
           label: c.field.replace("_", " "),
-          from: c.from ?? "none",
+          from: c.from_display ?? c.from ?? "none",
           to: c.to_display ?? c.to,
         })),
         lines: [],
@@ -61,14 +61,31 @@ function sheet(p: Record<string, unknown>): Sheet {
   }
 }
 
-export function Confirm(props: { data: Proposal; busy: boolean; approve: () => void; dismiss: () => void }) {
+export function Confirm(props: {
+  data: Proposal;
+  busy: boolean;
+  approve: () => void;
+  dismiss: () => void;
+  /** extend_preview (ADR-021): offered in the last minute, so a decision is never rushed. */
+  more: () => void;
+}) {
   const { data, busy } = props;
-  const [opened] = useState(Date.now());
+  const [opened, setOpened] = useState(Date.now());
   const [now, setNow] = useState(Date.now());
+  const [added, setAdded] = useState<number | null>(null); // minutes granted by the last More time
+  const shownExpiry = useRef(data.expires_at);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+  // More time arrived: the bar refills from here, and the sheet says so once.
+  useEffect(() => {
+    if (data.expires_at === shownExpiry.current) return;
+    shownExpiry.current = data.expires_at;
+    setOpened(Date.now());
+    setNow(Date.now());
+    setAdded(Math.max(1, Math.round((new Date(data.expires_at).getTime() - Date.now()) / 60_000)));
+  }, [data.expires_at]);
   const left = countdown(data.expires_at, now);
   const h = sheet(data.preview);
   const effects = Array.isArray(data.preview.side_effects) ? (data.preview.side_effects as string[]) : [];
@@ -125,11 +142,26 @@ export function Confirm(props: { data: Proposal; busy: boolean; approve: () => v
         <div class={`expiry${low ? " low" : ""}`} aria-hidden="true">
           <span style={{ transform: `scaleX(${share})` }} />
         </div>
-        <p class={`meta timer${low ? " low" : ""}`} role="timer" aria-live="off">
-          {left.expired ? "Expired. Nothing was changed. Ask again for a fresh preview." : `Expires in ${left.text}`}
-        </p>
+        <div class="timer-row">
+          <p class={`meta timer${low ? " low" : ""}`} role="timer" aria-live="off">
+            {left.expired
+              ? "Expired. Nothing was changed. Ask again for a fresh preview."
+              : `Expires in ${left.text}${added !== null ? " · more time added" : ""}`}
+          </p>
+          {low && (
+            <button type="button" class="secondary more" disabled={busy} onClick={props.more}>
+              More time
+            </button>
+          )}
+        </div>
         <p class="sr-only" role="status">
-          {low ? "About a minute left to approve." : left.expired ? "This preview expired. Nothing was changed." : ""}
+          {low
+            ? "About a minute left to approve. More time is available."
+            : left.expired
+              ? "This preview expired. Nothing was changed."
+              : added !== null
+                ? `More time added: about ${added} minutes to decide.`
+                : ""}
         </p>
       </div>
     </section>
@@ -137,30 +169,95 @@ export function Confirm(props: { data: Proposal; busy: boolean; approve: () => v
 }
 
 /** After the action ran: a receipt, not just a tick. What happened, each side effect, and the
- *  audit reference, with a mark that reads as done without colour. Stays until the user moves on. */
-export function Done({ data }: { data: Confirmed }) {
+ *  audit reference, with a mark that reads as done without colour. Stays until the user moves on.
+ *  For its first 30 seconds it offers Undo (ADR-021): the Slack post waits until then, so an undo
+ *  withdraws it before anyone reads it. */
+export function Done(props: { data: Confirmed; busy: boolean; undo?: () => void }) {
+  const { data, busy } = props;
   const [at] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
+  const until = data.undo_until ? new Date(data.undo_until).getTime() : 0;
+  const open = Boolean(props.undo) && data.status === "executed" && until > now;
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [open]);
   const again = data.status === "already_executed";
   const effects = data.side_effects ?? [];
+  const seconds = Math.max(0, Math.ceil((until - now) / 1000));
   return (
     <section class="screen" aria-label="Action complete">
-      <div class="card sheet done" role="status">
+      <div class="card sheet done">
         <svg class="done-mark" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="12" r="11" />
           <path d="M7 12.5l3.2 3.2L17 9" />
         </svg>
-        <p class="title">{again ? "Already done" : "Done"}</p>
-        <p>{data.summary}</p>
+        {/* Only the outcome is a live region: the ticking Undo countdown must not be re-announced. */}
+        <div role="status">
+          <p class="title">{again ? "Already done" : "Done"}</p>
+          <p>{afterTitle(data.summary, "Done")}</p>
+        </div>
         {effects.length > 0 && (
           <ul class="receipt">
-            {effects.map((e) => (
-              <li key={e}>{effectText(e, true)}</li>
-            ))}
+            {effects.map((e) => {
+              // A post still waiting out the undo window has not happened yet: no check for it.
+              const held = open && e.startsWith("slack_post:");
+              return (
+                <li key={e} class={held ? "held" : undefined}>
+                  {effectText(e, true, held)}
+                </li>
+              );
+            })}
           </ul>
+        )}
+        {open && (
+          <div class="undo-row">
+            <button type="button" class="secondary" disabled={busy} onClick={props.undo}>
+              Undo{" "}
+              <span class="undo-left" aria-hidden="true">
+                0:{String(seconds).padStart(2, "0")}
+              </span>
+            </button>
+          </div>
         )}
         <p class="meta">
           {again ? "It ran earlier, so nothing ran twice." : `Recorded ${clock(new Date(at).toISOString())}`}
           {data.audit_id && ` · audit ${data.audit_id}`}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/** The title already says "Done" or "Undone": the summary's own lead word would repeat it. */
+function afterTitle(summary: string, title: string): string {
+  return summary.startsWith(`${title}. `) ? summary.slice(title.length + 2) : summary;
+}
+
+/** After an undo: the same receipt shape, with a turned-back arrow instead of the check and the
+ *  list of what was reversed. Nothing remains in effect, and it says so. */
+export function UndoneReceipt({ data }: { data: Undone }) {
+  const [at] = useState(Date.now());
+  return (
+    <section class="screen" aria-label="Action undone">
+      <div class="card sheet done undone" role="status">
+        <svg class="done-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="11" />
+          <path d="M9.5 8.5 6.5 11.5l3 3" />
+          <path d="M6.5 11.5h7a3.5 3.5 0 0 1 0 7h-2" />
+        </svg>
+        <p class="title">Undone</p>
+        <p>{afterTitle(data.summary, "Undone")}</p>
+        {data.reverted.length > 0 && (
+          <ul class="receipt">
+            {data.reverted.map((r) => (
+              <li key={r}>{revertedText(r)}</li>
+            ))}
+          </ul>
+        )}
+        <p class="meta">
+          Recorded {clock(new Date(at).toISOString())} · audit {data.audit_id}
         </p>
       </div>
     </section>

@@ -4,7 +4,7 @@
 // than passing for current.
 
 import { BandChip } from "./Band";
-import { ago, BAND_LABEL, clock, compactMoney, dealTitle, healthOf, isStale } from "./format";
+import { ago, BAND_SPOKEN, clock, compactMoney, dealTitle, healthOf, isStale } from "./format";
 import type { Briefing } from "./types";
 
 interface Props {
@@ -39,7 +39,7 @@ export function Board({ data, open, busy }: Props) {
       <header class="board-head">
         <div>
           {/* No hover on an Echo Show: the scale is said once, in words, where the eye starts. */}
-          <p class="eyebrow">WATCHFLOOR · Deal health, 0–100, higher is healthier</p>
+          <p class="eyebrow">WATCHFLOOR · DEAL HEALTH 0–100, HIGHER IS HEALTHIER</p>
           {!data.all_clear && data.deals.length > 0 && <p class="headline">{headline(data)}</p>}
           <p class="meta">{data.all_clear ? "All clear" : line}</p>
         </div>
@@ -62,7 +62,7 @@ export function Board({ data, open, busy }: Props) {
                 class={`row card ${d.band}`}
                 disabled={busy}
                 onClick={() => open(d.deal_id)}
-                aria-label={`${i + 1}. ${d.account}, ${BAND_LABEL[d.band]}, health ${healthOf(d.score, d.health)}. Open details.`}
+                aria-label={`${i + 1}. ${d.account}, ${BAND_SPOKEN[d.band]}, health ${healthOf(d.score, d.health)}. Open details.`}
               >
                 <span class="rank" aria-hidden="true">
                   {i + 1}

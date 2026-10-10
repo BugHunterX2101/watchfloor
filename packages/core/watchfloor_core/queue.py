@@ -28,23 +28,27 @@ def set_publisher(fn: Publisher | None) -> None:
     _publisher = fn
 
 
-async def publish(workspace_id: str, outbox_ids: list[int]) -> None:
+async def publish(workspace_id: str, outbox_ids: list[int], *, delay_s: int = 0) -> None:
+    """``delay_s`` (at most 900, the SQS limit) matches a row held back by its ``next_attempt_at``."""
     if not outbox_ids:
         return
     try:
-        await (_publisher or _sqs_publish)(workspace_id, list(outbox_ids))
+        if _publisher is not None:
+            await _publisher(workspace_id, list(outbox_ids))
+        else:
+            await _sqs_publish(workspace_id, list(outbox_ids), delay_s)
     except Exception:
         log.warning("outbox publish failed; the sweeper will resend", extra={"outbox_ids": outbox_ids})
 
 
-async def _sqs_publish(workspace_id: str, outbox_ids: list[int]) -> None:
+async def _sqs_publish(workspace_id: str, outbox_ids: list[int], delay_s: int = 0) -> None:
     url = get_settings().outbox_queue_url
     if not url:
         return
-    await asyncio.to_thread(_send_batches, url, workspace_id, outbox_ids)
+    await asyncio.to_thread(_send_batches, url, workspace_id, outbox_ids, delay_s)
 
 
-def _send_batches(url: str, workspace_id: str, outbox_ids: list[int]) -> None:
+def _send_batches(url: str, workspace_id: str, outbox_ids: list[int], delay_s: int = 0) -> None:
     import boto3  # lazy: only in AWS
 
     sqs = boto3.client("sqs")
@@ -53,7 +57,11 @@ def _send_batches(url: str, workspace_id: str, outbox_ids: list[int]) -> None:
         sqs.send_message_batch(
             QueueUrl=url,
             Entries=[
-                {"Id": str(oid), "MessageBody": orjson.dumps({"ws": workspace_id, "outbox_id": oid}).decode()}
+                {
+                    "Id": str(oid),
+                    "MessageBody": orjson.dumps({"ws": workspace_id, "outbox_id": oid}).decode(),
+                    "DelaySeconds": min(900, max(0, delay_s)),
+                }
                 for oid in chunk
             ],
         )

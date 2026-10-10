@@ -27,7 +27,7 @@ function tone(c: AudioContext, freq: number, at: number, dur = 0.11, peak = 0.05
 function play(notes: [freq: number, offset: number][]): void {
   if (!enabled) return;
   try {
-    // Created on the first user gesture (a tap on the mic or Approve), as autoplay rules require.
+    // Created on the first user gesture (a tap on the mic or a view button), as autoplay rules require.
     ctx ??= new AudioContext();
     if (ctx.state === "suspended") void ctx.resume();
     const t = ctx.currentTime + 0.01;
@@ -41,4 +41,12 @@ export const earcon = {
   listen: (): void => play([[659.25, 0], [880, 0.075]]), // E5 → A5
   stop: (): void => play([[880, 0], [659.25, 0.075]]), // A5 → E5
   done: (): void => play([[523.25, 0], [659.25, 0.06], [783.99, 0.12]]), // C5 E5 G5
+  undone: (): void => play([[783.99, 0], [659.25, 0.06], [523.25, 0.12]]), // G5 E5 C5, the done chord reversed
 };
+
+/** The earcon a tool call earns once it succeeded, whether it came from voice or a tap. */
+export function earconFor(tool: string, ok: boolean): void {
+  if (!ok) return;
+  if (tool === "confirm_action") earcon.done();
+  else if (tool === "undo_action") earcon.undone();
+}

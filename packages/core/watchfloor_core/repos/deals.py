@@ -234,6 +234,24 @@ async def apply_fields(
     return hist_ids
 
 
+async def revert_fields(
+    conn: asyncpg.Connection, deal_id: str, values: dict[str, Any], *, history_ids: list[str]
+) -> None:
+    """Undo an apply_fields call: restore the old values and drop the history rows it wrote
+    (``history_ids``, as it returned them), so an undone close-date push is not scored as a push."""
+    sets: list[str] = []
+    args: list[Any] = [deal_id]
+    for field, value in values.items():
+        if field not in TRACKED_FIELDS or field == "stage":
+            raise ValueError(f"cannot revert field {field}")
+        args.append(value)
+        sets.append(f"{field} = ${len(args)}")
+    await conn.execute(f"UPDATE deals SET {', '.join(sets)} WHERE id = $1", *args)  # noqa: S608
+    await conn.execute(
+        "DELETE FROM deal_history WHERE deal_id = $1 AND id = ANY($2::text[])", deal_id, history_ids
+    )
+
+
 async def account_deals(conn: asyncpg.Connection, account_id: str) -> list[asyncpg.Record]:
     return await conn.fetch(
         "SELECT id, name, stage::text AS stage, amount_cents FROM deals WHERE account_id = $1 ORDER BY created_at",

@@ -11,7 +11,7 @@ import { renderBanner } from "./banner";
 import { caption } from "./captions";
 import { ICONS } from "./icons";
 import { beat, setVoice, voiceState } from "./orb";
-import { earcon, setSounds } from "./sound";
+import { earcon, earconFor, setSounds } from "./sound";
 import { canListen, listenOnce, speak, stopListening, stopSpeaking } from "./speech";
 import { clearTrace, pendingTrace, showTrace } from "./trace";
 
@@ -45,7 +45,7 @@ const STARTERS = [
 ];
 
 const SIGNIN_ERRORS: Record<string, string> = {
-  access_denied: "Sign-in was cancelled.",
+  access_denied: "Sign-in was canceled.",
   state_mismatch: "That sign-in link expired. Please try again.",
   issuer_mismatch: "The sign-in response came from an unexpected server.",
   token_error: "The sign-in could not be completed. Please try again.",
@@ -149,11 +149,11 @@ function waitLadder(running: { note(text: string): void }): () => void {
   return () => timers.forEach((t) => window.clearTimeout(t));
 }
 
-/** Calls made from inside the view (row tap, Propose, Approve) land in the trace; an approved
- *  action that ran gets the "done" earcon. */
+/** Calls made from inside the view (row tap, Propose, the sheet's action, Undo) land in the trace;
+ *  an action that ran or was undone gets its earcon, the same as when it was asked for by voice. */
 function viewCall(call: Call): void {
   showTrace(calls, [call], call.ms, "View");
-  if (call.tool === "confirm_action" && call.ok) earcon.done();
+  earconFor(call.tool, call.ok);
 }
 
 async function send(message: string): Promise<void> {
@@ -177,6 +177,7 @@ async function send(message: string): Promise<void> {
     pending.textContent = turn.reply;
     history.push({ role: "user", text }, { role: "assistant", text: turn.reply });
     showTrace(calls, turn.calls, performance.now() - t0);
+    for (const call of turn.calls) earconFor(call.tool, call.ok);
     if (turn.ui) {
       renderView(viewBox, turn.ui, viewCall).catch((e: Error) =>
         addLine("system", `The view could not start: ${e.message}`, "error"),

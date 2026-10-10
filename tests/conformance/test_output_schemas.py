@@ -50,7 +50,9 @@ async def test_cf15_every_tool_result_matches_its_output_schema(
             "due_date": soon,
         },
     )
+    await run("extend_preview", {"confirmation_token": proposal["confirmation_token"]})
     await run("confirm_action", {"confirmation_token": proposal["confirmation_token"]})
+    await run("undo_action", {"confirmation_token": proposal["confirmation_token"]})
     rule = await run("set_standing_order", {"min_amount_usd": 75000, "quiet_days": 9})
     await run("list_standing_orders", {})
     await run("remove_standing_order", {"rule_id": rule["rule_id"]})

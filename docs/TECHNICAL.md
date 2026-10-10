@@ -1661,7 +1661,7 @@ Expected: `"3 deals need attention … Top risk: Kestrel Biotech, $84K, silent f
 npx @modelcontextprotocol/inspector
 ```
 
-Connect with transport **Streamable HTTP** to `http://127.0.0.1:8080/mcp` and add the header `Authorization: Bearer $TOKEN`. Then check that `tools/list` returns 12 tools and that each `outputSchema` validates.
+Connect with transport **Streamable HTTP** to `http://127.0.0.1:8080/mcp` and add the header `Authorization: Bearer $TOKEN`. Then check that `tools/list` returns 14 tools and that each `outputSchema` validates.
 
 ### 8.5 Exposing the local server to Alexa+ (development stage)
 

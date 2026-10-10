@@ -158,7 +158,7 @@ async def test_public_client_links_and_calls_mcp(
     assert claims["scope"] == "watchfloor.read watchfloor.write"
 
     tools = await Mcp(client, body["access_token"]).tools()
-    assert len(tools) == 12, "a linked Alexa+/harness user sees the customer tool set"
+    assert len(tools) == 14, "a linked Alexa+/harness user sees the customer tool set"
 
 
 async def test_code_is_single_use_and_pkce_bound(auth_app: Any, emails: list[str]) -> None:

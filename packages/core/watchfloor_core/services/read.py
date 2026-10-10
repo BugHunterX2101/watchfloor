@@ -114,7 +114,7 @@ async def open_card(ctx: ServiceContext, deal_id: str) -> Any:
     if card["stage"] in ("won", "lost"):
         raise WatchfloorError(
             ErrorCode.DEAL_NOT_FOUND,
-            f"{card['account']} is already closed as {card['stage']}, so it has no live risk score.",
+            f"{card['account']} is already closed as {card['stage']}, so it has no live health score.",
             recovery="Ask about an open deal instead.",
         )
     return card

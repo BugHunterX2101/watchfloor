@@ -6,7 +6,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Board } from "./Board";
 import { connect, type Bridge } from "./bridge";
-import { Confirm, Done } from "./Confirm";
+import { Confirm, Done, UndoneReceipt } from "./Confirm";
 import { Detail, Plan } from "./Detail";
 import "./tokens.css";
 import "./styles.css";
@@ -41,13 +41,20 @@ function Root({ initial }: { initial: string }) {
     [],
   );
 
-  async function go(name: string, args: Record<string, unknown>, onData?: (d: Data) => View | null) {
+  /** Call a tool and show its screen. ``replace`` swaps the top screen instead of stacking one, for
+   *  steps that can't be gone back to: an approved sheet, an undone receipt. */
+  async function go(
+    name: string,
+    args: Record<string, unknown>,
+    onData?: (d: Data) => View | null,
+    replace = false,
+  ) {
     setBusy(true);
     setError(null);
     try {
       const data = await bridge.call(name, args);
       const next = onData ? onData(data) : viewFor(data);
-      if (next) setStack((s) => [...s, next]);
+      if (next) setStack((s) => [...(replace ? s.slice(0, -1) : s), next]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -100,13 +107,46 @@ function Root({ initial }: { initial: string }) {
       <Confirm
         data={view.data}
         busy={busy}
-        // A tap on Approve is an explicit user action, like a spoken "yes" (DD §15.5).
-        approve={() => go("confirm_action", { confirmation_token: token })}
+        // A tap on the action button is an explicit user action, like a spoken "yes" (DD §15.5).
+        // The receipt replaces the sheet: Back must not lead to an approval that already ran.
+        approve={() =>
+          go(
+            "confirm_action",
+            { confirmation_token: token },
+            (d) => {
+              const v = viewFor(d);
+              return v?.kind === "done" ? { ...v, token } : v;
+            },
+            true,
+          )
+        }
         dismiss={() => setStack((s) => [...s, { kind: "message", text: "Okay, nothing was changed." }])}
+        more={() =>
+          go("extend_preview", { confirmation_token: token }, (d) => {
+            const expires = typeof d.expires_at === "string" ? d.expires_at : null;
+            if (expires) {
+              setStack((s) =>
+                s.map((v) => (v.kind === "confirm" && v.data.confirmation_token === token
+                  ? { kind: "confirm", data: { ...v.data, expires_at: expires } }
+                  : v)),
+              );
+            }
+            return null;
+          })
+        }
       />
     );
   } else if (view.kind === "done") {
-    body = <Done data={view.data} />;
+    const token = view.token;
+    body = (
+      <Done
+        data={view.data}
+        busy={busy}
+        undo={token ? () => go("undo_action", { confirmation_token: token }, undefined, true) : undefined}
+      />
+    );
+  } else if (view.kind === "undone") {
+    body = <UndoneReceipt data={view.data} />;
   } else {
     body = (
       <section class="screen">

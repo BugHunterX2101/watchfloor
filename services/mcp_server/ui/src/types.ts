@@ -91,6 +91,21 @@ export interface Confirmed {
   result?: Record<string, unknown>;
   audit_id?: string;
   side_effects?: string[];
+  /** Until when undo_action can reverse it (ADR-021); absent when it can't be undone. */
+  undo_until?: string;
+}
+
+export interface Extended {
+  summary: string;
+  expires_at: string;
+}
+
+export interface Undone {
+  summary: string;
+  status: "undone";
+  action_type: string;
+  audit_id: string;
+  reverted: string[];
 }
 
 export type Data = Record<string, unknown>;
@@ -100,7 +115,9 @@ export type View =
   | { kind: "detail"; data: Explain; plan?: TriageResult }
   | { kind: "plan"; data: TriageResult }
   | { kind: "confirm"; data: Proposal }
-  | { kind: "done"; data: Confirmed }
+  /** ``token`` is known when the approval was tapped here, which is what makes Undo possible. */
+  | { kind: "done"; data: Confirmed; token?: string }
+  | { kind: "undone"; data: Undone }
   | { kind: "message"; text: string };
 
 /** Which screen a tool result belongs on, from its shape (the UI renders only structuredContent). */
@@ -118,6 +135,7 @@ export function viewFor(d: Data): View | null {
   if ((d.status === "executed" || d.status === "already_executed") && typeof d.action_type === "string") {
     return { kind: "done", data: d as unknown as Confirmed };
   }
+  if (d.status === "undone" && Array.isArray(d.reverted)) return { kind: "undone", data: d as unknown as Undone };
   if (typeof d.summary === "string") return { kind: "message", text: d.summary };
   return null;
 }

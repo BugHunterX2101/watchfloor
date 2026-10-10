@@ -63,7 +63,8 @@ class ToolIn(BaseModel):
 
 
 # What a ui:// view may call through the host (DD §15): reads, starting a review, and the
-# two-step action flow. A tap on Approve is the user's explicit confirmation (DD §15.5).
+# two-step action flow with its edges, more time on a preview and undo on the receipt (ADR-021).
+# A tap on the sheet's action button is the user's explicit confirmation (DD §15.5).
 VIEW_TOOLS = frozenset(
     {
         "get_risk_briefing",
@@ -71,7 +72,9 @@ VIEW_TOOLS = frozenset(
         "get_triage_result",
         "start_deep_triage",
         "propose_action",
+        "extend_preview",
         "confirm_action",
+        "undo_action",
     }
 )
 
@@ -218,7 +221,7 @@ def create_app(
         return await with_session(request, turn)
 
     async def view_tool(request: Request) -> Response:
-        """A tool call from a ui:// view (row tap, Propose, Approve), proxied with the user's token."""
+        """A tool call from a ui:// view (row tap, Propose, the sheet's action, Undo), proxied with the user's token."""
         body = await json_body(request, ToolIn)
         if isinstance(body, Response):
             return body

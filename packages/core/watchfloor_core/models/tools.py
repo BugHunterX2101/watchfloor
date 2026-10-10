@@ -123,6 +123,28 @@ class ConfirmIn(_In):
     ]
 
 
+class ExtendIn(_In):
+    confirmation_token: Annotated[
+        str,
+        Field(
+            min_length=10,
+            max_length=100,
+            description="The confirmation_token of the preview that needs more time.",
+        ),
+    ]
+
+
+class UndoIn(_In):
+    confirmation_token: Annotated[
+        str,
+        Field(
+            min_length=10,
+            max_length=100,
+            description="The confirmation_token of the action that was just confirmed.",
+        ),
+    ]
+
+
 class SetRuleIn(_In):
     min_amount_usd: Annotated[
         int, Field(ge=0, le=100_000_000, description="Only deals at or above this amount in US dollars.")
@@ -384,6 +406,26 @@ class ConfirmOut(_Out):
     result: dict[str, object]
     audit_id: str
     side_effects: list[str]
+    undo_until: Annotated[
+        str | None,
+        Field(description="Until when undo_action can reverse this action; absent when it can't be undone."),
+    ] = None
+
+
+class ExtendOut(_Out):
+    summary: str
+    expires_at: str
+
+
+class UndoOut(_Out):
+    summary: str
+    status: Literal["undone"]
+    action_type: str
+    audit_id: str
+    reverted: Annotated[
+        list[str],
+        Field(description="What was reversed, e.g. task_cancelled, owner_restored, post_withdrawn."),
+    ]
 
 
 class RuleOut(_Out):

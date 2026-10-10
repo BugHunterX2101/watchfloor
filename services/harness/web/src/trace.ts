@@ -13,7 +13,9 @@ const LABELS: Record<string, string> = {
   start_deep_triage: "Started a deep review",
   get_triage_result: "Fetched the review's plan",
   propose_action: "Prepared a preview · nothing changed yet",
+  extend_preview: "Gave the preview more time · nothing changed yet",
   confirm_action: "Ran the approved action",
+  undo_action: "Undid the approved action",
   log_deal_update: "Logged a deal update",
   update_briefing_preferences: "Saved briefing preferences",
   set_standing_order: "Saved a standing order",
@@ -24,6 +26,7 @@ const LABELS: Record<string, string> = {
 /** Calls that change something (tool annotations without readOnlyHint): marked with a pencil. */
 const WRITES = new Set([
   "confirm_action",
+  "undo_action",
   "log_deal_update",
   "start_deep_triage",
   "update_briefing_preferences",

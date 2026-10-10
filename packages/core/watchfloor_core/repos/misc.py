@@ -40,6 +40,13 @@ async def create_task(
     return tid
 
 
+async def cancel_tasks_from_proposal(conn: asyncpg.Connection, proposal_id: str) -> int:
+    status = await conn.execute(
+        "UPDATE tasks SET status = 'cancelled' WHERE source_proposal_id = $1 AND status = 'open'", proposal_id
+    )
+    return int(status.split()[-1])
+
+
 # -- audit log (one row per tools/call; argument values are hashed, never stored)
 async def record_audit(
     conn: asyncpg.Connection,
@@ -160,6 +167,7 @@ async def contacts(conn: asyncpg.Connection, account_id: str) -> list[asyncpg.Re
 async def purge_old(conn: asyncpg.Connection, now: datetime) -> None:
     await conn.execute("DELETE FROM audit_log WHERE at < $1", now - timedelta(days=30))
     await conn.execute(
-        "DELETE FROM outbox WHERE status = 'sent' AND created_at < $1", now - timedelta(days=30)
+        "DELETE FROM outbox WHERE status IN ('sent', 'cancelled') AND created_at < $1",
+        now - timedelta(days=30),
     )
     await conn.execute("DELETE FROM risk_score_daily WHERE day < $1", (now - timedelta(days=180)).date())

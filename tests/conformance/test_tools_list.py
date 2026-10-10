@@ -15,8 +15,10 @@ USER_TOOLS = [
     "start_deep_triage",
     "get_triage_result",
     "propose_action",
+    "extend_preview",
     "list_standing_orders",
     "confirm_action",
+    "undo_action",
     "set_standing_order",
     "remove_standing_order",
     "log_deal_update",
@@ -24,6 +26,7 @@ USER_TOOLS = [
 ]
 WRITE_TOOLS = {
     "confirm_action",
+    "undo_action",
     "set_standing_order",
     "remove_standing_order",
     "log_deal_update",
@@ -50,7 +53,7 @@ def _snapshot() -> dict[str, list[dict]]:
     return orjson.loads(SNAPSHOT_PATH.read_bytes())
 
 
-async def test_cf03_user_sees_exactly_12_tools_matching_snapshot(mcp: Mcp) -> None:
+async def test_cf03_user_sees_exactly_14_tools_matching_snapshot(mcp: Mcp) -> None:
     tools = await mcp.tools()
     assert [t["name"] for t in tools] == USER_TOOLS
     assert tools == _snapshot()["user"], "tools/list drifted; regenerate the snapshot and run alexa-ai deploy"
@@ -65,7 +68,7 @@ async def test_cf04_agent_sees_6_tools_and_no_write_tools(mcp: Mcp, token_factor
     assert tools == _snapshot()["agent"]
 
 
-async def test_read_only_token_sees_7_tools(mcp: Mcp, token_factory: TokenFactory) -> None:
+async def test_read_only_token_sees_8_tools(mcp: Mcp, token_factory: TokenFactory) -> None:
     reader = Mcp(mcp.client, token_factory(scope="watchfloor.read"))
     names = [t["name"] for t in await reader.tools()]
     assert names == [n for n in USER_TOOLS if n not in WRITE_TOOLS]

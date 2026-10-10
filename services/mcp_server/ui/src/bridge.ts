@@ -17,11 +17,12 @@ interface ToolResult {
   isError?: boolean;
 }
 
+/** An error's summary is its message plus what to do next, the same words Alexa+ would speak. */
 function message(r: ToolResult): string {
   const sc = r.structuredContent as { error?: { message?: string }; summary?: string } | undefined;
   return (
-    sc?.error?.message ??
     sc?.summary ??
+    sc?.error?.message ??
     r.content?.find((c) => c.type === "text")?.text ??
     "That didn't work. Please try again."
   );

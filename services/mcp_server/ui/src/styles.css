@@ -63,7 +63,7 @@ p {
   display: grid;
   grid-template-columns: auto auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
-    "rank score band who amount chips"
+    "rank score band who chips amount"
     "rank score why why why why";
   align-items: center;
   gap: 0 var(--gap);
@@ -99,8 +99,12 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+/* Each row is its own grid, so the columns that should line up from row to row get fixed widths:
+   two-digit health right-aligned, band chips as wide as the widest (AT RISK), amounts last. */
 .row .score {
   grid-area: score;
+  min-width: 2ch;
+  text-align: right;
   font-size: var(--fs-title);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -108,6 +112,7 @@ p {
 
 .row .band {
   grid-area: band;
+  min-width: 6.6em;
 }
 
 .row .who {
@@ -120,6 +125,8 @@ p {
 
 .row .amount {
   grid-area: amount;
+  min-width: 4.5ch;
+  text-align: right;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -430,6 +437,46 @@ p {
 .timer {
   margin-top: calc(var(--gap) / 2);
   font-variant-numeric: tabular-nums;
+}
+
+/* The timer and, in the last minute, More time beside it: the choice sits where the warning is. */
+.timer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--gap) / 2) var(--gap);
+}
+
+.timer-row .timer {
+  margin-bottom: 0;
+}
+
+/* Undo on the receipt: a quiet button with its own countdown, gone when the window closes. */
+.undo-row {
+  margin: 0 0 var(--gap);
+}
+
+.undo-left {
+  margin-left: 0.4em;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Not happened yet (a post waiting out the undo window): a hollow ring instead of the check. */
+.receipt li.held::before {
+  left: 0.2em;
+  top: 0.45em;
+  width: 0.5em;
+  height: 0.5em;
+  border: 0.12em solid var(--muted);
+  border-radius: 50%;
+  rotate: none;
+}
+
+.undone .done-mark {
+  stroke: var(--ink);
 }
 
 .timer.low {

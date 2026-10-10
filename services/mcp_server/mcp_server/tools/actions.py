@@ -1,4 +1,5 @@
-"""propose_action and confirm_action: the two-tool confirmation loop (J3, DD §8)."""
+"""propose_action and confirm_action: the two-tool confirmation loop (J3, DD §8), with
+extend_preview and undo_action on either side of it (ADR-021)."""
 
 from __future__ import annotations
 
@@ -21,6 +22,29 @@ PROPOSE = ToolSpec(
     handler=actions.propose,
     ui_resource=CONFIRM_SHEET,
     budget_ms=120,
+)
+
+# More time keeps the same token alive a little longer; like propose, it has no business effect.
+EXTEND = ToolSpec(
+    name="extend_preview",
+    scopes=frozenset({Scope.READ}),
+    description=DESCRIPTIONS["extend_preview"],
+    input_model=m.ExtendIn,
+    output_model=m.ExtendOut,
+    annotations=annotations(readOnlyHint=True),
+    handler=actions.extend,
+    budget_ms=120,
+)
+
+UNDO = ToolSpec(
+    name="undo_action",
+    scopes=frozenset({Scope.WRITE}),
+    description=DESCRIPTIONS["undo_action"],
+    input_model=m.UndoIn,
+    output_model=m.UndoOut,
+    annotations=annotations(destructiveHint=True, idempotentHint=True),
+    handler=actions.undo,
+    budget_ms=300,
 )
 
 CONFIRM = ToolSpec(
