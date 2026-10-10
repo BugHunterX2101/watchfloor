@@ -141,9 +141,20 @@ button:focus-visible,
 }
 
 .band {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
   font-weight: 800;
   letter-spacing: 0.04em;
   font-size: var(--fs-meta);
+}
+
+/* Band shape (Band.tsx): triangle = at risk, square = watch, circle = healthy. */
+.band-mark {
+  width: 0.8em;
+  height: 0.8em;
+  flex: none;
+  fill: currentColor;
 }
 
 .band.at_risk {
@@ -182,8 +193,24 @@ button:focus-visible,
   padding: var(--gap);
 }
 
+/* Motion inside views stays within DD §15.2's 150 ms: a press settles to 0.97 and back (strong
+   ease-out), transitions rather than keyframes so a second tap interrupts cleanly. */
 @media (prefers-reduced-motion: no-preference) {
   .row {
-    transition: background-color 150ms ease;
+    transition:
+      background-color 150ms ease,
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  button {
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  button:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .row:active:not(:disabled) {
+    transform: scale(0.99);
   }
 }

@@ -44,12 +44,27 @@ p {
   gap: calc(var(--gap) / 2);
 }
 
+/* The one number to read from across the room: money at risk. */
+.headline {
+  margin: 0 0 4px;
+  font-size: var(--fs-title);
+  font-weight: 800;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Freshness: quiet when current, amber and worded ("Last updated 3 h ago") when older than an hour. */
+.fresh.stale {
+  color: var(--warn);
+  font-weight: 700;
+}
+
 .row {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
-    "score band who amount chips"
-    "score why why why why";
+    "rank score band who amount chips"
+    "rank score why why why why";
   align-items: center;
   gap: 0 var(--gap);
   width: 100%;
@@ -72,6 +87,16 @@ p {
 
 .row:hover:not(:disabled) {
   background: var(--track);
+}
+
+.row .rank {
+  grid-area: rank;
+  align-self: start;
+  min-width: 1.4em;
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .row .score {
@@ -123,7 +148,7 @@ p {
 
 .big {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--gap);
   margin: var(--gap) 0 0;
 }
@@ -135,6 +160,15 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+/* "/100 risk" beside the number: higher is worse here, so the score always says what it measures. */
+.big .of {
+  align-self: center;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--muted);
+}
+
 .trend {
   margin: var(--gap) 0;
   color: var(--accent);
@@ -144,6 +178,28 @@ p {
   width: min(100%, 280px);
   height: auto;
   display: block;
+}
+
+.trend .zone {
+  fill: var(--crit);
+  opacity: 0.1;
+}
+
+.trend .threshold {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+
+.trend .end {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.trend .end.stale {
+  fill: var(--surface);
 }
 
 .actions {
@@ -198,7 +254,18 @@ p {
 .bar > span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: var(--muted);
+}
+
+/* Only the biggest driver gets the strong bar; it is also named in words ("biggest driver"). */
+.factor.worst .bar > span {
+  background: var(--crit);
+}
+
+.driver {
+  font-weight: 600;
+  font-size: var(--fs-meta);
+  color: var(--crit);
 }
 
 .value {
@@ -247,6 +314,96 @@ p {
 
 .quote {
   font-size: var(--fs-title);
+}
+
+/* Changes someone else's work or posts where others read it: a firmer frame, worded in the eyebrow. */
+.sheet.high {
+  border-color: var(--warn);
+  border-width: 2px;
+}
+
+.sheet.expired .title,
+.sheet.expired .quote,
+.sheet.expired .diff {
+  opacity: 0.55;
+}
+
+/* Before → after: the old value struck through, the new one bold. */
+.diff {
+  margin: var(--gap) 0;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: baseline;
+}
+
+.diff dt {
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.diff dd {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+
+.diff .from,
+.diff .arrow {
+  color: var(--muted);
+}
+
+.effects-head {
+  margin-top: var(--gap);
+}
+
+.effects,
+.receipt {
+  margin: 0 0 var(--gap);
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-meta);
+}
+
+.effects li,
+.receipt li {
+  position: relative;
+  padding-left: 1.3em;
+}
+
+.effects li::before {
+  content: "";
+  position: absolute;
+  left: 0.25em;
+  top: 0.55em;
+  width: 0.4em;
+  height: 0.4em;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+/* Receipt lines carry a drawn check, so "done" never rests on colour alone. */
+.receipt {
+  display: inline-block;
+  margin-top: calc(var(--gap) / 2);
+  text-align: left;
+}
+
+.receipt li::before {
+  content: "";
+  position: absolute;
+  left: 0.3em;
+  top: 0.2em;
+  width: 0.3em;
+  height: 0.6em;
+  border: solid var(--ok);
+  border-width: 0 0.15em 0.15em 0;
+  rotate: 45deg;
 }
 
 /* Time left to approve: a bar that empties once a second (stepped, not animated), amber in the
@@ -317,12 +474,12 @@ p {
   }
 
   .row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     grid-template-areas:
-      "score band amount"
-      "score who who"
-      "score why why"
-      "score chips chips";
+      "rank score band amount"
+      "rank score who who"
+      "rank score why why"
+      "rank score chips chips";
   }
 
   .plan-action {

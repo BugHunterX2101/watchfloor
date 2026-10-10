@@ -5,6 +5,47 @@
 import type { Call } from "./api";
 import { ICONS } from "./icons";
 
+/** What each tool did, in words a sales manager reads at a glance; the tool name stays beside it. */
+const LABELS: Record<string, string> = {
+  get_risk_briefing: "Read the risk briefing",
+  explain_deal_risk: "Explained a deal's risk",
+  lookup_deal: "Looked up a deal",
+  start_deep_triage: "Started a deep review",
+  get_triage_result: "Fetched the review's plan",
+  propose_action: "Prepared a preview · nothing changed yet",
+  confirm_action: "Ran the approved action",
+  log_deal_update: "Logged a deal update",
+  update_briefing_preferences: "Saved briefing preferences",
+  set_standing_order: "Saved a standing order",
+  list_standing_orders: "Listed standing orders",
+  remove_standing_order: "Removed a standing order",
+};
+
+/** Calls that change something (tool annotations without readOnlyHint): marked with a pencil. */
+const WRITES = new Set([
+  "confirm_action",
+  "log_deal_update",
+  "start_deep_triage",
+  "update_briefing_preferences",
+  "set_standing_order",
+  "remove_standing_order",
+]);
+
+function name(tool: string): HTMLSpanElement {
+  const node = el("span", "span-name");
+  const label = LABELS[tool];
+  if (label) node.append(el("span", "span-label", label), el("code", "span-tool", tool));
+  else node.append(el("code", "span-tool", tool));
+  if (WRITES.has(tool)) {
+    const mark = el("span", "span-write");
+    mark.innerHTML = ICONS.pencil;
+    mark.append("writes");
+    node.append(mark);
+  }
+  node.title = tool;
+  return node;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -12,8 +53,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
-/** A running card at the top of the trace until the turn returns; the elapsed time ticks live. */
-export function pendingTrace(list: HTMLOListElement, source = "Turn"): { remove(): void } {
+/** A running card at the top of the trace until the turn returns; the elapsed time ticks live and
+ *  `note` rewords the wait as it grows (main.ts: a few seconds, then "longer than usual"). */
+export function pendingTrace(list: HTMLOListElement, source = "Turn"): { remove(): void; note(text: string): void } {
   list.querySelector(".calls-empty")?.setAttribute("hidden", "");
   const turn = el("li", "turn running");
   turn.setAttribute("aria-busy", "true");
@@ -28,7 +70,8 @@ export function pendingTrace(list: HTMLOListElement, source = "Turn"): { remove(
   glyph.setAttribute("aria-label", "running");
   const bar = el("div", "span-bar");
   bar.append(el("i"));
-  span.append(glyph, el("span", "span-name", "waiting for the MCP server"), el("span", "span-ms", "…"), bar);
+  const waiting = el("span", "span-name", "waiting for the MCP server");
+  span.append(glyph, waiting, el("span", "span-ms", "…"), bar);
   turn.append(head, span);
   list.prepend(turn);
 
@@ -37,6 +80,9 @@ export function pendingTrace(list: HTMLOListElement, source = "Turn"): { remove(
     clock.textContent = `${Math.round(performance.now() - t0)} ms`;
   }, 50);
   return {
+    note(text) {
+      waiting.textContent = text;
+    },
     remove() {
       window.clearInterval(timer);
       turn.remove();
@@ -67,7 +113,8 @@ export function showTrace(list: HTMLOListElement, calls: Call[], totalMs: number
     const fill = el("i");
     fill.style.width = `${Math.max(2, (c.ms / slowest) * 100)}%`;
     bar.append(fill);
-    span.append(glyph, el("span", "span-name", c.tool), el("span", "span-ms", `${c.ms} ms${c.ok ? "" : " · error"}`), bar);
+    if (WRITES.has(c.tool)) span.classList.add("write");
+    span.append(glyph, name(c.tool), el("span", "span-ms", `${c.ms} ms${c.ok ? "" : " · error"}`), bar);
 
     // Confirmation tokens are single-use and short-lived, but still not something to put on screen.
     const shown: Record<string, unknown> = { ...c.arguments };

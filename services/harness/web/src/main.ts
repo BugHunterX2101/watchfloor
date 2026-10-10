@@ -10,7 +10,7 @@ import { clearView, renderView, setDevice, setTheme, type Device } from "./appho
 import { renderBanner } from "./banner";
 import { caption } from "./captions";
 import { ICONS } from "./icons";
-import { beat, setVoice } from "./orb";
+import { beat, setVoice, voiceState } from "./orb";
 import { earcon, setSounds } from "./sound";
 import { canListen, listenOnce, speak, stopListening, stopSpeaking } from "./speech";
 import { clearTrace, pendingTrace, showTrace } from "./trace";
@@ -124,11 +124,29 @@ function reply(line: HTMLElement, text: string): void {
       beat();
       cap.word(index);
     },
-    onEnd: () => {
-      cap.end();
-      setVoice("idle");
+    onEnd: (interrupted) => {
+      cap.end(interrupted);
+      // A reply cut off by a new turn ends after that turn has set "thinking": leave that alone.
+      if (voiceState() === "speaking") setVoice("idle");
     },
   });
+}
+
+/** A wait that says what it is as it grows: a quiet "Working on it…" first, then a few seconds in
+ *  that it is still going, then past ten seconds that this is longer than usual (NN/g: ~1 s needs an
+ *  indicator, ~10 s needs an explanation). Returns a stop function. */
+function waitLadder(running: { note(text: string): void }): () => void {
+  const steps: [number, string, string][] = [
+    [3000, "Still working…", "still working · model and tools"],
+    [10000, "Taking longer than usual…", "taking longer than usual"],
+  ];
+  const timers = steps.map(([ms, voiceText, traceText]) =>
+    window.setTimeout(() => {
+      if (voiceState() === "thinking") setVoice("thinking", voiceText);
+      running.note(traceText);
+    }, ms),
+  );
+  return () => timers.forEach((t) => window.clearTimeout(t));
 }
 
 /** Calls made from inside the view (row tap, Propose, Approve) land in the trace; an approved
@@ -148,9 +166,11 @@ async function send(message: string): Promise<void> {
   addLine("user", text);
   const pending = pendingLine();
   const running = pendingTrace(calls);
+  const stopLadder = waitLadder(running);
   const t0 = performance.now();
   try {
     const turn = await converse(text, history);
+    stopLadder();
     running.remove();
     pending.classList.remove("pending");
     pending.removeAttribute("aria-label");
@@ -164,6 +184,7 @@ async function send(message: string): Promise<void> {
     }
     reply(pending, turn.reply);
   } catch (err) {
+    stopLadder();
     running.remove();
     pending.remove();
     setVoice("error");

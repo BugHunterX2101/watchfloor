@@ -1,9 +1,24 @@
 // Deal detail (DD §15.4): score and band, RIGS factor bars, reasons, trend; plan and Propose.
 
-import { BAND_LABEL, dealTitle, FACTOR_NAME, FACTORS, percent, since } from "./format";
+import { BandChip } from "./Band";
+import {
+  ago,
+  AT_RISK_FROM,
+  BAND_LABEL,
+  clock,
+  dealTitle,
+  FACTOR_NAME,
+  FACTORS,
+  isStale,
+  percent,
+  since,
+  WATCH_FROM,
+} from "./format";
 import type { Explain, RecommendedAction, TriageResult } from "./types";
 
-function Trend({ points }: { points: number[] }) {
+/** Fixed 0–100 scale (an auto-scaled axis turns a 2-point wobble into a cliff), the at-risk zone
+ *  shaded and the watch line dashed, so the line reads against the bands, not just against itself. */
+function Trend({ points, stale }: { points: number[]; stale: boolean }) {
   if (points.length < 2) return null;
   const w = 140;
   const h = 32;
@@ -12,15 +27,23 @@ function Trend({ points }: { points: number[] }) {
   const path = points.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const first = points[0];
   const last = points[points.length - 1];
+  const delta = last - first;
+  const change = delta === 0 ? "no change" : `${delta > 0 ? "up" : "down"} ${Math.abs(delta)}`;
   return (
     <figure class="trend">
-      <svg viewBox={`-4 -4 ${w + 8} ${h + 8}`} role="img" aria-label={`14-day trend from ${first} to ${last}`}>
+      <svg
+        viewBox={`-4 -4 ${w + 8} ${h + 8}`}
+        role="img"
+        aria-label={`14-day risk trend from ${first} to ${last}, ${change}. Shaded area is the at-risk zone.`}
+      >
+        <rect class="zone" x="0" y="0" width={w} height={y(AT_RISK_FROM)} />
+        <line class="threshold" x1="0" x2={w} y1={y(WATCH_FROM)} y2={y(WATCH_FROM)} />
         <path d={path} fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-        {/* Today, marked: where the line ends is the score shown above. */}
-        <circle cx={w} cy={y(last)} r="3.5" fill="currentColor" />
+        {/* Today, marked: where the line ends is the score shown above; hollow when it is stale. */}
+        <circle class={stale ? "end stale" : "end"} cx={w} cy={y(last)} r="3.5" />
       </svg>
       <figcaption class="meta">
-        14-day trend · {first} → {last}
+        14-day trend · {first} → {last} ({change})
       </figcaption>
     </figure>
   );
@@ -30,6 +53,10 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
   const { data, busy } = props;
   const { deal, risk } = data;
   const reasonFor = (f: string) => data.reasons.find((r) => r.factor === f)?.text ?? "";
+  const value = (f: string) => risk.components[f.toLowerCase()] ?? 0;
+  // The single biggest driver is named in words and carries the only strong bar; the rest stay quiet.
+  const worst = FACTORS.reduce((a, b) => (value(b) > value(a) ? b : a));
+  const stale = isStale(risk.computed_at);
   return (
     <section class="screen detail" aria-label={`${deal.account} detail`}>
       <div class="detail-left">
@@ -38,12 +65,20 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
         <p class="meta">
           {[deal.amount_display, deal.stage, deal.owner].filter(Boolean).join(" · ")}
         </p>
-        <p class="big">
+        {/* Labelled as risk every time: higher is worse here, unlike most CRM health scores. */}
+        <p class="big" aria-label={`Risk ${risk.score} out of 100, ${BAND_LABEL[risk.band]}`}>
           <span class="score">{risk.score}</span>
-          <span class={`band ${risk.band}`}>{BAND_LABEL[risk.band]}</span>
+          <span class="of">
+            /100
+            <br />
+            risk
+          </span>
+          <BandChip band={risk.band} />
         </p>
-        <p class="meta">{since(risk.band_since)}</p>
-        <Trend points={data.trend_14d} />
+        <p class={`meta fresh${stale ? " stale" : ""}`}>
+          {since(risk.band_since)} · scored {stale ? ago(risk.computed_at) : clock(risk.computed_at)}
+        </p>
+        <Trend points={data.trend_14d} stale={stale} />
         <div class="actions">
           <button type="button" disabled={busy} onClick={props.dig}>
             Dig into it
@@ -59,16 +94,20 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
         <p class="eyebrow">WHY IT'S {BAND_LABEL[risk.band]}</p>
         <ul class="factors">
           {FACTORS.map((f) => {
-            const value = risk.components[f.toLowerCase()] ?? 0;
+            const v = value(f);
+            const top = f === worst && v > 0;
             return (
-              <li key={f} class="factor">
+              <li key={f} class={`factor${top ? " worst" : ""}`}>
                 {/* Spelled out: an Echo Show has no hover, so a letter with a tooltip hides its meaning. */}
-                <span class="factor-name">{FACTOR_NAME[f]}</span>
-                <span class="bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(value)}
-                  aria-label={`${FACTOR_NAME[f]} ${value.toFixed(2)}`}>
-                  <span style={{ width: `${percent(value)}%` }} />
+                <span class="factor-name">
+                  {FACTOR_NAME[f]}
+                  {top && <span class="driver"> · biggest driver</span>}
                 </span>
-                <span class="value">{value.toFixed(2)}</span>
+                <span class="bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(v)}
+                  aria-label={`${FACTOR_NAME[f]} ${v.toFixed(2)}`}>
+                  <span style={{ width: `${percent(v)}%` }} />
+                </span>
+                <span class="value">{v.toFixed(2)}</span>
                 <span class="factor-why meta">{reasonFor(f)}</span>
               </li>
             );

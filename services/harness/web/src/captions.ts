@@ -5,7 +5,9 @@
 
 export interface Caption {
   word(index: number): void;
-  end(): void;
+  /** Interrupted mid-reply: the words never spoken stay faint and the line is marked as cut off,
+   *  so the transcript shows how much was actually heard. */
+  end(interrupted?: boolean): void;
 }
 
 export function caption(line: HTMLElement, text: string): Caption {
@@ -38,9 +40,10 @@ export function caption(line: HTMLElement, text: string): Caption {
       words[i]?.el.classList.add("now");
       reached = i;
     },
-    end() {
-      line.classList.remove("captioning");
+    end(interrupted = false) {
       words[reached]?.el.classList.remove("now");
+      if (interrupted && reached >= 0 && reached < words.length - 1) line.classList.add("cut");
+      else line.classList.remove("captioning");
     },
   };
 }

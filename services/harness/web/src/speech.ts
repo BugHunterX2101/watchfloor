@@ -71,15 +71,26 @@ export interface SpeakEvents {
   /** Each word boundary, where the voice reports them (many network voices don't): the word's
    *  character offset and length in the spoken text. */
   onWord?: (index: number, length: number) => void;
-  onEnd?: () => void; // finished, cancelled or failed
+  /** Finished, cancelled or failed; `interrupted` when it was cut off (Escape, the mic, a new turn). */
+  onEnd?: (interrupted: boolean) => void;
 }
+
+/** The utterance in flight; stopping it marks it cut, so its end reports an interruption. */
+let speaking: { cut: boolean } | null = null;
 
 export function speak(text: string, events: SpeakEvents = {}): void {
   if (!("speechSynthesis" in window) || !text) {
-    events.onEnd?.();
+    events.onEnd?.(false);
     return;
   }
+  if (speaking) speaking.cut = true;
   window.speechSynthesis.cancel();
+  const state = { cut: false };
+  speaking = state;
+  const end = (): void => {
+    if (speaking === state) speaking = null;
+    events.onEnd?.(state.cut);
+  };
   const u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || "en-US";
   u.rate = 1.05;
@@ -90,11 +101,15 @@ export function speak(text: string, events: SpeakEvents = {}): void {
     const length = e.charLength || (/^\S+/.exec(text.slice(e.charIndex))?.[0].length ?? 1);
     events.onWord?.(e.charIndex, length);
   };
-  u.onend = () => events.onEnd?.();
-  u.onerror = () => events.onEnd?.();
+  u.onend = end;
+  u.onerror = (e) => {
+    if (e.error === "interrupted" || e.error === "canceled") state.cut = true;
+    end();
+  };
   window.speechSynthesis.speak(u);
 }
 
 export function stopSpeaking(): void {
+  if (speaking) speaking.cut = true;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }

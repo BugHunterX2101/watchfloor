@@ -7,6 +7,7 @@ export interface BriefingDeal {
   deal_id: string;
   name: string;
   account: string;
+  amount_cents?: number | null;
   amount_display?: string | null;
   stage: string;
   owner: string;
@@ -84,6 +85,9 @@ export interface Confirmed {
   summary: string;
   status: "executed" | "already_executed";
   action_type: string;
+  result?: Record<string, unknown>;
+  audit_id?: string;
+  side_effects?: string[];
 }
 
 export type Data = Record<string, unknown>;
