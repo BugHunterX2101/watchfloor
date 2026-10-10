@@ -97,7 +97,8 @@ async def propose(ctx: ServiceContext, args: m.ProposeIn) -> m.ProposalOut:
                 f"{who['display_name']} already owns {account}.",
                 recovery="Name a different teammate.",
             )
-        params = {"new_owner_id": who["id"], "channel": channel}
+        # The owner the preview showed: confirm refuses if the deal changed hands since (_unchanged).
+        params = {"new_owner_id": who["id"], "channel": channel, "from_owner_id": card["owner_id"]}
         preview = {
             "action_type": t,
             "account": account,
@@ -149,6 +150,7 @@ async def propose_field_update(
     if "close_date" in changes:
         new = changes["close_date"]
         params["close_date"] = new.isoformat()
+        params["from_close_date"] = card["close_date"].isoformat()
         preview["changes"].append(
             {
                 "field": "close_date",
@@ -161,6 +163,7 @@ async def propose_field_update(
     if "amount_cents" in changes:
         new_amt = changes["amount_cents"]
         params["amount_cents"] = new_amt
+        params["from_amount_cents"] = card["amount_cents"]
         preview["changes"].append(
             {"field": "amount", "from": money_display(card["amount_cents"]), "to": money_display(new_amt)}
         )
@@ -364,6 +367,14 @@ async def _exec_create_task(ctx: ServiceContext, row: Any) -> tuple[dict[str, An
     ]
 
 
+def _changed_since_preview(account: str, what: str) -> WatchfloorError:
+    return WatchfloorError(
+        ErrorCode.INVALID_ACTION,
+        f"{account}'s {what} changed after that preview, so nothing was changed.",
+        recovery="Ask me to propose it again with the current details.",
+    )
+
+
 async def _exec_reassign(ctx: ServiceContext, row: Any) -> tuple[dict[str, Any], list[str]]:
     p, pv = row["params"], row["preview"]
     locked = await deals.lock(ctx.conn, row["deal_id"])
@@ -373,6 +384,10 @@ async def _exec_reassign(ctx: ServiceContext, row: Any) -> tuple[dict[str, Any],
     if new_owner is None:
         raise WatchfloorError(ErrorCode.UNKNOWN_ASSIGNEE, "That teammate is no longer in the workspace.")
     card = await deals.get_card(ctx.conn, row["deal_id"])
+    # Approval covers the change the preview showed, not whatever the deal looks like now. Proposals
+    # stored before from_owner_id existed skip the check.
+    if p.get("from_owner_id") and card["owner_id"] != p["from_owner_id"]:
+        raise _changed_since_preview(pv["account"], "owner")
     await deals.apply_fields(
         ctx.conn, row["deal_id"], {"owner_id": p["new_owner_id"]}, changed_by=ctx.user_id, at=ctx.now
     )
@@ -430,6 +445,11 @@ async def _exec_update_fields(ctx: ServiceContext, row: Any) -> tuple[dict[str, 
     locked = await deals.lock(ctx.conn, row["deal_id"])
     if locked is None or locked["stage"] in ("won", "lost"):
         raise WatchfloorError(ErrorCode.INVALID_ACTION, "That deal is closed, so it can't be updated.")
+    card = await deals.get_card(ctx.conn, row["deal_id"])
+    if "from_close_date" in p and card["close_date"].isoformat() != p["from_close_date"]:
+        raise _changed_since_preview(row["preview"]["account"], "close date")
+    if "from_amount_cents" in p and card["amount_cents"] != p["from_amount_cents"]:
+        raise _changed_since_preview(row["preview"]["account"], "amount")
     changes: dict[str, Any] = {}
     if "close_date" in p:
         changes["close_date"] = date.fromisoformat(p["close_date"])

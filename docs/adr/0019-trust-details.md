@@ -77,16 +77,26 @@ interrupts cleanly.
 - **Fix.** A reply cut off by a new question no longer resets the orb to idle while that question
   is being answered.
 
+**Server: an approval covers what its preview showed.**
+
+- **What is recorded.** A reassignment stores the owner the preview showed (`from_owner_id`). A
+  close-date or amount change stores the old value (`from_close_date`, `from_amount_cents`). These
+  sit in the hashed params, so they are bound to the token like the rest.
+- **What happens at confirm.** If the deal no longer matches, the action is refused with
+  `INVALID_ACTION`: "Kestrel Biotech's owner changed after that preview, so nothing was changed",
+  with "Ask me to propose it again" as the recovery.
+- **Older proposals.** Proposals stored before this change have no such keys and skip the check.
+- **No contract change.** The error code and the tool schemas are unchanged.
+
 ## Deferred
 
 - **Undo.** Undo on the receipt, such as a delayed channel post or deleting a just-created task,
   needs new server tools and an outbox delay.
-- **Re-checking at run time.** The deal's version is not yet compared against the preview when the
-  action runs.
 - **"More time" on a preview.** Needs a server change to extend the token.
 
-Signed evidence chips with a source and age per reason (for example "Buyer silent 12 days (usual 4)")
-need the scorer to return baselines. Each of these is a contract change, to be decided separately.
+Reasons already carry their benchmark ("No two-way contact for 9 days; typical for Proposal is 6").
+Showing a source and age per reason as a chip would need the scorer to return them per reason. Each
+deferred item is a contract change, to be decided separately.
 
 ## Consequences
 
