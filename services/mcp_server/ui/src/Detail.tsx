@@ -34,12 +34,14 @@ function Trend({ risk, stale }: { risk: number[]; stale: boolean }) {
   const last = points[points.length - 1];
   const delta = last - first;
   const change = delta === 0 ? "no change" : `${delta > 0 ? "up" : "down"} ${Math.abs(delta)}`;
+  // One point per day (explain_deal_risk), so a newer deal's trend says how many days it covers.
+  const span = `${points.length}-day`;
   return (
     <figure class="trend">
       <svg
         viewBox={`-4 -4 ${w + 8} ${h + 8}`}
         role="img"
-        aria-label={`14-day health trend from ${first} to ${last}, ${change}. Shaded area is the at-risk zone.`}
+        aria-label={`${span} health trend from ${first} to ${last}, ${change}. Shaded area is the at-risk zone.`}
       >
         <rect class="zone" x="0" y={y(AT_RISK_HEALTH)} width={w} height={h - y(AT_RISK_HEALTH)} />
         <line class="threshold" x1="0" x2={w} y1={y(WATCH_HEALTH)} y2={y(WATCH_HEALTH)} />
@@ -48,7 +50,7 @@ function Trend({ risk, stale }: { risk: number[]; stale: boolean }) {
         <circle class={stale ? "end stale" : "end"} cx={w} cy={y(last)} r="3.5" />
       </svg>
       <figcaption class="meta">
-        14-day trend · {first} → {last} ({change})
+        {span} trend · {first} → {last} ({change})
       </figcaption>
     </figure>
   );
