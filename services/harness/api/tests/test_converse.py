@@ -52,6 +52,36 @@ async def test_offline_router_finds_the_deal_by_name(client: httpx.AsyncClient, 
     assert r.json()["reply"] == "Which deal do you mean?"
 
 
+async def test_offline_follow_up_uses_the_deal_named_before(client: httpx.AsyncClient, mcp: FakeMcp) -> None:
+    """The board suggests "Dig into it.": the offline router finds "it" in the user's last question."""
+    await sign_in(client)
+    history = [
+        {"role": "user", "text": "Why is Harbor & Pine at risk?"},
+        {"role": "assistant", "text": EXPLAIN},
+    ]
+    r = await client.post("/converse", json={"message": "Dig into it.", "history": history})
+    assert r.status_code == 200
+    assert mcp.calls[-2] == ("lookup_deal", {"name_query": "Harbor & Pine"})
+    assert mcp.names()[-1] == "start_deep_triage"
+
+
+async def test_long_history_lines_are_clipped_not_refused(client: httpx.AsyncClient) -> None:
+    """One long model reply must not turn every later turn into a 400."""
+    await sign_in(client)
+    history = [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "x" * 5000}]
+    r = await client.post("/converse", json={"message": "What needs my attention today?", "history": history})
+    assert r.status_code == 200 and r.json()["reply"] == BRIEFING
+
+
+async def test_view_html_is_fetched_once_per_process(client: httpx.AsyncClient, mcp: FakeMcp) -> None:
+    await sign_in(client)
+    await client.post("/converse", json={"message": "What needs my attention today?"})
+    first = len(mcp.headers)  # tools/list, tools/call, resources/read
+    r = await client.post("/converse", json={"message": "What needs my attention today?"})
+    assert r.json()["ui"]["html"] == BOARD_HTML
+    assert len(mcp.headers) - first == 2, "the second turn reuses the cached view HTML"
+
+
 def test_deal_words_strip_the_intent() -> None:
     assert deal_words("Why is Kestrel Biotech's deal at risk?") == "Kestrel Biotech"
     assert deal_words("how's orbital dental doing") == "orbital dental"

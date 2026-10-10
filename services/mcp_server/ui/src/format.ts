@@ -73,12 +73,24 @@ export function healthOf(score: number, health?: number | null): number {
   return typeof health === "number" ? health : 100 - score;
 }
 
-/** "$1.2M", "$840K", "$9,500": compact for a glance; exact figures stay on the detail screen. */
+/** ``cents / unit`` rounded half up, in integers (float toFixed would turn 1.25 into "1.2"). */
+function halfUp(cents: number, unit: number): number {
+  return Math.floor((Math.round(cents) + unit / 2) / unit);
+}
+
+/** "$9,500", "$84K", "$1.2M": the same rule as the server's money_display (speech.py), so the
+ *  board's total reads like the amounts beside it and like the voice. Exact under $10K, then
+ *  thousands, then millions to one decimal; a rounding that reaches the next unit moves up to it. */
 export function compactMoney(cents: number): string {
-  const dollars = cents / 100;
-  if (dollars >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(dollars >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
-  if (dollars >= 10_000) return `$${Math.round(dollars / 1000)}K`;
-  return `$${Math.round(dollars).toLocaleString("en-US")}`;
+  if (cents < 0) return `-${compactMoney(-cents)}`;
+  const dollars = halfUp(cents, 100);
+  if (dollars < 10_000) return `$${dollars.toLocaleString("en-US")}`;
+  const thousands = halfUp(cents, 100_000);
+  if (thousands < 1_000) return `$${thousands}K`;
+  const tenths = halfUp(cents, 10_000_000);
+  const whole = Math.floor(tenths / 10);
+  const tenth = tenths % 10;
+  return `$${whole.toLocaleString("en-US")}${tenth ? `.${tenth}` : ""}M`;
 }
 
 /** "just now", "12 min ago", "3 h ago", "2 days ago". */

@@ -22,14 +22,29 @@ STAGE_LABELS = {
 BAND_LABELS = {"at_risk": "At Risk", "watch": "Watch", "healthy": "Healthy"}
 
 
+def _half_up(cents: int, unit_cents: int) -> int:
+    """``cents / unit_cents`` rounded half up, in integers: no float error, no banker's rounding
+    (Python's round() makes $52,500 "$52K" but $53,500 "$54K")."""
+    return (cents + unit_cents // 2) // unit_cents
+
+
 def money_display(cents: int) -> str:
-    dollars = cents / 100
-    if dollars >= 1_000_000:
-        text = f"{dollars / 1_000_000:.1f}"
-        return f"${text.removesuffix('.0')}M"
-    if dollars >= 1_000:
-        return f"${round(dollars / 1_000):,}K"
-    return f"${dollars:,.0f}"
+    """Money as said and shown: exact under $10K ("$9,500"), then thousands ("$84K"), then
+    millions to one decimal ("$1.2M").
+
+    The views' compactMoney (services/mcp_server/ui/src/format.ts) follows the same rule, so a
+    figure reads the same on screen as it does aloud. A rounding that reaches the next unit moves
+    up to it: $999,600 is "$1M", not "$1,000K"."""
+    if cents < 0:
+        return "-" + money_display(-cents)
+    if _half_up(cents, 100) < 10_000:
+        return f"${_half_up(cents, 100):,}"
+    thousands = _half_up(cents, 100_000)
+    if thousands < 1_000:
+        return f"${thousands}K"
+    tenths = _half_up(cents, 10_000_000)  # millions, in tenths
+    whole, tenth = divmod(tenths, 10)
+    return f"${whole:,}M" if tenth == 0 else f"${whole:,}.{tenth}M"
 
 
 def date_display(d: date) -> str:

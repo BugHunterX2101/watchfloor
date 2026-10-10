@@ -19,11 +19,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -49,7 +49,8 @@ NOT_BUILT = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title
 
 class Line(BaseModel):
     role: Literal["user", "assistant"]
-    text: str = Field(max_length=2000)
+    # Clipped, not refused: one long model reply must not make every later turn a 400.
+    text: Annotated[str, BeforeValidator(lambda v: v[:2000] if isinstance(v, str) else v)]
 
 
 class ConverseIn(BaseModel):
@@ -90,6 +91,7 @@ def create_app(
     box = Box(conf.session_secret)
     s = conf.core
     shared: dict[str, httpx.AsyncClient] = {}
+    ui_cache: dict[str, tuple[float, str]] = {}  # view HTML by server and URI (agent._view)
 
     def mcp_client() -> httpx.AsyncClient:
         """One kept-alive client for every MCP call this process makes (see McpHttp.http)."""
@@ -214,7 +216,13 @@ def create_app(
 
         async def turn(token: str) -> dict[str, Any]:
             result = await run_turn(
-                conf, token, body.message, history, http=mcp_client(), model_factory=model_factory
+                conf,
+                token,
+                body.message,
+                history,
+                http=mcp_client(),
+                model_factory=model_factory,
+                ui_cache=ui_cache,
             )
             return result.public()
 

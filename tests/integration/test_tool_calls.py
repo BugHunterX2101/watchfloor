@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 import asyncpg
 import httpx
 import pytest
 from watchfloor_core.db import ws_tx
 
-from tests.conftest import HARBOR, KESTREL, OWNER_URL, TokenFactory
+from tests.conftest import FROZEN_NOW, HARBOR, KESTREL, OWNER_URL, TokenFactory
 from tests.mcp_client import Mcp
 
 
@@ -26,6 +28,31 @@ async def test_explain_returns_rigs_breakdown(seeded: str, mcp: Mcp) -> None:
     assert explained["summary"].startswith("Kestrel Biotech is At Risk, health 29.")
     assert [r["code"] for r in explained["reasons"]][:1] == ["SILENT_DAYS"]
     assert len(explained["trend_14d"]) == 14
+
+
+async def test_explain_trend_has_one_point_per_day(seeded: str, mcp: Mcp) -> None:
+    """Today's 00:05 snapshot is replaced by the live score, never followed by a second point."""
+    today = FROZEN_NOW.astimezone(ZoneInfo("America/Los_Angeles")).date()
+    async with ws_tx(seeded) as conn:
+        await conn.execute(
+            """INSERT INTO risk_score_daily (deal_id, day, workspace_id, score, band)
+               VALUES ($1, $2, $3, 99, 'at_risk')
+               ON CONFLICT (deal_id, day) DO UPDATE SET score = 99""",
+            KESTREL,
+            today,
+            seeded,
+        )
+    explained = await mcp.ok("explain_deal_risk", {"deal_id": KESTREL})
+    trend = explained["trend_14d"]
+    assert len(trend) == 14 and trend[-1] == explained["risk"]["score"]
+    assert 99 not in trend, "the stale snapshot for today is not shown beside the live score"
+
+
+async def test_lookup_treats_like_wildcards_literally(seeded: str, mcp: Mcp) -> None:
+    """ "50%" is not a pattern that matches every account at full confidence."""
+    result = await mcp.call("lookup_deal", {"name_query": "%%"})
+    found = result["structuredContent"].get("candidates") or []
+    assert all(c["match_score"] < 1.0 for c in found)
 
 
 async def test_business_errors_are_tool_results_not_protocol_errors(seeded: str, mcp: Mcp) -> None:

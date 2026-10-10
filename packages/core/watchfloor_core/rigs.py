@@ -14,6 +14,8 @@ the seeder and the agents all agree.
 
 from __future__ import annotations
 
+import math
+
 from .models.domain import (
     Band,
     DealSnapshot,
@@ -123,7 +125,9 @@ def score_with(s: DealSnapshot, p: StageParams, w: Weights, params: RigsParams) 
     reasons.extend(Reason(c, "S", w.s * part, extra, text, ev) for c, part, extra, text, ev in slip_reasons)
 
     total = w.r * r + w.i * i + w.g * g + w.s * sv
-    result_score = int(round(100 * total))
+    # Half up, as the formula reads (64.5 is 65, At Risk), not Python's round-half-to-even; the
+    # epsilon absorbs float error such as 64.49999999999999 for an exact half.
+    result_score = math.floor(100 * total + 0.5 + 1e-9)
     reasons.sort(key=lambda x: (-round(x.contribution, 9), _FACTOR_ORDER[x.factor], x.code))
     return RigsResult(
         score=max(0, min(100, result_score)),

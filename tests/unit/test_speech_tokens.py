@@ -10,7 +10,15 @@ def test_money_display() -> None:
     assert speech.money_display(850_000_000) == "$8.5M"
     assert speech.money_display(100_000_000) == "$1M"
     assert speech.money_display(52_000) == "$520"
-    assert speech.money_display(5_250_000) == "$52K"
+    assert speech.money_display(5_250_000) == "$53K"  # half up, not banker's rounding
+    assert speech.money_display(250_000) == "$2,500"  # exact under $10K
+    assert speech.money_display(999_900) == "$9,999"
+    assert speech.money_display(999_950) == "$10K"
+    assert speech.money_display(99_960_000) == "$1M"  # $999,600 rounds up to the next unit
+    assert speech.money_display(122_500_000) == "$1.2M"
+    assert speech.money_display(125_000_000) == "$1.3M"
+    assert speech.money_display(1_234_000_000) == "$12.3M"
+    assert speech.money_display(0) == "$0"
 
 
 def test_date_display_is_unambiguous() -> None:

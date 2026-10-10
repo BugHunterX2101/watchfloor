@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
@@ -24,6 +25,7 @@ from .offline import offline_turn
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 TURN_TIMEOUT_S = 45.0
+UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6
 MAX_HISTORY = 12
 
@@ -146,6 +148,7 @@ async def run_turn(
     transport: httpx.AsyncBaseTransport | None = None,
     http: httpx.AsyncClient | None = None,
     model_factory: Callable[[HarnessConfig], Any] = bedrock_model,
+    ui_cache: dict[str, tuple[float, str]] | None = None,
 ) -> TurnResult:
     engine = cfg.engine
     if engine is None:
@@ -154,22 +157,32 @@ async def run_turn(
     try:
         if engine == "offline":
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
-            reply = await offline_turn(mcp, message)
+            reply = await offline_turn(mcp, message, history)
         else:
             reply = await strands_turn(mcp, cfg, history, message, model_factory=model_factory)
-        return TurnResult(reply=reply, engine=engine, calls=mcp.calls, ui=await _view(mcp))
+        return TurnResult(reply=reply, engine=engine, calls=mcp.calls, ui=await _view(mcp, ui_cache))
     finally:
         await mcp.aclose()
 
 
-async def _view(mcp: McpHttp) -> dict[str, str] | None:
-    """The ui:// view of the turn's last successful call that has one, for the sandboxed iframe."""
+async def _view(mcp: McpHttp, cache: dict[str, tuple[float, str]] | None = None) -> dict[str, str] | None:
+    """The ui:// view of the turn's last successful call that has one, for the sandboxed iframe.
+
+    ``cache`` (the app's, per process) keeps each view's HTML for UI_CACHE_S, keyed by server and URI.
+    """
     for call in reversed(mcp.calls):
         if call.ok and call.ui_uri:
-            try:
-                html = await mcp.read_resource(call.ui_uri)
-            except (McpError, Unauthorized):
-                return None
+            key = f"{mcp.url} {call.ui_uri}"
+            hit = cache.get(key) if cache is not None else None
+            if hit is not None and hit[0] > time.monotonic():
+                html: str | None = hit[1]
+            else:
+                try:
+                    html = await mcp.read_resource(call.ui_uri)
+                except (McpError, Unauthorized):
+                    return None
+                if html is not None and cache is not None:
+                    cache[key] = (time.monotonic() + UI_CACHE_S, html)
             if html is None:
                 return None
             data = json.dumps(call.structured or {}, ensure_ascii=False)

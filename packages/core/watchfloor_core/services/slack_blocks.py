@@ -122,7 +122,7 @@ def triage_plan(
             _header(f"Deep review · {account} (health {health(score)}, {band_label(band)})"),
             _section(escape(voice_summary)),
             _section(f"*Recommended next steps*\n{steps}"),
-            _context("Say “Alexa, have Maya…” to act. Nothing happens without your confirmation."),
+            _context("Ask Alexa to act on a step. Nothing happens without your confirmation."),
         ],
     }
 

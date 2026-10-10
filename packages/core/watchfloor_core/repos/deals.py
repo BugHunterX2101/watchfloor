@@ -159,6 +159,11 @@ async def lock(conn: asyncpg.Connection, deal_id: str) -> asyncpg.Record | None:
     return await conn.fetchrow("SELECT id, stage::text AS stage FROM deals WHERE id = $1 FOR UPDATE", deal_id)
 
 
+def like_escape(text: str) -> str:
+    """User words as a literal LIKE pattern (ESCAPE '!'): "50%" must not match every name."""
+    return text.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
 async def find_by_name(
     conn: asyncpg.Connection, query: str, *, owner: str | None = None, limit: int = 3, threshold: float = 0.3
 ) -> list[asyncpg.Record]:
@@ -169,20 +174,23 @@ async def find_by_name(
                     u.display_name AS owner,
                     greatest(word_similarity(lower($1), lower(a.name)),
                              word_similarity(lower($1), lower(d.name)),
-                             CASE WHEN lower(a.name) LIKE lower($1) || '%' THEN 1.0 ELSE 0 END)::float8 AS match_score
+                             CASE WHEN lower(a.name) LIKE lower($5) || '%' ESCAPE '!' THEN 1.0 ELSE 0 END
+                    )::float8 AS match_score
              FROM deals d
              JOIN accounts a ON a.id = d.account_id
              JOIN users u    ON u.id = d.owner_id
              WHERE d.stage NOT IN ('won', 'lost')
-               AND ($2::text IS NULL OR u.display_name ILIKE $2 || '%' OR u.display_name ILIKE '% ' || $2 || '%')
+               AND ($2::text IS NULL OR u.display_name ILIKE $2 || '%' ESCAPE '!'
+                    OR u.display_name ILIKE '% ' || $2 || '%' ESCAPE '!')
            ) m
            WHERE match_score >= $3
            ORDER BY match_score DESC, amount_cents DESC, deal_id
            LIMIT $4""",
         query,
-        owner,
+        like_escape(owner) if owner else None,
         threshold,
         limit,
+        like_escape(query),
     )
 
 

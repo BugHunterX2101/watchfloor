@@ -67,15 +67,17 @@ class JwksCache:
         if not kid:
             return None
         if self._keys is None or time.monotonic() - self._fetched_at > self.ttl_s:
-            await self._refresh()
+            await self._refresh(self._fetched_at)
         found = (self._keys or {}).get(kid)
         if found is None and time.monotonic() - self._fetched_at > self.min_refetch_s:
-            await self._refresh()  # key rotation: an unknown kid may be brand new
+            await self._refresh(self._fetched_at)  # key rotation: an unknown kid may be brand new
             found = (self._keys or {}).get(kid)
         return found
 
-    async def _refresh(self) -> None:
+    async def _refresh(self, seen: float) -> None:
         async with self._lock:
+            if self._fetched_at != seen:
+                return  # another request refreshed while this one waited: one fetch serves both
             try:
                 doc = await self._load()
                 keys = {k.key_id: k for k in PyJWKSet.from_dict(doc).keys if k.key_id}

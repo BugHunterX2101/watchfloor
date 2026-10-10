@@ -46,7 +46,11 @@ export async function converse(message: string, history: Line[]): Promise<Turn> 
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history: history.slice(-24) }),
+    // The API takes 24 lines of at most 2,000 characters and a message of at most 500.
+    body: JSON.stringify({
+      message: message.slice(0, 500),
+      history: history.slice(-24).map((l) => ({ role: l.role, text: l.text.slice(0, 2000) })),
+    }),
   });
   if (r.status === 401) throw new SignedOut();
   const body = (await r.json().catch(() => ({}))) as Partial<Turn> & { message?: string; error?: string };

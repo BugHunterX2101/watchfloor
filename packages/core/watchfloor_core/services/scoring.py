@@ -47,20 +47,22 @@ async def recompute(
     )
     prev = await scores.previous(conn, deal_ids)
     changes: dict[str, ScoreChange] = {}
+    rows: list[tuple[object, ...]] = []
     for did, snap in snaps.items():
         result = rigs.score(snap, p)
         before = prev.get(did)
         band_before = before["band"] if before else None
         band = rigs.band_for(result.score, band_before, p.bands)  # type: ignore[arg-type]
         band_since = before["band_since"] if before and band == band_before else now
-        await scores.upsert(
-            conn,
-            deal_id=did,
-            workspace_id=workspace_id,
-            result=result,
-            band=band,
-            band_since=band_since,
-            computed_at=now,
+        rows.append(
+            scores.upsert_row(
+                deal_id=did,
+                workspace_id=workspace_id,
+                result=result,
+                band=band,
+                band_since=band_since,
+                computed_at=now,
+            )
         )
         changes[did] = ScoreChange(
             deal_id=did,
@@ -70,6 +72,8 @@ async def recompute(
             band_after=band,
             result=result,
         )
+    # One pipelined round trip for the whole batch: the watcher rescores every open deal each run.
+    await scores.upsert_many(conn, rows)
     if deal_ids is None:
         await scores.delete_closed(conn)
     return changes

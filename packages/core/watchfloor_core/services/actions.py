@@ -181,7 +181,7 @@ async def propose_field_update(
         )
     preview["side_effects"] = ["deal_updated", "risk_recomputed"]
     ask = " and ".join(phrases)
-    summary = f"{lead} {ask[0].upper()}{ask[1:]} needs your OK. Should I go ahead?"
+    summary = f"{lead} {ask[0].upper()}{ask[1:]} needs your OK. Should I go ahead?".lstrip()
     return await _store(ctx, deal_id, UPDATE_FIELDS, params, preview, summary)
 
 
@@ -416,8 +416,8 @@ async def _explain_unclaimed(ctx: ServiceContext, token_hash: bytes) -> m.Confir
     if row["status"] in ("pending", "expired"):
         raise WatchfloorError(
             ErrorCode.TOKEN_EXPIRED,
-            "That confirmation expired. Previews last five minutes.",
-            recovery="Ask me to propose the action again.",
+            "That confirmation expired, so nothing was changed.",
+            recovery="Ask me to propose the action again. Next time, ask for more time before it runs out.",
         )
     raise WatchfloorError(
         ErrorCode.TOKEN_ALREADY_USED,

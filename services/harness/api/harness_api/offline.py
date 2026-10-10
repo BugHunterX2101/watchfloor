@@ -9,6 +9,7 @@ tools' own ``summary`` fields, which are written to be spoken (DD §6.3).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from .mcp_http import McpHttp
 
@@ -31,13 +32,25 @@ def deal_words(message: str) -> str:
     return " ".join(w for w in words if w and w.lower() not in STOP)[:80]
 
 
-async def offline_turn(mcp: McpHttp, message: str) -> str:
+def recent_deal(history: Sequence[tuple[str, str]]) -> str:
+    """The deal the user last named, for a follow-up like "Dig into it." (the board suggests it)."""
+    for role, text in reversed(history):
+        if role == "user" and (TRIAGE.search(text) or EXPLAIN.search(text) or RESULT.search(text)):
+            words = deal_words(text)
+            if len(words) >= 2:
+                return words
+    return ""
+
+
+async def offline_turn(mcp: McpHttp, message: str, history: Sequence[tuple[str, str]] = ()) -> str:
     if STANDING.search(message):
         return (await mcp.call_tool("list_standing_orders", {})).summary
     if not (TRIAGE.search(message) or EXPLAIN.search(message) or RESULT.search(message)):
         return (await mcp.call_tool("get_risk_briefing", {})).summary
 
     query = deal_words(message)
+    if len(query) < 2:
+        query = recent_deal(history)
     if len(query) < 2:
         return "Which deal do you mean?"
     found = await mcp.call_tool("lookup_deal", {"name_query": query})

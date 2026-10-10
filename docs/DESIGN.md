@@ -1576,7 +1576,7 @@ When a triage result exists, a **Plan** tab lists up to 3 recommended actions, e
 }
 ```
 
-The triage plan uses the same header and adds a numbered **Recommended next steps** section with each play's rationale and confidence, plus *"Say ‘Alexa, have Maya…’ to act."*
+The triage plan uses the same header and adds a numbered **Recommended next steps** section with each play's rationale and confidence, plus *"Ask Alexa to act on a step. Nothing happens without your confirmation."*
 
 ### 16.3 Delivery rules
 - Webhook URL stored in Secrets Manager. Messages are plain text plus Block Kit with no user-supplied mrkdwn (user text is escaped). Never more than one message per (rule, deal) per 24 h.

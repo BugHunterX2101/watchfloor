@@ -8,6 +8,15 @@ import asyncpg
 
 from ..models.domain import RigsResult
 
+_UPSERT = """INSERT INTO risk_scores (deal_id, workspace_id, score, band, r, i, g, s, reasons,
+                            band_since, computed_at, model_version)
+   VALUES ($1, $2, $3, $4::risk_band, $5, $6, $7, $8, $9, $10, $11, $12)
+   ON CONFLICT (deal_id) DO UPDATE SET
+     score = EXCLUDED.score, band = EXCLUDED.band, r = EXCLUDED.r, i = EXCLUDED.i,
+     g = EXCLUDED.g, s = EXCLUDED.s, reasons = EXCLUDED.reasons,
+     band_since = EXCLUDED.band_since, computed_at = EXCLUDED.computed_at,
+     model_version = EXCLUDED.model_version"""
+
 
 async def previous(conn: asyncpg.Connection, deal_ids: list[str] | None = None) -> dict[str, asyncpg.Record]:
     rows = await conn.fetch(
@@ -29,14 +38,37 @@ async def upsert(
     computed_at: datetime,
 ) -> None:
     await conn.execute(
-        """INSERT INTO risk_scores (deal_id, workspace_id, score, band, r, i, g, s, reasons,
-                                    band_since, computed_at, model_version)
-           VALUES ($1, $2, $3, $4::risk_band, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (deal_id) DO UPDATE SET
-             score = EXCLUDED.score, band = EXCLUDED.band, r = EXCLUDED.r, i = EXCLUDED.i,
-             g = EXCLUDED.g, s = EXCLUDED.s, reasons = EXCLUDED.reasons,
-             band_since = EXCLUDED.band_since, computed_at = EXCLUDED.computed_at,
-             model_version = EXCLUDED.model_version""",
+        _UPSERT,
+        *upsert_row(
+            deal_id=deal_id,
+            workspace_id=workspace_id,
+            result=result,
+            band=band,
+            band_since=band_since,
+            computed_at=computed_at,
+        ),
+    )
+
+
+async def upsert_many(conn: asyncpg.Connection, rows: list[tuple[object, ...]]) -> None:
+    """Many :func:`upsert` rows in one pipelined round trip (the watcher rescoring a whole workspace).
+
+    Row order: deal_id, workspace_id, score, band, r, i, g, s, reasons, band_since, computed_at, model_version.
+    """
+    if rows:
+        await conn.executemany(_UPSERT, rows)
+
+
+def upsert_row(
+    *,
+    deal_id: str,
+    workspace_id: str,
+    result: RigsResult,
+    band: str,
+    band_since: datetime,
+    computed_at: datetime,
+) -> tuple[object, ...]:
+    return (
         deal_id,
         workspace_id,
         result.score,
@@ -109,11 +141,13 @@ async def attention_counts(
     )
 
 
-async def trend(conn: asyncpg.Connection, deal_id: str, *, since_day: date) -> list[int]:
+async def trend(conn: asyncpg.Connection, deal_id: str, *, since_day: date) -> list[tuple[date, int]]:
     rows = await conn.fetch(
-        "SELECT score FROM risk_score_daily WHERE deal_id = $1 AND day >= $2 ORDER BY day", deal_id, since_day
+        "SELECT day, score FROM risk_score_daily WHERE deal_id = $1 AND day >= $2 ORDER BY day",
+        deal_id,
+        since_day,
     )
-    return [r["score"] for r in rows]
+    return [(r["day"], r["score"]) for r in rows]
 
 
 async def snapshot_daily(conn: asyncpg.Connection, *, day: date) -> int:

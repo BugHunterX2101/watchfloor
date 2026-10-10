@@ -157,9 +157,10 @@ async def explain_deal(ctx: ServiceContext, args: m.ExplainIn) -> m.ExplainOut:
     p = load_params()
     reasons = rs["reasons"]
     top, rest = reasons[:3], reasons[3:]
-    trend = await scores.trend(ctx.conn, args.deal_id, since_day=ctx.today - timedelta(days=13))
-    if not trend or trend[-1] != rs["score"]:
-        trend = (trend + [rs["score"]])[-14:]
+    # One point per day for the last 14 days, today's being the live score: today's 00:05 snapshot
+    # is replaced rather than followed by a second point for the same day.
+    daily = await scores.trend(ctx.conn, args.deal_id, since_day=ctx.today - timedelta(days=13))
+    trend = [score for day, score in daily if day < ctx.today][-13:] + [rs["score"]]
     band = rs["band"]
     lead = f"{card['account']} is {band_label(band)}, health {health(rs['score'])}."
     detail = " ".join(r["text"] for r in top) if top else "No risk signals right now."

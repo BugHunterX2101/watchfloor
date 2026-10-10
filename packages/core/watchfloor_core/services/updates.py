@@ -62,20 +62,24 @@ async def log_update(ctx: ServiceContext, args: m.LogUpdateIn) -> m.LogUpdateOut
     )
     after = changes[args.deal_id]
 
-    said = {"note": "the note", "next_step": "the next step", "next_step_date": "its date"}
-    lead = f"Logged {join_words([said[f] for f in applied])} for {card['account']}." if applied else ""
-    if after.score_after != before["score"]:
-        was, now = health(before["score"]), health(after.score_after)
-        lead += f" Health moved from {was} to {now}, {band_label(after.band_after)}."
-    else:
-        lead += f" Health is unchanged at {health(after.score_after)}."
-    lead = lead.strip()
-
     pending_fields: dict[str, Any] = {}
     if args.close_date and args.close_date != card["close_date"]:
         pending_fields["close_date"] = args.close_date
     if args.amount_usd is not None and args.amount_usd * 100 != card["amount_cents"]:
         pending_fields["amount_cents"] = args.amount_usd * 100
+
+    # The health line belongs to what was applied; a change that only waits for a yes speaks for itself.
+    said = {"note": "the note", "next_step": "the next step", "next_step_date": "its date"}
+    lead = ""
+    if applied:
+        lead = f"Logged {join_words([said[f] for f in applied])} for {card['account']}."
+        if after.score_after != before["score"]:
+            was, now = health(before["score"]), health(after.score_after)
+            lead += f" Health moved from {was} to {now}, {band_label(after.band_after)}."
+        else:
+            lead += f" Health is unchanged at {health(after.score_after)}."
+    elif not pending_fields:
+        lead = f"{card['account']} already has those details, so nothing changed."
 
     pending = None
     summary = lead
