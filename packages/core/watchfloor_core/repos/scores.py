@@ -27,31 +27,8 @@ async def previous(conn: asyncpg.Connection, deal_ids: list[str] | None = None) 
     return {r["deal_id"]: r for r in rows}
 
 
-async def upsert(
-    conn: asyncpg.Connection,
-    *,
-    deal_id: str,
-    workspace_id: str,
-    result: RigsResult,
-    band: str,
-    band_since: datetime,
-    computed_at: datetime,
-) -> None:
-    await conn.execute(
-        _UPSERT,
-        *upsert_row(
-            deal_id=deal_id,
-            workspace_id=workspace_id,
-            result=result,
-            band=band,
-            band_since=band_since,
-            computed_at=computed_at,
-        ),
-    )
-
-
 async def upsert_many(conn: asyncpg.Connection, rows: list[tuple[object, ...]]) -> None:
-    """Many :func:`upsert` rows in one pipelined round trip (the watcher rescoring a whole workspace).
+    """Score rows (:func:`upsert_row`) in one pipelined round trip: the watcher rescores a whole workspace.
 
     Row order: deal_id, workspace_id, score, band, r, i, g, s, reasons, band_since, computed_at, model_version.
     """
