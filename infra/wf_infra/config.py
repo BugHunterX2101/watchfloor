@@ -24,7 +24,10 @@ PENDING_HOST = "pending.invalid"  # a host AWS has yet to assign (RFC 2606 reser
 class Models(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sonnet: str  # Bedrock inference profile ids (⚠ Verify S6)
+    # Slot names from the design: sonnet = the reasoning tier (Lead, Strategist, Critic), haiku = the
+    # fast tier (harness, drafts, Analyst, Context). Either takes a Claude inference-profile id
+    # (us.anthropic.…) or an in-Region Amazon Nova id (amazon.nova-…, ADR-022).
+    sonnet: str
     haiku: str
 
 
@@ -48,10 +51,12 @@ class EnvConfig(BaseModel):
     hosted_zone_name: str | None = None
     lwa_layer_arn: str  # Lambda Web Adapter, arm64 (⚠ Verify the current version)
     models: Models
-    # false on an AWS Free plan account: AgentCore is Paid-plan only and Claude is billed through
-    # Marketplace. No Agents stack then; deep triage is refused, drafts use a template, and the
-    # harness uses its offline engine. `-c wf:modelsEnabled=true|false` overrides it for one synth.
+    # false: no Bedrock model runs anywhere. Drafts use a template, the harness its offline engine,
+    # and there is no Agents stack. `-c wf:modelsEnabled=true|false` overrides it for one synth.
     models_enabled: bool = True
+    # false: Bedrock models run (harness, drafts) but AgentCore is not deployed, so there is no Agents
+    # stack and deep triage is refused up front (ADR-022). `-c wf:agentsEnabled=…` overrides it.
+    agents_enabled: bool = True
     # false while AWS Support has not verified the account for CloudFront (a new account's
     # distributions are refused until then): the harness Lambda serves its page on its API's host.
     cdn: bool = True
@@ -95,6 +100,11 @@ class EnvConfig(BaseModel):
     @property
     def custom_domains(self) -> bool:
         return self.certificate_arn is not None
+
+    @property
+    def agents_on(self) -> bool:
+        """The Agents stack (AgentCore Runtime and Memory) is deployed."""
+        return self.models_enabled and self.agents_enabled
 
     @property
     def prefix(self) -> str:

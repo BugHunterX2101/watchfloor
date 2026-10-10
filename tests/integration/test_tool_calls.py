@@ -132,13 +132,14 @@ async def test_healthz_reports_database(seeded: str, client: httpx.AsyncClient) 
     assert r.json()["ok"] is True and r.json()["db"] == "ok"
 
 
-async def test_deep_triage_is_refused_up_front_without_models(
-    seeded: str, mcp: Mcp, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("switch", ["WF_MODELS_ENABLED", "WF_AGENTS_ENABLED"])
+async def test_deep_triage_is_refused_up_front_without_agents(
+    seeded: str, mcp: Mcp, monkeypatch: pytest.MonkeyPatch, switch: str
 ) -> None:
-    """WF_MODELS_ENABLED=false (an AWS Free plan account): no job is queued that could only fail later."""
+    """No models, or models without AgentCore (ADR-022): no job is queued that could only fail later."""
     from watchfloor_core.settings import reset_settings
 
-    monkeypatch.setenv("WF_MODELS_ENABLED", "false")
+    monkeypatch.setenv(switch, "false")
     reset_settings()
     try:
         before = await _job_count()
@@ -149,7 +150,7 @@ async def test_deep_triage_is_refused_up_front_without_models(
         assert "scored reasons" in err["recovery"]
         assert await _job_count() == before
     finally:
-        monkeypatch.delenv("WF_MODELS_ENABLED")
+        monkeypatch.delenv(switch)
         reset_settings()
 
 

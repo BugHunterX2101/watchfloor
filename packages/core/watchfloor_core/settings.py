@@ -49,9 +49,11 @@ class Settings(BaseModel):
     slack_webhook_url: str | None = None
     sonnet_model_id: str | None = None
     haiku_model_id: str | None = None
-    # false where Claude and AgentCore are unavailable (an AWS Free plan account): deep triage is
-    # refused up front, follow-up drafts use a template and the harness its offline engine.
+    # false where no Bedrock model may run: follow-up drafts use a template and the harness its
+    # offline engine. Deep triage also needs agents_enabled.
     models_enabled: bool = True
+    # false where AgentCore Runtime is not deployed (ADR-022): deep triage is refused up front.
+    agents_enabled: bool = True
     agent_runtime_arn: str | None = None
     # Local alternative to AgentCore: the agents container's /invocations endpoint.
     agent_url: str | None = None
@@ -98,6 +100,7 @@ def _from_env() -> Settings:
         sonnet_model_id=e("WF_SONNET_MODEL_ID"),
         haiku_model_id=e("WF_HAIKU_MODEL_ID"),
         models_enabled=_bool("WF_MODELS_ENABLED", True),
+        agents_enabled=_bool("WF_AGENTS_ENABLED", True),
         agent_runtime_arn=e("WF_AGENT_RUNTIME_ARN") or None,
         agent_url=e("WF_AGENT_URL") or None,
         memory_id=e("WF_MEMORY_ID") or None,

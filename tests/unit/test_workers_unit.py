@@ -221,6 +221,15 @@ def test_drafts_use_the_template_without_models() -> None:
     assert drafter_from_settings(Settings(env="dev", haiku_model_id="h")) is not template_draft
 
 
+async def test_model_drafts_drop_nova_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from workers import drafts
+
+    reply = "<thinking>Keep it short.</thinking>Subject: Next steps\n\nHi Dana, see https://x.example"
+    monkeypatch.setattr(drafts, "_converse", lambda model_id, prompt: reply)
+    draft = await drafts.bedrock_draft(REQ, model_id="amazon.nova-lite-v1:0")
+    assert draft == "Subject: Next steps\n\nHi Dana, see [link removed]"
+
+
 async def test_template_draft_is_labelled_and_link_free() -> None:
     draft = await template_draft(REQ)
     assert draft.startswith("Subject: Following up on Kestrel Platform")

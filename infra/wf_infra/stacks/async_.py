@@ -17,7 +17,7 @@ from aws_cdk import aws_secretsmanager as sm
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from ..common import PythonLambda
+from ..common import PythonLambda, bedrock_arns
 from ..config import EnvConfig
 from .agents import AgentsStack
 from .auth import AuthStack
@@ -78,8 +78,10 @@ class AsyncStack(Stack):
             "WF_SLACK_SECRET_ARN": self.slack_secret.secret_arn,
             "WF_DISPATCHER_CLIENT_SECRET_ARN": self.dispatcher_secret.secret_arn,
         }
-        if agents is not None:  # models enabled: memory events, Haiku drafts, the agent runtime
-            dispatcher_env |= {"WF_MEMORY_ID": agents.memory_id, "WF_HAIKU_MODEL_ID": cfg.models.haiku}
+        if cfg.models_enabled:  # follow-up drafts on the fast model
+            dispatcher_env["WF_HAIKU_MODEL_ID"] = cfg.models.haiku
+        if agents is not None:  # AgentCore: memory events and the agent runtime
+            dispatcher_env["WF_MEMORY_ID"] = agents.memory_id
             if agents.runtime_arn:
                 dispatcher_env["WF_AGENT_RUNTIME_ARN"] = agents.runtime_arn
         self.dispatcher = PythonLambda(
@@ -102,6 +104,13 @@ class AsyncStack(Stack):
             queue.grant_send_messages(self.dispatcher)  # follow-up rows (DD §8.4)
         for secret in (data.app_secret, self.slack_secret, self.dispatcher_secret):
             secret.grant_read(self.dispatcher)
+        if cfg.models_enabled:
+            self.dispatcher.add_to_role_policy(
+                iam.PolicyStatement(  # follow-up drafts (the fast model, Converse)
+                    actions=["bedrock:InvokeModel", "bedrock:Converse"],
+                    resources=bedrock_arns(cfg, cfg.models.haiku),
+                )
+            )
         if agents is not None:
             if agents.runtime_arn:
                 self.dispatcher.add_to_role_policy(
@@ -110,15 +119,6 @@ class AsyncStack(Stack):
                         resources=[agents.runtime_arn, f"{agents.runtime_arn}/*"],
                     )
                 )
-            self.dispatcher.add_to_role_policy(
-                iam.PolicyStatement(  # follow-up drafts (Haiku-class, Converse)
-                    actions=["bedrock:InvokeModel", "bedrock:Converse"],
-                    resources=[
-                        f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{cfg.models.haiku}",
-                        "arn:aws:bedrock:*::foundation-model/*",
-                    ],
-                )
-            )
             self.dispatcher.add_to_role_policy(
                 iam.PolicyStatement(actions=["bedrock-agentcore:CreateEvent"], resources=[agents.memory_arn])
             )

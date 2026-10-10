@@ -25,7 +25,8 @@ HARD_TIMEOUT = timedelta(seconds=90)
 
 async def start(ctx: ServiceContext, args: m.StartTriageIn) -> m.StartTriageOut:
     card = await open_card(ctx, args.deal_id)
-    if not get_settings().models_enabled:  # no agents here: say so now, not as a failed job later
+    s = get_settings()
+    if not (s.models_enabled and s.agents_enabled):  # no agents here: say so now, not as a failed job later
         raise WatchfloorError(
             ErrorCode.TEMPORARILY_UNAVAILABLE,
             f"Deep reviews aren't available in this environment, so I can't review {card['account']} in depth.",

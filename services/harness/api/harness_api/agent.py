@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,16 +19,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from watchfloor_core.bedrock import strip_reasoning, tool_use_options
 
 from .config import HarnessConfig, Misconfigured
 from .mcp_http import McpError, McpHttp, ToolCall, Unauthorized
 from .offline import offline_turn
+
+log = logging.getLogger(__name__)
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 TURN_TIMEOUT_S = 45.0
 UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6
 MAX_HISTORY = 12
+MAX_TOKENS = 1024  # room for Nova's <thinking> before a tool call; the prompt keeps replies short
+NO_REPLY = "I couldn't answer that just now. Please try again."
 
 Role = Literal["user", "assistant"]
 
@@ -108,9 +114,10 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
 def bedrock_model(cfg: HarnessConfig) -> Any:
     from strands.models import BedrockModel
 
-    if not cfg.core.haiku_model_id:
+    model_id = cfg.core.haiku_model_id
+    if not model_id:
         raise Misconfigured("WF_HAIKU_MODEL_ID is not set")
-    return BedrockModel(model_id=cfg.core.haiku_model_id, temperature=0.5, max_tokens=512)
+    return BedrockModel(model_id=model_id, max_tokens=MAX_TOKENS, **tool_use_options(model_id, 0.5))
 
 
 async def strands_turn(
@@ -136,7 +143,7 @@ async def strands_turn(
     result = await asyncio.wait_for(agent.invoke_async(message, limits={"turns": MAX_TURNS}), TURN_TIMEOUT_S)
     if guard.unauthorized:
         raise Unauthorized("token rejected during the turn")
-    return str(result).strip()
+    return strip_reasoning(str(result)) or NO_REPLY
 
 
 async def run_turn(
@@ -159,7 +166,14 @@ async def run_turn(
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
             reply = await offline_turn(mcp, message, history)
         else:
-            reply = await strands_turn(mcp, cfg, history, message, model_factory=model_factory)
+            try:
+                reply = await strands_turn(mcp, cfg, history, message, model_factory=model_factory)
+            except (Unauthorized, McpError, TimeoutError):
+                raise
+            except Exception as exc:  # Bedrock throttled or refused the model: the router still answers
+                log.warning("model turn failed (%s); the offline engine answers", type(exc).__name__)
+                engine = "offline"
+                reply = await offline_turn(mcp, message, history)
         return TurnResult(reply=reply, engine=engine, calls=mcp.calls, ui=await _view(mcp, ui_cache))
     finally:
         await mcp.aclose()

@@ -27,7 +27,14 @@ from aws_cdk import aws_s3_deployment as s3deploy
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import PythonLambda, certificate, default_host_output, domain_mapping, hosted_zone
+from ..common import (
+    PythonLambda,
+    bedrock_arns,
+    certificate,
+    default_host_output,
+    domain_mapping,
+    hosted_zone,
+)
 from ..config import EnvConfig
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "services" / "harness" / "web" / "dist"
@@ -69,10 +76,7 @@ class HarnessStack(Stack):
                         "bedrock:Converse",
                         "bedrock:ConverseStream",
                     ],
-                    resources=[
-                        f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{cfg.models.haiku}",
-                        "arn:aws:bedrock:*::foundation-model/*",
-                    ],
+                    resources=bedrock_arns(cfg, cfg.models.haiku),
                 )
             )
         integration = integrations.HttpLambdaIntegration("Integ", fn)

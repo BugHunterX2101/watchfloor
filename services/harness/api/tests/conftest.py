@@ -180,10 +180,13 @@ async def sign_in(client: httpx.AsyncClient) -> None:
 
 
 class ScriptedModel(Model):
-    """A Strands model that calls one tool, then speaks the tool's summary."""
+    """A Strands model that calls one tool, then speaks the tool's summary.
 
-    def __init__(self, tool: str, arguments: dict[str, Any] | None = None) -> None:
-        self.tool, self.arguments = tool, arguments or {}
+    ``thinking`` prefixes the reply with a ``<thinking>`` block, the way Amazon Nova answers.
+    """
+
+    def __init__(self, tool: str, arguments: dict[str, Any] | None = None, thinking: str = "") -> None:
+        self.tool, self.arguments, self.thinking = tool, arguments or {}, thinking
         self.seen: list[list[dict[str, Any]]] = []
 
     def update_config(self, **_: Any) -> None:
@@ -210,6 +213,7 @@ class ScriptedModel(Model):
             yield {"messageStop": {"stopReason": "tool_use"}}
             return
         payload = json.loads(results[0]["content"][0]["text"])
-        yield {"contentBlockDelta": {"delta": {"text": payload["summary"]}}}
+        prefix = f"<thinking>{self.thinking}</thinking>\n" if self.thinking else ""
+        yield {"contentBlockDelta": {"delta": {"text": prefix + payload["summary"]}}}
         yield {"contentBlockStop": {}}
         yield {"messageStop": {"stopReason": "end_turn"}}

@@ -236,6 +236,34 @@ def test_without_models_nothing_needs_agentcore_or_claude() -> None:
     )
 
 
+def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
+    """A Free plan account on Nova (ADR-022): Bedrock grants for one in-Region model, no Agents stack."""
+    on = _synth(
+        "dev",
+        **{"wf:modelsEnabled": "true", "wf:agentsEnabled": "false", "wf:configDir": str(CONFIG_DIR)},
+    )
+    assert "agents" not in on
+    nova = "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+    for name in ("async", "harness"):
+        text = json.dumps(on[name].to_json())
+        assert nova in text and "foundation-model/*" not in text and "inference-profile" not in text
+        assert "WF_MEMORY_ID" not in text and "WF_AGENT_RUNTIME_ARN" not in text
+    on["async"].has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Environment": {
+                "Variables": Match.object_like(
+                    {
+                        "WF_HAIKU_MODEL_ID": "amazon.nova-lite-v1:0",
+                        "WF_MODELS_ENABLED": "true",
+                        "WF_AGENTS_ENABLED": "false",
+                    }
+                )
+            }
+        },
+    )
+
+
 @pytest.mark.parametrize("env", ["dev", "demo"])
 def test_the_shipped_configs_synthesize(env: str) -> None:
     stacks = _synth(env, **{"wf:configDir": str(CONFIG_DIR)})

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from strands import Agent, tool
+from watchfloor_core.bedrock import strip_reasoning
 from watchfloor_core.settings import Settings
 
 from . import analyst, context, critic, strategist
@@ -56,7 +57,7 @@ async def run_specialist(name: str, build: Callable[[], Agent], prompt: str, bud
     except Exception as exc:  # one specialist failing must not end the review
         log.warning("%s failed: %s", name, type(exc).__name__, exc_info=True)
         return json.dumps({"error": f"{name} failed; continue without it"})
-    return str(result).strip()
+    return strip_reasoning(str(result))
 
 
 def make_specialist_tools(data_tools: dict[str, Any], *, recall: Any, settings: Settings) -> list[Any]:

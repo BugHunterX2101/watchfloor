@@ -113,6 +113,8 @@ def test_voice_summary_is_made_speakable() -> None:
     assert len(text.split()) <= 45 and len(text) <= 320 and text.endswith(".")
     assert speakable("word " * 80, fallback="x" * 12).count(" ") <= 44
     assert speakable("dl_1", fallback="Harbor & Pine is At Risk at 66.") == "Harbor & Pine is At Risk at 66."
+    nova = "<thinking>Summarise the drivers.</thinking> Harbor and Pine went quiet after the proposal."
+    assert speakable(nova, fallback="x" * 12) == "Harbor and Pine went quiet after the proposal."
 
 
 def test_gate_output_is_the_dispatcher_contract(job: JobData) -> None:

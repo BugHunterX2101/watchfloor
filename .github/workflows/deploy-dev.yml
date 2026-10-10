@@ -36,26 +36,31 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
-      # models_enabled: false in infra/config/dev.yaml (an AWS Free plan account): no agents image.
-      - name: Models enabled?
-        id: models
+      # Deep triage needs models_enabled and agents_enabled in infra/config/dev.yaml (ADR-022).
+      # With either one false there is no Agents stack, so no agents image either.
+      - name: Agents enabled?
+        id: agents
         run: |
-          if grep -qE '^models_enabled:[[:space:]]*false' infra/config/dev.yaml; then
+          if grep -qE '^(models|agents)_enabled:[[:space:]]*false' infra/config/dev.yaml; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push the agents image (when the repository exists)
-        if: steps.models.outputs.enabled == 'true'
+      # The first deploy with agents on has no image repository yet: deploy once without the runtime
+      # (that creates the repository), push the image, and let the next step create the runtime.
+      - name: Push the agents image
+        if: steps.agents.outputs.enabled == 'true'
         run: |
-          REPO=$(aws ecr describe-repositories --repository-names wf-dev-agents \
-                   --query 'repositories[0].repositoryUri' --output text 2>/dev/null || true)
-          if [ -n "$REPO" ] && [ "$REPO" != "None" ]; then
-            make agents-image ENV=dev && make agents-push ENV=dev REPO="$REPO"
-          else
-            echo "::warning::wf-dev-agents does not exist yet: deploy once with -c wf:agentRuntime=false (README)"
+          repo() { aws ecr describe-repositories --repository-names wf-dev-agents \
+                     --query 'repositories[0].repositoryUri' --output text 2>/dev/null || true; }
+          REPO=$(repo)
+          if [ -z "$REPO" ] || [ "$REPO" = "None" ]; then
+            (cd infra && uv sync --frozen)
+            make cdk-deploy ENV=dev AGENT_RUNTIME=false CDK_FLAGS="--require-approval never"
+            REPO=$(repo)
           fi
+          make agents-image ENV=dev && make agents-push ENV=dev REPO="$REPO"
 
       # Without custom domains, make cdk-deploy writes the hosts AWS assigned into infra/config/dev.yaml
       # (twice-deploying on the first run, which assigns them); the steps below read them from there.

@@ -35,6 +35,28 @@ def lambda_code(scope: Construct, bundle: str) -> lambda_.Code:
     )
 
 
+GEO_PREFIXES = frozenset({"us", "us-gov", "eu", "apac", "jp", "au", "ca", "global"})
+
+
+def bedrock_arns(cfg: EnvConfig, *model_ids: str) -> list[str]:
+    """What a Bedrock invoke grant names (ADR-022).
+
+    An inference profile (``us.anthropic.…``) routes to its model in several Regions, so the grant
+    names the profile and the foundation models behind it. A plain model id (``amazon.nova-lite-v1:0``)
+    runs on demand in this Region only, so the grant names that one model.
+    """
+    arns: list[str] = []
+    for model_id in model_ids:
+        if model_id.split(".", 1)[0] in GEO_PREFIXES:
+            arns += [
+                f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{model_id}",
+                "arn:aws:bedrock:*::foundation-model/*",
+            ]
+        else:
+            arns.append(f"arn:aws:bedrock:{cfg.region}::foundation-model/{model_id}")
+    return list(dict.fromkeys(arns))
+
+
 def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
     """What every Watchfloor Lambda reads (TD §7.1). Identifiers are fixed strings from config."""
     return {
@@ -45,6 +67,7 @@ def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
         "WF_MCP_URL": cfg.resource_uri,
         "WF_DEMO_MODE": "true" if cfg.demo_mode else "false",
         "WF_MODELS_ENABLED": "true" if cfg.models_enabled else "false",
+        "WF_AGENTS_ENABLED": "true" if cfg.agents_on else "false",
         "POWERTOOLS_SERVICE_NAME": service,
         "POWERTOOLS_METRICS_NAMESPACE": NAMESPACE,
         "LOG_LEVEL": "INFO",

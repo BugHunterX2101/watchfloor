@@ -30,9 +30,10 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         account=app.node.try_get_context("account") or os.environ.get("CDK_DEFAULT_ACCOUNT"),
         directory=Path(config_dir) if config_dir else CONFIG_DIR,
     )
-    override = app.node.try_get_context("wf:modelsEnabled")  # one synth, either way
-    if override is not None:
-        cfg = cfg.model_copy(update={"models_enabled": str(override).lower() in ("true", "1")})
+    for key, field in (("wf:modelsEnabled", "models_enabled"), ("wf:agentsEnabled", "agents_enabled")):
+        override = app.node.try_get_context(key)  # one synth, either way
+        if override is not None:
+            cfg = cfg.model_copy(update={field: str(override).lower() in ("true", "1")})
     aws_env = cdk.Environment(account=cfg.account, region=cfg.region)
     p = cfg.prefix
 
@@ -40,8 +41,8 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     data = DataStack(app, f"{p}-data", cfg=cfg, net=net, env=aws_env)
     auth = AuthStack(app, f"{p}-auth", cfg=cfg, net=net, data=data, env=aws_env)
     mcp = McpStack(app, f"{p}-mcp", cfg=cfg, net=net, data=data, env=aws_env)
-    # Without models (a Free plan account) there is no AgentCore to deploy.
-    agents = AgentsStack(app, f"{p}-agents", cfg=cfg, env=aws_env) if cfg.models_enabled else None
+    # Without models or without agents (ADR-022) there is no AgentCore to deploy.
+    agents = AgentsStack(app, f"{p}-agents", cfg=cfg, env=aws_env) if cfg.agents_on else None
     asyncs = AsyncStack(app, f"{p}-async", cfg=cfg, net=net, data=data, auth=auth, agents=agents, env=aws_env)
     harness = HarnessStack(app, f"{p}-harness", cfg=cfg, env=aws_env)
     ops = OpsStack(app, f"{p}-ops", cfg=cfg, auth=auth, mcp=mcp, asyncs=asyncs, env=aws_env)

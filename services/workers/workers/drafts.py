@@ -13,6 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from watchfloor_core.bedrock import strip_reasoning
 from watchfloor_core.envelope import wrap_untrusted
 from watchfloor_core.settings import Settings
 from watchfloor_core.speech import stage_label
@@ -77,7 +78,7 @@ async def template_draft(req: DraftRequest) -> str:
 
 
 async def bedrock_draft(req: DraftRequest, *, model_id: str) -> str:
-    return clean(await asyncio.to_thread(_converse, model_id, user_prompt(req)))
+    return clean(strip_reasoning(await asyncio.to_thread(_converse, model_id, user_prompt(req))))
 
 
 def _converse(model_id: str, prompt: str) -> str:
@@ -107,7 +108,7 @@ def _converse(model_id: str, prompt: str) -> str:
 
 
 def drafter_from_settings(s: Settings) -> Drafter:
-    if not s.models_enabled:  # no Claude in this environment (WF_MODELS_ENABLED=false)
+    if not s.models_enabled:  # no Bedrock model in this environment (WF_MODELS_ENABLED=false)
         return template_draft
     if s.haiku_model_id:
         model_id = s.haiku_model_id

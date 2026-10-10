@@ -34,12 +34,12 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
-      # models_enabled: false in infra/config/demo.yaml (an AWS Free plan account) skips the agents
-      # image and the deep-triage evals: there is no AgentCore and no Claude to run them on.
-      - name: Models enabled?
+      # models_enabled or agents_enabled false in infra/config/demo.yaml skips the agents image and
+      # the deep-triage evals: there is no AgentCore to run them on (ADR-022).
+      - name: Agents enabled?
         id: models
         run: |
-          if grep -qE '^models_enabled:[[:space:]]*false' infra/config/demo.yaml; then
+          if grep -qE '^(models|agents)_enabled:[[:space:]]*false' infra/config/demo.yaml; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"

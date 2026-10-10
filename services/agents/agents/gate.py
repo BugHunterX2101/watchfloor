@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 
 from pydantic import ValidationError
+from watchfloor_core.bedrock import strip_reasoning
 from watchfloor_core.models.tools import ProposeIn
 from watchfloor_core.speech import band_label, health
 
@@ -44,7 +45,7 @@ class Rejected(Exception):
 
 
 def _squash(text: str) -> str:
-    return " ".join(text.split())
+    return " ".join(strip_reasoning(text).split())
 
 
 def _clip(text: str, limit: int) -> str:

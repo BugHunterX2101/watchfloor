@@ -1,13 +1,15 @@
 """Bedrock model factories (TD §6.5, DD §10.4).
 
-Ids are inference-profile ids from ``WF_SONNET_MODEL_ID`` and
-``WF_HAIKU_MODEL_ID``. Only ``temperature`` is set: some recent Claude models
-reject ``temperature`` and ``top_p`` together.
+Ids come from ``WF_SONNET_MODEL_ID`` and ``WF_HAIKU_MODEL_ID``: Claude
+inference profiles, or Amazon Nova model ids on a Free plan account (ADR-022).
+Only ``temperature`` is set: some recent Claude models reject ``temperature``
+and ``top_p`` together. Nova runs greedy (``tool_use_options``).
 """
 
 from __future__ import annotations
 
 from strands.models import BedrockModel
+from watchfloor_core.bedrock import tool_use_options
 from watchfloor_core.settings import Settings, get_settings
 
 
@@ -18,7 +20,7 @@ class Misconfigured(Exception):
 def _model(model_id: str | None, name: str, temperature: float, max_tokens: int) -> BedrockModel:
     if not model_id:
         raise Misconfigured(f"{name} is not set")
-    return BedrockModel(model_id=model_id, temperature=temperature, max_tokens=max_tokens)
+    return BedrockModel(model_id=model_id, max_tokens=max_tokens, **tool_use_options(model_id, temperature))
 
 
 def sonnet(

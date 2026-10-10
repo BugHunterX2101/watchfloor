@@ -16,7 +16,7 @@ from conftest import (
     make_config,
     sign_in,
 )
-from harness_api.agent import to_messages
+from harness_api.agent import bedrock_model, to_messages
 from harness_api.app import create_app
 from harness_api.offline import deal_words
 
@@ -122,6 +122,52 @@ async def test_strands_turn_calls_mcp_tools_and_speaks_the_summary(
     assert r.status_code == 200 and body["engine"] == "strands" and body["reply"] == EXPLAIN
     assert mcp.calls == [("explain_deal_risk", {"deal_id": HARBOR})]
     assert [m["role"] for m in model.seen[0]] == ["user", "assistant", "user"]
+
+
+async def test_nova_reasoning_is_never_spoken(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:
+    model = ScriptedModel("explain_deal_risk", {"deal_id": HARBOR}, thinking="Read the summary aloud.")
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0"),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+        model_factory=lambda cfg: model,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Why is Harbor at risk?"})
+    assert r.status_code == 200 and r.json()["reply"] == EXPLAIN
+
+
+def test_nova_runs_greedy_in_the_harness(tmp_path: Path) -> None:
+    config = bedrock_model(
+        make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0")
+    ).get_config()
+    assert config["temperature"] == 0.0 and config["max_tokens"] == 1024
+    assert config["additional_request_fields"] == {"inferenceConfig": {"topK": 1}}
+
+
+class FailingModel(ScriptedModel):
+    """A model Bedrock refuses, e.g. throttled or not enabled for the account."""
+
+    async def stream(self, *a: object, **k: object):  # type: ignore[override]
+        raise RuntimeError("ThrottlingException")
+        yield {}
+
+
+async def test_a_failed_model_turn_falls_back_to_the_offline_engine(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0"),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+        model_factory=lambda cfg: FailingModel("get_risk_briefing"),
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "What needs my attention today?"})
+    body = r.json()
+    assert r.status_code == 200 and body["engine"] == "offline" and body["reply"] == BRIEFING
 
 
 async def test_deployed_environments_need_a_model(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:

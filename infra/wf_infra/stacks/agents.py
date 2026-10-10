@@ -18,6 +18,7 @@ from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_iam as iam
 from constructs import Construct
 
+from ..common import bedrock_arns
 from ..config import EnvConfig
 
 RUNTIME_CONTEXT = "wf:agentRuntime"
@@ -57,7 +58,7 @@ class AgentsStack(Stack):
         self.memory_id = self.memory.attr_memory_id
         self.memory_arn = self.memory.attr_memory_arn
 
-        # The runtime role: two inference profiles, memory reads, image pull, logs. No database, no VPC.
+        # The runtime role: the two models, memory reads, image pull, logs. No database, no VPC.
         role = iam.Role(
             self, "RuntimeRole", assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com")
         )
@@ -69,13 +70,7 @@ class AgentsStack(Stack):
                     "bedrock:Converse",
                     "bedrock:ConverseStream",
                 ],
-                resources=[
-                    *(
-                        f"arn:aws:bedrock:*:{cfg.account}:inference-profile/{m}"
-                        for m in (cfg.models.sonnet, cfg.models.haiku)
-                    ),
-                    "arn:aws:bedrock:*::foundation-model/*",
-                ],
+                resources=bedrock_arns(cfg, cfg.models.sonnet, cfg.models.haiku),
             )
         )
         role.add_to_policy(
