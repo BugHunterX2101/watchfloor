@@ -25,7 +25,7 @@ canary_email: daniel@lumenridge.example     # seeded user the canary signs in as
 alexa_redirect_uris: []           # ⚠ S2: Alexa+ account-linking redirect URIs, once the skill exists
 budgets_usd: [15, 25, 35]          # monthly usage before credits, account-wide; demo.yaml leaves this empty
 models_enabled: true               # Nova runs on a Free plan account, paid from the credits
-agents_enabled: true               # AgentCore Runtime + Memory: deep triage on Nova (ADR-022)
+agents_enabled: false              # AgentCore refused on this account (CreateMemory 403, 2026-10-10): AWS Support (ADR-022)
 cdn: false                         # CloudFront refused until AWS Support verifies the account (ADR-015)
 reserve_concurrency: false         # Lambda concurrency quota is 10 on a new account (ADR-016)
 demo_mode: false

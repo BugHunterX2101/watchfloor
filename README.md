@@ -123,10 +123,10 @@ harness, ops. Pushes to `main` deploy `dev`, and `v*.*.*` tags deploy `demo` (`.
 **On an AWS Free plan account** (new accounts since July 2025 start on it), the models are Amazon
 Nova, which runs on demand in us-east-1 and is paid from the credits (ADR-022). Nova Lite runs the
 harness, the follow-up drafts and the fast specialists. Nova Pro runs the triage Lead. Both configs
-ship with `models_enabled: true`. `dev` also sets `agents_enabled: true` and deploys AgentCore
-Runtime and Memory; on its first run with agents on, `deploy-dev` creates the image repository,
-pushes the agents image, then creates the runtime. With `agents_enabled: false` (`demo` for now)
-there is no Agents stack, and `start_deep_triage` answers that deep reviews aren't available.
+ship with `models_enabled: true` and `agents_enabled: false`, so everything deploys except the
+Agents stack, and `start_deep_triage` answers that deep reviews aren't available. Set
+`agents_enabled: true` to deploy AgentCore Runtime as well; on its first run with agents on,
+`deploy-dev` creates the image repository, pushes the agents image, then creates the runtime.
 `models_enabled: false` switches every model off: drafts use a template and the harness its
 offline engine.
 
@@ -225,7 +225,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (dev runs deep triage on Nova through AgentCore; the eval thresholds were set for Claude) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy (needs the `alexa-ai` CLI) · Local Inspector (command unverified) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (dev runs Nova with `agents_enabled: false`, so deep reviews stay off until AgentCore is deployed) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy (needs the `alexa-ai` CLI) · Local Inspector (command unverified) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along
