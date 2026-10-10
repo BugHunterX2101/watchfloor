@@ -222,7 +222,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev/demo through the seeder and watcher Lambdas) · CDK stacks, seeder and CI/CD workflows (synthesized and tested, not yet deployed) · remote conformance, latency probe, triage evals, load profile, utterance sheet (run locally; not yet against AWS) | First AWS deploy · model-backed eval run · Local Inspector (command unverified) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (dev runs with `models_enabled: false`, so deep reviews are off and the harness uses the offline engine) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy (needs the `alexa-ai` CLI) · Local Inspector (command unverified) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along

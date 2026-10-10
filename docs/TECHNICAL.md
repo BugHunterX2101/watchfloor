@@ -724,7 +724,7 @@ watchfloor/
 │           │   └── rigs.yaml               # stage norms, baselines, weights, thresholds (rigs-1.1)
 │           ├── models/
 │           │   ├── domain.py               # DealSnapshot, Engagement, FieldChange, Reason, RigsResult, Band
-│           │   ├── tools.py                # Pydantic I/O models for all 17 tools (source of JSON Schemas)
+│           │   ├── tools.py                # Pydantic I/O models for all 19 tools (source of JSON Schemas)
 │           │   └── triage.py               # TriageOutput, Driver, RecommendedAction
 │           ├── repos/                      # SQL only; one module per aggregate
 │           │   ├── deals.py                # load_snapshot(), find_by_name(), apply_update()
