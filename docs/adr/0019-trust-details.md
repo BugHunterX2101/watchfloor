@@ -2,6 +2,7 @@
 
 - **Status:** Accepted (2026-10-10)
 - **Refines:** ADR-018 (interaction details), DESIGN.md §8 (propose → confirm), §15 (views), §17 (harness)
+- **Amended by:** ADR-020 (the number shown is deal health, not risk)
 
 ## Context
 

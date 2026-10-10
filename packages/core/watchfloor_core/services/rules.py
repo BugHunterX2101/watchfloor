@@ -10,7 +10,7 @@ import asyncpg
 from ..errors import ErrorCode, WatchfloorError
 from ..models import tools as m
 from ..repos import deals, outbox, prefs, rules, scores
-from ..speech import join_words, money_display, plural, stage_label
+from ..speech import health, join_words, money_display, plural, stage_label
 from . import slack_blocks
 from .context import ServiceContext
 
@@ -34,7 +34,8 @@ def describe_rule(conditions: dict[str, Any]) -> str:
         subject.append(f"over {money_display(conditions['min_amount_cents'])}")
     clauses = []
     if conditions.get("min_score") is not None:
-        clauses.append(f"a risk score of {conditions['min_score']} or higher")
+        # Stored and matched as RIGS risk; said as health (ADR-020): risk 70 or higher is health 30 or lower.
+        clauses.append(f"health of {health(conditions['min_score'])} or lower")
     if conditions.get("quiet_days") is not None:
         clauses.append(f"no reply for {plural(conditions['quiet_days'], 'day')}")
     text = "Flag " + " ".join(subject)

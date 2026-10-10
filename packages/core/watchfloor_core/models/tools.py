@@ -134,7 +134,13 @@ class SetRuleIn(_In):
         list[OpenStage], Field(min_length=1, max_length=5, description="Only deals in these stages.")
     ] = None  # type: ignore[assignment]
     min_score: Annotated[
-        int, Field(ge=1, le=100, description="Only deals with a RIGS risk score at or above this.")
+        int,
+        Field(
+            ge=1,
+            le=100,
+            description="Only deals with a RIGS risk score at or above this. Risk is 100 minus health, "
+            "so 'health 30 or lower' is 70.",
+        ),
     ] = None  # type: ignore[assignment]
     segment: Annotated[Segment, Field(description="Only deals in this customer segment.")] = None  # type: ignore[assignment]
     channel: Channel = None  # type: ignore[assignment]
@@ -237,7 +243,11 @@ class BriefingDeal(_Out):
     amount_display: str | None = None
     stage: str
     owner: str
-    score: Annotated[int, Field(ge=0, le=100)]
+    score: Annotated[int, Field(ge=0, le=100, description="RIGS risk, higher is worse (internal scale).")]
+    health: Annotated[
+        int,
+        Field(ge=0, le=100, description="Deal health, 100 minus risk; higher is healthier. Say this one."),
+    ]
     band: BandName
     top_reason: str
     new_since_last_briefing: bool
@@ -275,7 +285,10 @@ class DealCard(_Out):
 
 
 class RiskBlock(_Out):
-    score: int
+    score: Annotated[int, Field(description="RIGS risk, higher is worse (internal scale).")]
+    health: Annotated[
+        int, Field(description="Deal health, 100 minus risk; higher is healthier. Say this one.")
+    ]
     band: BandName
     band_since: str
     components: dict[str, float]

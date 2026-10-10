@@ -9,7 +9,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the risk score, band, the four RIGS factor values, the top three reasons with evidence, and a 14-day score trend.",
+      "description": "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the deal's health (0-100, higher is healthier), band, the four RIGS factor values, the top three reasons with evidence, and a 14-day risk trend (health is 100 minus each point). Say health, not the internal risk score.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -172,10 +172,15 @@
               "computed_at": {
                 "type": "string"
               },
+              "health": {
+                "description": "Deal health, 100 minus risk; higher is healthier. Say this one.",
+                "type": "integer"
+              },
               "model_version": {
                 "type": "string"
               },
               "score": {
+                "description": "RIGS risk, higher is worse (internal scale).",
                 "type": "integer"
               },
               "weights": {
@@ -187,6 +192,7 @@
             },
             "required": [
               "score",
+              "health",
               "band",
               "band_since",
               "components",
@@ -630,7 +636,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. Returns up to 5 open deals ranked by risk band and deal value, each with score, band, amount, owner, the strongest risk reason, and whether it is new since the user's last briefing. Returns an all-clear summary when nothing is at risk.",
+      "description": "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. Returns up to 5 open deals ranked by risk band and deal value, each with health (0-100, higher is healthier), band, amount, owner, the strongest risk reason, and whether it is new since the user's last briefing. Returns an all-clear summary when nothing is at risk. Say health, not the internal risk score.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -687,6 +693,12 @@
                 "deal_id": {
                   "type": "string"
                 },
+                "health": {
+                  "description": "Deal health, 100 minus risk; higher is healthier. Say this one.",
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
                 "name": {
                   "type": "string"
                 },
@@ -697,6 +709,7 @@
                   "type": "string"
                 },
                 "score": {
+                  "description": "RIGS risk, higher is worse (internal scale).",
                   "maximum": 100,
                   "minimum": 0,
                   "type": "integer"
@@ -715,6 +728,7 @@
                 "stage",
                 "owner",
                 "score",
+                "health",
                 "band",
                 "top_reason",
                 "new_since_last_briefing"
@@ -781,7 +795,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the risk score, band, the four RIGS factor values, the top three reasons with evidence, and a 14-day score trend.",
+      "description": "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the deal's health (0-100, higher is healthier), band, the four RIGS factor values, the top three reasons with evidence, and a 14-day risk trend (health is 100 minus each point). Say health, not the internal risk score.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -944,10 +958,15 @@
               "computed_at": {
                 "type": "string"
               },
+              "health": {
+                "description": "Deal health, 100 minus risk; higher is healthier. Say this one.",
+                "type": "integer"
+              },
               "model_version": {
                 "type": "string"
               },
               "score": {
+                "description": "RIGS risk, higher is worse (internal scale).",
                 "type": "integer"
               },
               "weights": {
@@ -959,6 +978,7 @@
             },
             "required": [
               "score",
+              "health",
               "band",
               "band_since",
               "components",
@@ -1500,7 +1520,7 @@
             "type": "integer"
           },
           "min_score": {
-            "description": "Only deals with a RIGS risk score at or above this.",
+            "description": "Only deals with a RIGS risk score at or above this. Risk is 100 minus health, so 'health 30 or lower' is 70.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"

@@ -52,9 +52,15 @@ export function percent(x: number): number {
   return Math.round(Math.min(1, Math.max(0, x)) * 100);
 }
 
-/** Band score lines from rigs.yaml (enter thresholds): at risk from 65, watch from 40. */
-export const AT_RISK_FROM = 65;
-export const WATCH_FROM = 40;
+/** Health is what people see (ADR-020): 0–100, higher is healthier, 100 minus the RIGS risk score.
+ *  The band lines from rigs.yaml (risk enters at 65 and 40) are health 35 and 60. */
+export const AT_RISK_HEALTH = 35;
+export const WATCH_HEALTH = 60;
+
+/** The deal's health; servers before ADR-020 sent only the risk score. */
+export function healthOf(score: number, health?: number | null): number {
+  return typeof health === "number" ? health : 100 - score;
+}
 
 /** "$1.2M", "$840K", "$9,500": compact for a glance; exact figures stay on the detail screen. */
 export function compactMoney(cents: number): string {
@@ -92,7 +98,7 @@ export function effectText(effect: string, done: boolean): string {
     owner_changed: ["Changes the deal owner", "Owner changed"],
     draft_dm: ["Sends the draft to you in Slack, never to the customer", "Draft on its way to your Slack"],
     deal_updated: ["Updates the deal record", "Deal updated"],
-    risk_recomputed: ["Re-scores the deal's risk", "Risk re-scored"],
+    risk_recomputed: ["Re-scores the deal's health", "Health re-scored"],
   };
   return plan[effect]?.[done ? 1 : 0] ?? effect.replace(/_/g, " ");
 }

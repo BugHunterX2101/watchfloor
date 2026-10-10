@@ -4,7 +4,7 @@
 // than passing for current.
 
 import { BandChip } from "./Band";
-import { ago, BAND_LABEL, clock, compactMoney, dealTitle, isStale } from "./format";
+import { ago, BAND_LABEL, clock, compactMoney, dealTitle, healthOf, isStale } from "./format";
 import type { Briefing } from "./types";
 
 interface Props {
@@ -38,7 +38,8 @@ export function Board({ data, open, busy }: Props) {
     <section class="screen board" aria-label="Pipeline risk">
       <header class="board-head">
         <div>
-          <p class="eyebrow">WATCHFLOOR · Pipeline risk</p>
+          {/* No hover on an Echo Show: the scale is said once, in words, where the eye starts. */}
+          <p class="eyebrow">WATCHFLOOR · Deal health, 0–100, higher is healthier</p>
           {!data.all_clear && data.deals.length > 0 && <p class="headline">{headline(data)}</p>}
           <p class="meta">{data.all_clear ? "All clear" : line}</p>
         </div>
@@ -61,12 +62,14 @@ export function Board({ data, open, busy }: Props) {
                 class={`row card ${d.band}`}
                 disabled={busy}
                 onClick={() => open(d.deal_id)}
-                aria-label={`${i + 1}. ${d.account}, ${BAND_LABEL[d.band]} at ${d.score}. Open details.`}
+                aria-label={`${i + 1}. ${d.account}, ${BAND_LABEL[d.band]}, health ${healthOf(d.score, d.health)}. Open details.`}
               >
                 <span class="rank" aria-hidden="true">
                   {i + 1}
                 </span>
-                <span class="score">{d.score}</span>
+                <span class="score" title="Health, 0 to 100">
+                  {healthOf(d.score, d.health)}
+                </span>
                 <BandChip band={d.band} />
                 <span class="who">
                   <strong>{d.account}</strong> · {dealTitle(d.account, d.name)}

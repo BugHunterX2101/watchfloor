@@ -1,25 +1,28 @@
-// Deal detail (DD §15.4): score and band, RIGS factor bars, reasons, trend; plan and Propose.
+// Deal detail (DD §15.4): health and band, RIGS factor bars, reasons, trend; plan and Propose.
 
 import { BandChip } from "./Band";
 import {
   ago,
-  AT_RISK_FROM,
+  AT_RISK_HEALTH,
   BAND_LABEL,
   clock,
   dealTitle,
   FACTOR_NAME,
   FACTORS,
+  healthOf,
   isStale,
   percent,
   since,
-  WATCH_FROM,
+  WATCH_HEALTH,
 } from "./format";
 import type { Explain, RecommendedAction, TriageResult } from "./types";
 
-/** Fixed 0–100 scale (an auto-scaled axis turns a 2-point wobble into a cliff), the at-risk zone
- *  shaded and the watch line dashed, so the line reads against the bands, not just against itself. */
-function Trend({ points, stale }: { points: number[]; stale: boolean }) {
-  if (points.length < 2) return null;
+/** Health over 14 days (the server sends risk points; health is 100 minus each). Fixed 0–100 scale
+ *  (an auto-scaled axis turns a 2-point wobble into a cliff), the at-risk zone shaded along the
+ *  bottom and the watch line dashed, so the line reads against the bands, not just against itself. */
+function Trend({ risk, stale }: { risk: number[]; stale: boolean }) {
+  if (risk.length < 2) return null;
+  const points = risk.map((v) => 100 - v);
   const w = 140;
   const h = 32;
   const step = w / (points.length - 1);
@@ -34,10 +37,10 @@ function Trend({ points, stale }: { points: number[]; stale: boolean }) {
       <svg
         viewBox={`-4 -4 ${w + 8} ${h + 8}`}
         role="img"
-        aria-label={`14-day risk trend from ${first} to ${last}, ${change}. Shaded area is the at-risk zone.`}
+        aria-label={`14-day health trend from ${first} to ${last}, ${change}. Shaded area is the at-risk zone.`}
       >
-        <rect class="zone" x="0" y="0" width={w} height={y(AT_RISK_FROM)} />
-        <line class="threshold" x1="0" x2={w} y1={y(WATCH_FROM)} y2={y(WATCH_FROM)} />
+        <rect class="zone" x="0" y={y(AT_RISK_HEALTH)} width={w} height={h - y(AT_RISK_HEALTH)} />
+        <line class="threshold" x1="0" x2={w} y1={y(WATCH_HEALTH)} y2={y(WATCH_HEALTH)} />
         <path d={path} fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
         {/* Today, marked: where the line ends is the score shown above; hollow when it is stale. */}
         <circle class={stale ? "end stale" : "end"} cx={w} cy={y(last)} r="3.5" />
@@ -57,6 +60,7 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
   // The single biggest driver is named in words and carries the only strong bar; the rest stay quiet.
   const worst = FACTORS.reduce((a, b) => (value(b) > value(a) ? b : a));
   const stale = isStale(risk.computed_at);
+  const health = healthOf(risk.score, risk.health);
   return (
     <section class="screen detail" aria-label={`${deal.account} detail`}>
       <div class="detail-left">
@@ -65,20 +69,20 @@ export function Detail(props: { data: Explain; busy: boolean; dig: () => void; p
         <p class="meta">
           {[deal.amount_display, deal.stage, deal.owner].filter(Boolean).join(" · ")}
         </p>
-        {/* Labelled as risk every time: higher is worse here, unlike most CRM health scores. */}
-        <p class="big" aria-label={`Risk ${risk.score} out of 100, ${BAND_LABEL[risk.band]}`}>
-          <span class="score">{risk.score}</span>
+        {/* Health, as CRM deal scores read: higher is healthier, and it says so beside the number. */}
+        <p class="big" aria-label={`Health ${health} out of 100, ${BAND_LABEL[risk.band]}`}>
+          <span class="score">{health}</span>
           <span class="of">
             /100
             <br />
-            risk
+            health
           </span>
           <BandChip band={risk.band} />
         </p>
         <p class={`meta fresh${stale ? " stale" : ""}`}>
           {since(risk.band_since)} · scored {stale ? ago(risk.computed_at) : clock(risk.computed_at)}
         </p>
-        <Trend points={data.trend_14d} stale={stale} />
+        <Trend risk={data.trend_14d} stale={stale} />
         <div class="actions">
           <button type="button" disabled={busy} onClick={props.dig}>
             Dig into it

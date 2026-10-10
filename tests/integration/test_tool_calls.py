@@ -15,13 +15,15 @@ async def test_briefing_leads_with_the_demo_board(seeded: str, mcp: Mcp) -> None
     briefing = await mcp.ok("get_risk_briefing", {"limit": 3})
     assert [d["deal_id"] for d in briefing["deals"]][:2] == [KESTREL, HARBOR]
     assert briefing["deals"][0]["score"] == 71 and briefing["deals"][0]["band"] == "at_risk"
+    assert briefing["deals"][0]["health"] == 29, "people see health: 100 minus the RIGS risk (ADR-020)"
     assert briefing["all_clear"] is False
     assert len(briefing["summary"].split()) <= 60
 
 
 async def test_explain_returns_rigs_breakdown(seeded: str, mcp: Mcp) -> None:
     explained = await mcp.ok("explain_deal_risk", {"deal_id": KESTREL})
-    assert explained["risk"]["score"] == 71
+    assert explained["risk"]["score"] == 71 and explained["risk"]["health"] == 29
+    assert explained["summary"].startswith("Kestrel Biotech is At Risk, health 29.")
     assert [r["code"] for r in explained["reasons"]][:1] == ["SILENT_DAYS"]
     assert len(explained["trend_14d"]) == 14
 

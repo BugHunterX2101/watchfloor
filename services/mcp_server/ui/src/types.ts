@@ -11,7 +11,9 @@ export interface BriefingDeal {
   amount_display?: string | null;
   stage: string;
   owner: string;
+  /** RIGS risk (higher is worse); people see `health`. */
   score: number;
+  health?: number;
   band: Band;
   top_reason: string;
   new_since_last_briefing: boolean;
@@ -43,6 +45,7 @@ export interface Explain {
   deal: DealCard;
   risk: {
     score: number;
+    health?: number;
     band: Band;
     band_since: string;
     components: Record<string, number>;

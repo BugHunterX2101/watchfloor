@@ -21,7 +21,7 @@ import re
 
 from pydantic import ValidationError
 from watchfloor_core.models.tools import ProposeIn
-from watchfloor_core.speech import band_label
+from watchfloor_core.speech import band_label, health
 
 from .data_tools import JobData
 from .schemas import DraftAction, LeadDraft, TriageOutput
@@ -81,7 +81,7 @@ def _fallback_summary(job: JobData) -> str:
     risk = explain.get("risk") or {}
     name = deal.get("account") or "This deal"
     if risk.get("band"):
-        return f"{name} is {band_label(risk['band'])} at {risk.get('score', 0)}."
+        return f"{name} is {band_label(risk['band'])}, health {health(int(risk.get('score', 0)))}."
     return f"{name} has been reviewed."
 
 

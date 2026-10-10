@@ -16,7 +16,7 @@ from .. import tokens
 from ..errors import ErrorCode, WatchfloorError
 from ..models import tools as m
 from ..repos import deals, misc, outbox, prefs, proposals, users
-from ..speech import band_label, date_display, money_display, short_date
+from ..speech import band_label, date_display, health, money_display, short_date
 from . import scoring, slack_blocks
 from .context import ServiceContext
 from .read import current_score, open_card
@@ -307,7 +307,7 @@ def _done_summary(action_type: str, preview: dict[str, Any], result: dict[str, A
     if action_type == "draft_followup":
         return f"Done. I'm drafting the follow-up for {account}; it will arrive in your Slack shortly."
     score = result.get("score_after")
-    tail = f" Risk is now {score}, {band_label(result['band_after'])}." if score is not None else ""
+    tail = f" Health is now {health(score)}, {band_label(result['band_after'])}." if score is not None else ""
     return f"Done. {account} is updated.{tail}"
 
 

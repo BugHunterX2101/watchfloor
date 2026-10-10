@@ -35,7 +35,7 @@ def test_offline_triage_passes_the_gate(mcp: FakeMCP) -> None:
         "title": "Multi-thread to the economic buyer for Harbor & Pine",
     }
     assert out.voice_summary == (
-        "Harbor & Pine is At Risk at 66. No reply from the buyer in 9 days. "
+        "Harbor & Pine is At Risk, health 34. No reply from the buyer in 9 days. "
         "Suggested next step: multi-thread to the economic buyer."
     )
     assert out.confidence == 0.6
@@ -49,7 +49,7 @@ def test_a_healthy_deal_with_only_gaps_cites_the_latest_buyer_conversation(job: 
     assert [(d.factor, d.claim, d.evidence_ids) for d in out.risk_drivers] == [
         ("R", "Latest buyer conversation: an inbound email on 2026-10-01.", ["act_2"])
     ]
-    assert out.voice_summary.startswith("Harbor & Pine is Healthy at 19.")
+    assert out.voice_summary.startswith("Harbor & Pine is Healthy, health 81.")
 
 
 def test_hostile_notes_change_nothing(job: JobData) -> None:

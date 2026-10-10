@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from watchfloor_core.speech import band_label
+from watchfloor_core.speech import band_label, health
 
 from .data_tools import JobData
 from .schemas import DraftAction, DraftDriver, LeadDraft
@@ -103,7 +103,8 @@ def offline_triage(job: JobData) -> LeadDraft:
             break
 
     account = deal.get("account") or "This deal"
-    parts = [f"{account} is {band_label(risk.get('band', 'watch'))} at {risk.get('score', 0)}."]
+    band = band_label(risk.get("band", "watch"))
+    parts = [f"{account} is {band}, health {health(int(risk.get('score', 0)))}."]
     if drivers:
         parts.append(drivers[0].claim.rstrip(".") + ".")
     if actions:

@@ -12,7 +12,7 @@ from typing import Any
 from ..errors import ErrorCode, WatchfloorError
 from ..models import tools as m
 from ..repos import deals, misc, prefs
-from ..speech import band_label, date_display, join_words
+from ..speech import band_label, date_display, health, join_words
 from . import actions, scoring
 from .context import ServiceContext
 from .read import current_score, open_card
@@ -65,9 +65,10 @@ async def log_update(ctx: ServiceContext, args: m.LogUpdateIn) -> m.LogUpdateOut
     said = {"note": "the note", "next_step": "the next step", "next_step_date": "its date"}
     lead = f"Logged {join_words([said[f] for f in applied])} for {card['account']}." if applied else ""
     if after.score_after != before["score"]:
-        lead += f" Risk moved from {before['score']} to {after.score_after}, {band_label(after.band_after)}."
+        was, now = health(before["score"]), health(after.score_after)
+        lead += f" Health moved from {was} to {now}, {band_label(after.band_after)}."
     else:
-        lead += f" Risk is unchanged at {after.score_after}."
+        lead += f" Health is unchanged at {health(after.score_after)}."
     lead = lead.strip()
 
     pending_fields: dict[str, Any] = {}

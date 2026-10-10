@@ -48,6 +48,14 @@ def band_label(band: str) -> str:
     return BAND_LABELS.get(band, band)
 
 
+def health(risk_score: int) -> int:
+    """The number people see and hear (ADR-020): deal health, 0–100, higher is healthier.
+
+    RIGS still scores risk (higher is worse) and bands, rules and storage stay on that scale; health
+    is its complement, as CRM deal-health scores read."""
+    return 100 - risk_score
+
+
 def times_word(n: int) -> str:
     return {1: "once", 2: "twice"}.get(n, f"{n} times")
 

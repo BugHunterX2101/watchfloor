@@ -29,3 +29,7 @@ infra/cdk.out/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local design research (deep-research notes and reports): kept out of the repo
+research_notes/
+reports/

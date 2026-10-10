@@ -117,5 +117,5 @@ def test_voice_summary_is_made_speakable() -> None:
 
 def test_gate_output_is_the_dispatcher_contract(job: JobData) -> None:
     out = finalize(_draft(voice_summary="", recommended_actions=[_task()]), job)
-    assert out.voice_summary == "Harbor & Pine is At Risk at 66."
+    assert out.voice_summary == "Harbor & Pine is At Risk, health 34."
     assert out.recommended_actions[0].params == {"assignee_name": "Maya", "title": "Send a value recap"}

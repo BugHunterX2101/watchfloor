@@ -10,14 +10,16 @@ from __future__ import annotations
 DESCRIPTIONS: dict[str, str] = {
     "get_risk_briefing": (
         "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. "
-        "Returns up to 5 open deals ranked by risk band and deal value, each with score, band, amount, owner, "
-        "the strongest risk reason, and whether it is new since the user's last briefing. Returns an all-clear "
-        "summary when nothing is at risk."
+        "Returns up to 5 open deals ranked by risk band and deal value, each with health (0-100, higher is "
+        "healthier), band, amount, owner, the strongest risk reason, and whether it is new since the user's "
+        "last briefing. Returns an all-clear summary when nothing is at risk. Say health, not the internal "
+        "risk score."
     ),
     "explain_deal_risk": (
         "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a "
-        "deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the risk score, band, the four "
-        "RIGS factor values, the top three reasons with evidence, and a 14-day score trend."
+        "deal. Requires a deal_id from get_risk_briefing or lookup_deal. Returns the deal's health (0-100, "
+        "higher is healthier), band, the four RIGS factor values, the top three reasons with evidence, and a "
+        "14-day risk trend (health is 100 minus each point). Say health, not the internal risk score."
     ),
     "lookup_deal": (
         "Use to find a deal's deal_id when the user names a company or deal and you do not have its id yet. "

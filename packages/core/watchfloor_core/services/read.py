@@ -12,7 +12,7 @@ from ..errors import ErrorCode, WatchfloorError
 from ..models import tools as m
 from ..repos import deals, prefs, rules, scores
 from ..rigs_params import load_params
-from ..speech import band_label, date_display, money_display, plural, short_name, stage_label
+from ..speech import band_label, date_display, health, money_display, plural, short_name, stage_label
 from . import scoring
 from .context import ServiceContext
 
@@ -51,6 +51,7 @@ async def build_briefing(ctx: ServiceContext, args: m.BriefingIn) -> m.BriefingO
             "stage": stage_label(r["stage"]),
             "owner": short_name(r["owner"]),
             "score": r["score"],
+            "health": health(r["score"]),
             "band": r["band"],
             "top_reason": r["top_reason"] or "Risk signals detected.",
             "new_since_last_briefing": bool(r["new_since_last_briefing"]),
@@ -160,13 +161,14 @@ async def explain_deal(ctx: ServiceContext, args: m.ExplainIn) -> m.ExplainOut:
     if not trend or trend[-1] != rs["score"]:
         trend = (trend + [rs["score"]])[-14:]
     band = rs["band"]
-    lead = f"{card['account']} is {band_label(band)} at {rs['score']}."
+    lead = f"{card['account']} is {band_label(band)}, health {health(rs['score'])}."
     detail = " ".join(r["text"] for r in top) if top else "No risk signals right now."
     return m.ExplainOut(
         summary=f"{lead} {detail}",
         deal=deal_card(card),
         risk=m.RiskBlock(
             score=rs["score"],
+            health=health(rs["score"]),
             band=band,
             band_since=ctx.local_iso(rs["band_since"]),
             components={"r": float(rs["r"]), "i": float(rs["i"]), "g": float(rs["g"]), "s": float(rs["s"])},

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..speech import band_label, stage_label
+from ..speech import band_label, health, stage_label
 
 
 def escape(text: str) -> str:
@@ -44,9 +44,9 @@ def risk_alert(
     bullets = "\n".join(f"• {escape(r)}" for r in reasons[:3]) or "• No specific reasons recorded."
     ctx = f"Standing order: _{escape(rule_description)}_ · Watchfloor" if rule_description else "Watchfloor"
     return {
-        "text": f"{account} is {label} ({score})",
+        "text": f"{account} is {label} (health {health(score)})",
         "blocks": [
-            _header(f"{label} · {account} ({score})"),
+            _header(f"{label} · {account} (health {health(score)})"),
             {
                 "type": "section",
                 "fields": [
@@ -95,7 +95,7 @@ def team_note(*, account: str, score: int, band: str, message: str, requester: s
     return {
         "text": f"{account}: {message}",
         "blocks": [
-            _section(f"*{escape(account)}* · {band_label(band)} ({score})\n{escape(message)}"),
+            _section(f"*{escape(account)}* · {band_label(band)} (health {health(score)})\n{escape(message)}"),
             _context(f"From {escape(requester)} via Watchfloor"),
         ],
     }
@@ -119,7 +119,7 @@ def triage_plan(
     return {
         "text": f"Deep review: {account}",
         "blocks": [
-            _header(f"Deep review · {account} ({score}, {band_label(band)})"),
+            _header(f"Deep review · {account} (health {health(score)}, {band_label(band)})"),
             _section(escape(voice_summary)),
             _section(f"*Recommended next steps*\n{steps}"),
             _context("Say “Alexa, have Maya…” to act. Nothing happens without your confirmation."),
