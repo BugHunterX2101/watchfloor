@@ -34,6 +34,20 @@ from ._http import is_mcp_post, respond, respond_jsonrpc_error, state
 log = logging.getLogger("watchfloor.mcp.auth")
 
 
+# What an Alexa+ service token (mcp:service) may call: discovery and the static ui:// views.
+SERVICE_METHODS = frozenset(
+    {
+        "initialize",
+        "notifications/initialized",
+        "ping",
+        "tools/list",
+        "resources/list",
+        "resources/templates/list",
+        "resources/read",
+    }
+)
+
+
 class InvalidToken(Exception):
     pass
 
@@ -106,9 +120,14 @@ class JwksCache:
 def principal_from_claims(claims: dict[str, Any]) -> Principal:
     ws = claims.get("ws")
     sub = claims.get("sub")
+    scopes = frozenset(str(claims.get("scope", "")).split()) & ALL_SCOPES
+    if WfScope.SERVICE in scopes:
+        # Alexa+ Tier 1: a service token names no user, workspace or job, and holds nothing else.
+        if scopes != {WfScope.SERVICE} or ws or claims.get("job") or not isinstance(sub, str) or not sub:
+            raise InvalidToken("service token with user or job claims")
+        return Principal(user_id="", workspace_id="", scopes=scopes, subject=sub)
     if not isinstance(ws, str) or not ws or not isinstance(sub, str) or not sub:
         raise InvalidToken("missing ws or sub")
-    scopes = frozenset(str(claims.get("scope", "")).split()) & ALL_SCOPES
     job = claims.get("job")
     if job:
         scopes &= {WfScope.AGENT_READ}
@@ -151,6 +170,9 @@ class BearerAuth:
         except (jwt.PyJWTError, InvalidToken) as exc:
             log.info("rejected bearer token: %s", type(exc).__name__)
             await respond(send, 401)
+            return
+        if principal.is_service() and state(scope).get("jsonrpc_method") not in SERVICE_METHODS:
+            await respond(send, 403)  # user data needs a linked account: Alexa+ starts linking on 403
             return
         state(scope)["principal"] = principal
         reset = PRINCIPAL.set(principal)

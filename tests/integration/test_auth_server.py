@@ -327,3 +327,35 @@ async def test_login_needs_csrf_and_is_rate_limited(auth_app: Any) -> None:
     async with _browser(auth_app) as cookieless:
         r = await cookieless.post("/login", data=form)
     assert r.status_code == 403
+
+
+async def test_alexa_gets_a_service_token_that_only_discovers(
+    auth_app: Any, client: httpx.AsyncClient
+) -> None:
+    """Alexa+ Tier 1 checklist: client_credentials, mcp:service only, <= 3600 s, no refresh token,
+    resource checked, and no user data behind it."""
+    grant = {"grant_type": "client_credentials", "scope": "mcp:service", "resource": RESOURCE}
+    r = await _token(auth_app, grant, auth=(ALEXA, ALEXA_SECRET))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scope"] == "mcp:service" and body["expires_in"] <= 3600 and "refresh_token" not in body
+    claims = jwt.decode(body["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "svc:wf-alexa" and "ws" not in claims and "job" not in claims
+
+    service = Mcp(client, body["access_token"])
+    assert len(await service.tools()) == 14
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_risk_briefing"}}
+    assert (await service.post(call)).status_code == 403
+
+    no_scope = await _token(auth_app, {"grant_type": "client_credentials"}, auth=(ALEXA, ALEXA_SECRET))
+    assert no_scope.json()["scope"] == "mcp:service", "the default is the app's service scope, never a user's"
+    elsewhere = await _token(
+        auth_app, {**grant, "resource": "https://other.example/mcp"}, auth=(ALEXA, ALEXA_SECRET)
+    )
+    assert elsewhere.json()["error"] == "invalid_target"
+    user_scope = await _token(auth_app, {**grant, "scope": "watchfloor.read"}, auth=(ALEXA, ALEXA_SECRET))
+    assert user_scope.json()["error"] == "invalid_scope"
+    wrong_secret = await _token(auth_app, grant, auth=(ALEXA, "not-the-secret"))
+    assert wrong_secret.status_code == 401
+    not_alexa = await _token(auth_app, grant, auth=(DISPATCHER, DISPATCH_SECRET))
+    assert not_alexa.json()["error"] == "invalid_scope"

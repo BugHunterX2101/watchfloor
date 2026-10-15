@@ -24,6 +24,7 @@ ALEXA = "wf-alexa"
 HARNESS = "wf-harness"
 DISPATCHER = "wf-dispatcher"
 USER_SCOPES = ("watchfloor.read", "watchfloor.write")
+SERVICE_SCOPE = "mcp:service"  # Alexa+ Tier 1 (context.SERVICE_SCOPE)
 
 _hasher = PasswordHasher()
 
@@ -47,13 +48,15 @@ def default_clients(
     alexa_redirect_uris: tuple[str, ...] = (), harness_redirect_uris: tuple[str, ...] = ()
 ) -> list[ClientSpec]:
     return [
-        # ⚠ S2: Alexa+'s token-endpoint auth method is unconfirmed; the token endpoint accepts basic or post.
+        # Account linking (authorization_code + PKCE), plus Alexa+ Tier 1: client_credentials for an
+        # mcp:service token that lists the tools of this private server. Its docs show HTTP Basic for
+        # that grant; the token endpoint accepts basic or post for any confidential client.
         ClientSpec(
             ALEXA,
             "Alexa+",
-            ("authorization_code", "refresh_token"),
+            ("authorization_code", "refresh_token", "client_credentials"),
             "client_secret_post",
-            USER_SCOPES,
+            (*USER_SCOPES, SERVICE_SCOPE),
             alexa_redirect_uris,
             "WF_ALEXA_CLIENT_SECRET",
         ),

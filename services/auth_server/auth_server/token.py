@@ -24,7 +24,16 @@ from starlette.datastructures import FormData
 from starlette.requests import Request
 from starlette.responses import Response
 
-from .context import AGENT_SCOPE, JOB_TOKEN_TTL_S, AuthServer, client_ip, server
+from .context import (
+    AGENT_SCOPE,
+    JOB_TOKEN_TTL_S,
+    SERVICE_SCOPE,
+    SERVICE_TOKEN_TTL_S,
+    USER_SCOPES,
+    AuthServer,
+    client_ip,
+    server,
+)
 from .responses import oauth_error, token_json
 from .storage import Client
 
@@ -86,7 +95,7 @@ async def mint_access(
     srv: AuthServer,
     *,
     sub: str,
-    ws: str,
+    ws: str | None,
     scope: str,
     client_id: str,
     ttl_s: int,
@@ -98,7 +107,7 @@ async def mint_access(
         "iss": s.issuer,
         "sub": sub,
         "aud": s.resource_uri,
-        "ws": ws,
+        **({"ws": ws} if ws else {}),  # a service token names no workspace
         "scope": scope,
         "client_id": client_id,
         "iat": now,
@@ -204,12 +213,37 @@ async def _refresh_token(srv: AuthServer, client: Client, form: FormData) -> Res
     )
 
 
+async def _service_token(srv: AuthServer, client: Client, form: FormData) -> Response:
+    """Alexa+ Tier 1: a token that lists the tools and reads no user data. No refresh token."""
+    resource = _field(form, "resource")
+    if resource is not None and resource != srv.settings.resource_uri:
+        return oauth_error("invalid_target", "resource is not this MCP server.")
+    access = await mint_access(
+        srv,
+        sub=f"svc:{client.client_id}",
+        ws=None,
+        scope=SERVICE_SCOPE,
+        client_id=client.client_id,
+        ttl_s=SERVICE_TOKEN_TTL_S,
+    )
+    return token_json(
+        {
+            "access_token": access,
+            "token_type": "Bearer",
+            "expires_in": SERVICE_TOKEN_TTL_S,
+            "scope": SERVICE_SCOPE,
+        }
+    )
+
+
 async def _client_credentials(srv: AuthServer, client: Client, form: FormData) -> Response:
     if not client.confidential:
         return oauth_error("unauthorized_client", "client_credentials needs a confidential client.")
-    requested = frozenset((_field(form, "scope") or " ".join(sorted(client.scopes))).split())
+    requested = frozenset((_field(form, "scope") or " ".join(sorted(client.scopes - USER_SCOPES))).split())
+    if requested == {SERVICE_SCOPE} and SERVICE_SCOPE in client.scopes:
+        return await _service_token(srv, client, form)
     if requested != {AGENT_SCOPE} or not requested <= client.scopes:
-        return oauth_error("invalid_scope", f"Only {AGENT_SCOPE} is issued with client_credentials.")
+        return oauth_error("invalid_scope", "client_credentials issues only a service scope this app holds.")
     ws, job = _field(form, "ws"), _field(form, "job")
     if not ws or not _WS.match(ws) or not job or not _JOB.match(job):
         return oauth_error("invalid_request", "Job tokens need ws and job parameters.")

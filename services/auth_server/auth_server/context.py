@@ -18,6 +18,7 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "tem
 
 USER_SCOPES = frozenset({"watchfloor.read", "watchfloor.write"})
 AGENT_SCOPE = "watchfloor.agent.read"
+SERVICE_SCOPE = "mcp:service"  # Alexa+ Tier 1: lists the tools, reads no user data
 SCOPE_TEXT = {
     "watchfloor.read": "See your pipeline risk",
     "watchfloor.write": "Create tasks and alerts after you confirm",
@@ -25,6 +26,7 @@ SCOPE_TEXT = {
 
 CODE_TTL_S = 60
 JOB_TOKEN_TTL_S = 300
+SERVICE_TOKEN_TTL_S = 3600  # Alexa+ Tier 1 checklist: expires_in <= 3600
 TICKET_TTL_S = 300
 
 

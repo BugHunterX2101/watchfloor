@@ -9,10 +9,12 @@ class Scope:
     READ = "watchfloor.read"
     WRITE = "watchfloor.write"
     AGENT_READ = "watchfloor.agent.read"
+    # Alexa+ Tier 1 (service-level) token: discovery only, never user data.
+    SERVICE = "mcp:service"
 
 
 USER_SCOPES = frozenset({Scope.READ, Scope.WRITE})
-ALL_SCOPES = frozenset({Scope.READ, Scope.WRITE, Scope.AGENT_READ})
+ALL_SCOPES = frozenset({Scope.READ, Scope.WRITE, Scope.AGENT_READ, Scope.SERVICE})
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,9 @@ class Principal:
 
     def is_agent(self) -> bool:
         return self.job_id is not None or Scope.AGENT_READ in self.scopes
+
+    def is_service(self) -> bool:
+        return Scope.SERVICE in self.scopes
 
     def can(self, scope: str) -> bool:
         return scope in self.scopes

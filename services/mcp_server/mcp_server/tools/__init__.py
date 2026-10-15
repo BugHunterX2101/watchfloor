@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from watchfloor_core.principal import Principal
+from watchfloor_core.principal import USER_SCOPES, Principal
 
 from . import actions, agent_read, briefing, explain, lookup, prefs, rules, triage, updates
 from .base import ToolOutcome, ToolSpec
@@ -29,6 +29,8 @@ REGISTRY: dict[str, ToolSpec] = {spec.name: spec for spec in ORDERED}
 
 
 def visible(principal: Principal) -> list[ToolSpec]:
+    if principal.is_service():  # Alexa+ learns the catalog a linked user sees; it can call none of it
+        return [spec for spec in ORDERED if spec.scopes & USER_SCOPES]
     return [spec for spec in ORDERED if spec.visible_to(principal)]
 
 
