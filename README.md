@@ -128,7 +128,9 @@ Agents stack, and `start_deep_triage` answers that deep reviews aren't available
 `agents_enabled: true` to deploy AgentCore Runtime as well; on its first run with agents on,
 `deploy-dev` creates the image repository, pushes the agents image, then creates the runtime.
 `models_enabled: false` switches every model off: drafts use a template and the harness its
-offline engine.
+offline engine. That is how `dev` runs today: the account's Bedrock inference quotas (on-demand,
+cross-Region and global) and its AgentCore quotas are all 0 and not adjustable in Service Quotas,
+so a model call can only be throttled. Once AWS Support raises them, set `models_enabled: true`.
 
 **Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
 and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and
@@ -225,7 +227,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (dev runs Nova with `agents_enabled: false`, so deep reviews stay off until AgentCore is deployed) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy (needs the `alexa-ai` CLI) · Local Inspector (command unverified) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false`) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy (needs the `alexa-ai` CLI) · Local Inspector (command unverified) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import httpx
@@ -16,7 +17,7 @@ from conftest import (
     make_config,
     sign_in,
 )
-from harness_api.agent import bedrock_model, to_messages
+from harness_api.agent import TURN_TIMEOUT_S, bedrock_model, to_messages
 from harness_api.app import create_app
 from harness_api.offline import deal_words
 
@@ -168,6 +169,42 @@ async def test_a_failed_model_turn_falls_back_to_the_offline_engine(
         r = await c.post("/converse", json={"message": "What needs my attention today?"})
     body = r.json()
     assert r.status_code == 200 and body["engine"] == "offline" and body["reply"] == BRIEFING
+
+
+class ThrottledModel(ScriptedModel):
+    """Bedrock with the account's quota at 0: every call is throttled."""
+
+    async def stream(self, *a: object, **k: object):  # type: ignore[override]
+        from strands.types.exceptions import ModelThrottledException
+
+        raise ModelThrottledException("Too many tokens per day, please wait before trying again.")
+        yield {}
+
+
+async def test_a_throttled_model_falls_back_without_backing_off(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0"),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+        model_factory=lambda cfg: ThrottledModel("get_risk_briefing"),
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        started = time.monotonic()
+        r = await c.post("/converse", json={"message": "What needs my attention today?"})
+        elapsed = time.monotonic() - started
+    body = r.json()
+    assert r.status_code == 200 and body["engine"] == "offline" and body["reply"] == BRIEFING
+    assert elapsed < 3  # Strands' default retry would sleep 4 s before its first retry
+
+
+def test_the_harness_fits_inside_api_gateway(tmp_path: Path) -> None:
+    model = bedrock_model(make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0"))
+    config = model.client.meta.config
+    assert TURN_TIMEOUT_S < 30 and config.read_timeout == TURN_TIMEOUT_S
+    assert config.retries == {"mode": "standard", "total_max_attempts": 3}
 
 
 async def test_deployed_environments_need_a_model(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:

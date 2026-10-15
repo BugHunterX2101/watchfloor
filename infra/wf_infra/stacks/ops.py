@@ -147,6 +147,19 @@ class OpsStack(Stack):
             0,
             1,
         )
+        if cfg.models_enabled:  # the account's Bedrock quotas are the first limit a live demo hits (ADR-022)
+            slots = [("fast", cfg.models.haiku)] + (
+                [("reasoning", cfg.models.sonnet)] if cfg.agents_on else []
+            )
+            for slot, model_id in slots:
+                throttles = cw.Metric(
+                    namespace="AWS/Bedrock",
+                    metric_name="InvocationThrottles",
+                    dimensions_map={"ModelId": model_id},
+                    period=FIVE_MIN,
+                    statistic="Sum",
+                )
+                alarm(f"Throttles{slot.title()}", f"bedrock-throttles-{slot}", throttles, 0, 1)
         alarm("OutboxDead", "outbox-dead", _metric("OutboxDead", "Maximum", service="sweeper"), 0, 1)
         hour = Duration.hours(1)
         triage_fail = cw.MathExpression(

@@ -54,3 +54,18 @@ Nova differs from Claude in two ways that matter here (Amazon Nova user guide, "
 - Risk scores, health and bands stay deterministic (ADR-002, ADR-010), so no number a user hears
   comes from the model.
 - Moving back to Claude after a Paid-plan upgrade is a change to the config alone.
+
+## Update (2026-10-15)
+
+AgentCore refused `CreateMemory` on this account (403, "contact customer support"), and Service
+Quotas shows every Bedrock inference quota at 0: on-demand, cross-Region and global, for Nova and
+every other model, and none of the request quotas is adjustable. AgentCore's own quotas (Memories,
+Active Session Workloads, Docker image size) are 0 as well. Only AWS Support can raise them.
+
+With the quotas at 0, `models_enabled: true` broke two things on `dev`. A harness turn waited out
+Strands' default backoff (4 s doubling to 64 s) and hit API Gateway's 30 s limit instead of falling
+back. A follow-up draft was retried by the queue until it reached the dead-letter queue.
+
+- `dev` runs with `models_enabled: false` until AWS raises the quotas. Switching it back is one line.
+- The harness turns Strands' retries off, gives botocore two quick standard-mode retries, and caps
+  a turn at 25 s, so a throttled model hands the turn to the offline engine at once.

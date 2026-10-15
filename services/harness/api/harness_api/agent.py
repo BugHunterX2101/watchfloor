@@ -28,7 +28,7 @@ from .offline import offline_turn
 log = logging.getLogger(__name__)
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
-TURN_TIMEOUT_S = 45.0
+TURN_TIMEOUT_S = 25.0  # under API Gateway's 30 s limit, so a slow turn gets our 504, not the gateway's
 UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6
 MAX_HISTORY = 12
@@ -112,12 +112,22 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
 
 
 def bedrock_model(cfg: HarnessConfig) -> Any:
+    from botocore.config import Config as BotocoreConfig
     from strands.models import BedrockModel
 
     model_id = cfg.core.haiku_model_id
     if not model_id:
         raise Misconfigured("WF_HAIKU_MODEL_ID is not set")
-    return BedrockModel(model_id=model_id, max_tokens=MAX_TOKENS, **tool_use_options(model_id, 0.5))
+    # Two quick retries (standard mode, jittered, about 3 s at most) ride out a brief throttle.
+    client = BotocoreConfig(
+        retries={"mode": "standard", "total_max_attempts": 3}, connect_timeout=5, read_timeout=TURN_TIMEOUT_S
+    )
+    return BedrockModel(
+        model_id=model_id,
+        max_tokens=MAX_TOKENS,
+        boto_client_config=client,
+        **tool_use_options(model_id, 0.5),
+    )
 
 
 async def strands_turn(
@@ -139,6 +149,9 @@ async def strands_turn(
         messages=to_messages(history),
         callback_handler=None,
         name="alexa-sim",
+        # Strands' own backoff (4 s, doubling to 64 s) outlasts the turn. Without it, a throttled
+        # model fails at once and the offline engine answers (run_turn).
+        retry_strategy=None,
     )
     result = await asyncio.wait_for(agent.invoke_async(message, limits={"turns": MAX_TURNS}), TURN_TIMEOUT_S)
     if guard.unauthorized:

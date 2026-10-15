@@ -234,6 +234,7 @@ def test_without_models_nothing_needs_agentcore_or_claude() -> None:
         "AWS::Lambda::Function",
         {"Environment": {"Variables": Match.object_like({"WF_MODELS_ENABLED": "false"})}},
     )
+    assert "AWS/Bedrock" not in json.dumps(off["ops"].to_json())
 
 
 def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
@@ -262,6 +263,16 @@ def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
             }
         },
     )
+    on["ops"].has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "wf-dev-bedrock-throttles-fast",
+            "Namespace": "AWS/Bedrock",
+            "MetricName": "InvocationThrottles",
+            "Dimensions": [{"Name": "ModelId", "Value": "amazon.nova-lite-v1:0"}],
+        },
+    )
+    assert "bedrock-throttles-reasoning" not in json.dumps(on["ops"].to_json())
 
 
 @pytest.mark.parametrize("env", ["dev", "demo"])
