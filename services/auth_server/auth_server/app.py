@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 from watchfloor_core.clock import Clock
 from watchfloor_core.settings import get_settings
 
@@ -17,6 +18,7 @@ from . import __version__
 from .authorize import authorize, consent, login
 from .context import AuthServer, server
 from .jwks import jwks
+from .legal import ADDON_ASSETS, privacy, terms
 from .metadata import authorization_server_metadata
 from .revoke import revoke
 from .signer import KmsSigner, Signer, signer_from_settings
@@ -84,6 +86,9 @@ def create_app(
             Route("/token", token, methods=["POST"]),
             Route("/revoke", revoke, methods=["POST"]),
             Route("/healthz", healthz, methods=["GET"]),
+            Route("/privacy", privacy, methods=["GET"]),  # addon.json listing links
+            Route("/terms", terms, methods=["GET"]),
+            Mount("/static/addon", StaticFiles(directory=ADDON_ASSETS), name="addon"),  # listing images
         ],
         lifespan=lifespan,
     )

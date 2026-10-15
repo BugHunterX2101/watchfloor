@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy policy · Watchfloor</title>
+  <style>
+    :root { color-scheme: light dark; --fg: #1b1f24; --muted: #59636e; --bg: #f6f7f9; --card: #fff; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #e8ebef; --muted: #a3acb6; --bg: #0f1216; --card: #171b21; } }
+    body { margin: 0; font: 16px/1.6 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 720px; margin: 6vh auto; padding: 28px 32px; background: var(--card); border-radius: 12px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    h2 { font-size: 1.1rem; margin: 28px 0 8px; }
+    .meta { color: var(--muted); margin: 0 0 20px; }
+    @media (max-width: 760px) { main { margin: 0; border-radius: 0; padding: 24px 16px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Watchfloor privacy policy</h1>
+  <p class="meta">Last updated October 15, 2026</p>
+
+  <p>Watchfloor is an Alexa+ add-on that tells sales teams which deals in their pipeline are at risk
+  and why, and acts on them by voice only after the user confirms. It is a demonstration built for
+  the Amazon Alexa+ and AWS hackathon. Every company, deal and person in its workspace is fictional.</p>
+
+  <h2>What Watchfloor receives</h2>
+  <ul>
+    <li><strong>Your Watchfloor sign-in.</strong> When you link Watchfloor in the Alexa app, you sign in
+      with a Watchfloor account (an email address and a password). Passwords are stored only as an
+      Argon2id hash.</li>
+    <li><strong>Your requests, as text.</strong> Alexa sends Watchfloor the tool requests it derives
+      from what you say, such as "explain the risk on this deal". Watchfloor never receives your voice
+      recordings; Amazon handles speech under its own privacy notice.</li>
+    <li><strong>What you ask it to save.</strong> Notes and field changes you log on a deal, standing
+      orders, briefing preferences, and follow-up tasks you confirm.</li>
+  </ul>
+
+  <h2>How it is used</h2>
+  <p>Only to answer your requests: score and explain pipeline risk, draft follow-ups, and carry out
+  the actions you confirm. Watchfloor does not sell data, show advertising or build profiles.</p>
+
+  <h2>Who processes it</h2>
+  <ul>
+    <li><strong>Amazon Web Services</strong> hosts Watchfloor and its database in the US East
+      (N. Virginia) Region.</li>
+    <li><strong>Google (Gemini API)</strong> generates spoken answers, deep reviews and follow-up drafts
+      from the deal data involved, while Amazon Bedrock is unavailable to this deployment. On Google's
+      free tier, Google may use that content to improve its products, which is one reason the
+      workspace holds only fictional data.</li>
+    <li><strong>Slack</strong> receives a message only when a workspace has connected a Slack channel
+      and you confirm an alert or a review is posted there.</li>
+  </ul>
+
+  <h2>Records and security</h2>
+  <p>Every tool call is written to an audit log with its time, the tool, the outcome and a SHA-256
+  hash of its arguments, never the arguments themselves. Access tokens expire within an hour; refresh
+  tokens rotate on every use and are stored only as hashes. Data is encrypted in transit and at rest.</p>
+
+  <h2>Retention and your choices</h2>
+  <p>You can unlink Watchfloor at any time in the Alexa app, and Alexa then stops using its tokens;
+  access tokens expire within an hour on their own. This
+  demonstration, its accounts and its data will be deleted after hackathon judging ends in
+  November 2026.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: contact the developer through the Watchfloor project page on
+  Devpost.</p>
+</main>
+</body>
+</html>

@@ -359,3 +359,15 @@ async def test_alexa_gets_a_service_token_that_only_discovers(
     assert wrong_secret.status_code == 401
     not_alexa = await _token(auth_app, grant, auth=(DISPATCHER, DISPATCH_SECRET))
     assert not_alexa.json()["error"] == "invalid_scope"
+
+
+async def test_the_add_on_listing_pages_are_public(auth_app: Any) -> None:
+    """addon.json needs HTTPS privacy-policy and terms-of-use URLs."""
+    async with _browser(auth_app) as c:
+        privacy, terms = await c.get("/privacy"), await c.get("/terms")
+    assert privacy.status_code == terms.status_code == 200
+    assert "Watchfloor privacy policy" in privacy.text and "Watchfloor terms of use" in terms.text
+    async with _browser(auth_app) as c:
+        for name in [f"icon-{n}x{n}.png" for n in (64, 72, 88, 126, 180, 241)] + ["carousel-600x900.png"]:
+            image = await c.get(f"/static/addon/{name}")
+            assert image.status_code == 200 and image.headers["content-type"] == "image/png", name
