@@ -141,3 +141,16 @@ def test_lead_has_the_four_specialists(model_settings: Settings, job: JobData) -
         "critic_review",
     }
     assert 'source="deal" id="dl_harbor"' in lead_prompt(job)
+
+
+def test_without_bedrock_the_agents_run_on_gemini(model_settings: Settings) -> None:
+    """ADR-023: Bedrock first while models are on; Gemini for both tiers once they are off."""
+    from strands.models.gemini import GeminiModel
+
+    gemini = {"gemini_model_id": "gemini-test", "gemini_api_key": "k"}
+    assert haiku(settings=model_settings.model_copy(update=gemini)).get_config()["model_id"] == "test.haiku"
+    off = model_settings.model_copy(update={**gemini, "models_enabled": False})
+    for model in (sonnet(settings=off), haiku(settings=off)):
+        assert isinstance(model, GeminiModel) and model.get_config()["model_id"] == "gemini-test"
+    with pytest.raises(Misconfigured, match="WF_HAIKU_MODEL_ID"):
+        haiku(settings=model_settings.model_copy(update={"models_enabled": False}))

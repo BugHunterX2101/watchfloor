@@ -54,9 +54,13 @@ class EnvConfig(BaseModel):
     # false: no Bedrock model runs anywhere. Drafts use a template, the harness its offline engine,
     # and there is no Agents stack. `-c wf:modelsEnabled=true|false` overrides it for one synth.
     models_enabled: bool = True
-    # false: Bedrock models run (harness, drafts) but AgentCore is not deployed, so there is no Agents
-    # stack and deep triage is refused up front (ADR-022). `-c wf:agentsEnabled=…` overrides it.
+    # false: no deep-triage agents are deployed, and deep triage is refused up front (ADR-022).
+    # `-c wf:agentsEnabled=…` overrides it.
     agents_enabled: bool = True
+    # Where the agents run: "agentcore" (the Agents stack: AgentCore Runtime and Memory, Bedrock only)
+    # or "lambda" (a plain function in the Async stack, no memory) where AgentCore is refused. On
+    # Lambda they run on Bedrock while models are on, else on Gemini (ADR-023).
+    agents_host: Literal["agentcore", "lambda"] = "agentcore"
     # Google AI Studio's Gemini API, free tier (ADR-023): the model the harness and drafts use when
     # Bedrock can't run, after Bedrock where models are on. Its key is the plain-string secret
     # wf-<env>/models/gemini, stored by hand; until it is there, turns and drafts fall back as before.
@@ -109,7 +113,21 @@ class EnvConfig(BaseModel):
     @property
     def agents_on(self) -> bool:
         """The Agents stack (AgentCore Runtime and Memory) is deployed."""
-        return self.models_enabled and self.agents_enabled
+        return self.models_enabled and self.agents_enabled and self.agents_host == "agentcore"
+
+    @property
+    def triage_lambda(self) -> bool:
+        """The agents run as a Lambda function (ADR-023), on Bedrock or Gemini."""
+        return (
+            self.agents_enabled
+            and self.agents_host == "lambda"
+            and (self.models_enabled or self.gemini_enabled)
+        )
+
+    @property
+    def triage_on(self) -> bool:
+        """Deep triage is offered: the agents run somewhere, with a model."""
+        return self.agents_on or self.triage_lambda
 
     @property
     def prefix(self) -> str:

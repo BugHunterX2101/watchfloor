@@ -1,11 +1,11 @@
 [project]
 name = "watchfloor-agents"
 version = "1.0.0"
-description = "Watchfloor deep-triage agents: a Strands Triage Lead and four specialists on AgentCore Runtime."
+description = "Watchfloor deep-triage agents: a Strands Triage Lead and four specialists, on AgentCore Runtime or Lambda."
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "watchfloor-core",
-  "strands-agents>=1.0",
+  "strands-agents[gemini]>=1.0",  # GeminiModel: Google AI Studio when Bedrock cannot run (ADR-023)
   "bedrock-agentcore>=1.0",
   "mcp>=1.23",  # whatever strands-agents supports; the MCP server itself is on 2.3+
   "httpx>=0.27",

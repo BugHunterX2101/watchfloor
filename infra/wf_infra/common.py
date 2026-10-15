@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy
 from aws_cdk import aws_apigatewayv2 as apigwv2
@@ -60,7 +61,7 @@ def bedrock_arns(cfg: EnvConfig, *model_ids: str) -> list[str]:
 
 def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
     """What every Watchfloor Lambda reads (TD §7.1). Identifiers are fixed strings from config."""
-    return {
+    env = {
         "WF_ENV": cfg.env,
         "WF_ISSUER": cfg.issuer,
         "WF_RESOURCE_URI": cfg.resource_uri,
@@ -68,11 +69,14 @@ def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
         "WF_MCP_URL": cfg.resource_uri,
         "WF_DEMO_MODE": "true" if cfg.demo_mode else "false",
         "WF_MODELS_ENABLED": "true" if cfg.models_enabled else "false",
-        "WF_AGENTS_ENABLED": "true" if cfg.agents_on else "false",
+        "WF_AGENTS_ENABLED": "true" if cfg.triage_on else "false",
         "POWERTOOLS_SERVICE_NAME": service,
         "POWERTOOLS_METRICS_NAMESPACE": NAMESPACE,
         "LOG_LEVEL": "INFO",
     }
+    if cfg.gemini_enabled:  # the model's name only; the key is read where gemini_access grants it
+        env["WF_GEMINI_MODEL_ID"] = cfg.gemini_model
+    return env
 
 
 def lwa_env() -> dict[str, str]:
@@ -185,11 +189,13 @@ def default_host_output(scope: Construct, cfg: EnvConfig, api: apigwv2.HttpApi) 
 
 
 def gemini_access(scope: Construct, cfg: EnvConfig, fn: lambda_.Function) -> None:
-    """Gemini for one function (ADR-023): the model id, the key's secret name and read access to it.
+    """Gemini for one function (ADR-023): the key's secret name and read access to it.
 
-    The secret is stored by hand, so it is referenced by name rather than created here.
+    The secret is stored by hand, so it is referenced by name rather than created here (once per
+    stack). The model id is in every function's base environment.
     """
-    secret = sm.Secret.from_secret_name_v2(scope, "GeminiKey", cfg.gemini_secret_name)
-    fn.add_environment("WF_GEMINI_MODEL_ID", cfg.gemini_model)
+    secret = cast(sm.ISecret | None, scope.node.try_find_child("GeminiKey")) or sm.Secret.from_secret_name_v2(
+        scope, "GeminiKey", cfg.gemini_secret_name
+    )
     fn.add_environment("WF_GEMINI_SECRET", cfg.gemini_secret_name)
     secret.grant_read(fn)

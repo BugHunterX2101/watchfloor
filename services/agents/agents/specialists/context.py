@@ -20,4 +20,5 @@ def build(data_tools: dict[str, Any], settings: Settings, recall: Any) -> Agent:
         tools=[*(data_tools[n] for n in TOOLS), recall],
         callback_handler=None,
         name="account_context",
+        retry_strategy=None,  # fail at once on a throttle (ADR-023)
     )

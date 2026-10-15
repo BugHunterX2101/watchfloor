@@ -149,7 +149,7 @@ class OpsStack(Stack):
         )
         if cfg.models_enabled:  # the account's Bedrock quotas are the first limit a live demo hits (ADR-022)
             slots = [("fast", cfg.models.haiku)] + (
-                [("reasoning", cfg.models.sonnet)] if cfg.agents_on else []
+                [("reasoning", cfg.models.sonnet)] if cfg.triage_on else []
             )
             for slot, model_id in slots:
                 throttles = cw.Metric(

@@ -45,4 +45,20 @@ mini challenge names the Strands SDK among the AWS services that qualify.
 - Google may use free-tier prompts to improve its products. `dev` holds only the synthetic
   Harbor & Pine data, so no customer data reaches it.
 - When AWS raises the quotas, `models_enabled: true` puts Bedrock first again, with Gemini behind it.
-- Deep triage still needs AgentCore; running the agents on Lambda with the same chain is the next step.
+- AgentCore stays refused, so deep triage runs on Lambda (below).
+
+## Update (2026-10-15): deep triage on Lambda
+
+- `agents_host: lambda` deploys the triage agents as a plain function, `wf-<env>-triage`, in the
+  async stack, outside the VPC: it reaches only the MCP server and the model. Its handler runs the
+  same event stream as the AgentCore entrypoint and returns the events; the dispatcher invokes it
+  synchronously, once, and reads the terminal event as it reads the runtime's stream.
+- The agents run on Bedrock while `models_enabled` is on, else on the Gemini model for both tiers.
+  Strands' retry back-off is off for every agent, so a throttled model fails at once: a specialist
+  returns an error the Lead works around, and a Lead whose model fails hands the review to the
+  offline engine. The result then says `"engine": "offline"`, and the gate and evidence check run
+  as for any other draft.
+- There is no AgentCore Memory on Lambda: `recall_preferences` returns an empty list.
+- `start_deep_triage` is offered where `agents_enabled` is on and Bedrock or a Gemini model is.
+- Once AWS enables AgentCore, `agents_host: agentcore` (with `models_enabled: true`) moves the
+  agents back to the runtime.

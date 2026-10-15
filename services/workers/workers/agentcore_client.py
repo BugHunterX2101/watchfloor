@@ -9,9 +9,11 @@ accepted too. A stream that ends on an ``error`` event instead fails the job
 Whatever comes back is only *raw* output: the schema gate and
 evidence check run afterwards in ``watchfloor_core.services.triage``.
 
-In AWS the dispatcher calls AgentCore Runtime (``WF_AGENT_RUNTIME_ARN``).
-Locally it can POST to the agents container's ``/invocations``
-(``WF_AGENT_URL``). With neither, triage fails fast with a clear reason.
+In AWS the dispatcher calls AgentCore Runtime (``WF_AGENT_RUNTIME_ARN``) or,
+where AgentCore is refused, the agents' Lambda function (``WF_AGENT_FUNCTION``,
+ADR-023), which returns the same events as ``{"events": [...]}``. Locally it
+can POST to the agents container's ``/invocations`` (``WF_AGENT_URL``). With
+none of them, triage fails fast with a clear reason.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from .errors import GiveUp, RetryLater
 AGENT_TIMEOUT_S = 100.0  # the agent stops itself at 90 s; this is the backstop
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 THROTTLED = {"ThrottlingException", "ServiceQuotaExceededException", "ServiceUnavailableException"}
+LAMBDA_THROTTLED = {"TooManyRequestsException", "ServiceException", "ResourceNotReadyException"}
 
 Invoker = Callable[[dict[str, Any], str], Awaitable[Any]]
 
@@ -125,6 +128,49 @@ def _invoke_agentcore(arn: str, payload: dict[str, Any], session_id: str, timeou
     return final_output(resp.get("contentType", ""), body)
 
 
+def lambda_output(body: bytes) -> Any:
+    """The agents' Lambda result, ``{"events": [...]}``, read like the runtime's SSE stream."""
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        raise GiveUp("agent function returned a body that is not JSON") from None
+    events = obj.get("events") if isinstance(obj, dict) else None
+    if not isinstance(events, list):
+        raise GiveUp("agent function returned no events")
+    stream = "\n".join(f"data: {json.dumps(event)}" for event in events)
+    return final_output("text/event-stream", stream.encode())
+
+
+def _invoke_lambda(name: str, payload: dict[str, Any], timeout_s: float) -> Any:
+    import boto3  # lazy: only in AWS
+    from botocore.config import Config
+    from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
+
+    # One attempt: a retry would run a 90 s review twice. The job's own retries come from SQS.
+    client = boto3.client(
+        "lambda",
+        config=Config(read_timeout=timeout_s, connect_timeout=5, retries={"total_max_attempts": 1}),
+    )
+    try:
+        resp = client.invoke(FunctionName=name, Payload=json.dumps(payload).encode())
+        body = resp["Payload"].read()
+    except ReadTimeoutError:
+        raise AgentTimeout("agent did not answer in time") from None
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in LAMBDA_THROTTLED:
+            raise RetryLater(f"lambda {code}") from None
+        raise GiveUp(f"lambda {code}") from None
+    except BotoCoreError as exc:
+        raise RetryLater(f"lambda unreachable: {type(exc).__name__}") from None
+    if resp.get("FunctionError"):
+        message = body.decode("utf-8", errors="replace")
+        if "timed out" in message:
+            raise AgentTimeout("agent function timed out")
+        raise GiveUp(f"agent function failed: {message[:200]}")
+    return lambda_output(body)
+
+
 def invoker_from_settings(s: Settings) -> Invoker:
     if s.agent_runtime_arn:
         arn = s.agent_runtime_arn
@@ -133,6 +179,13 @@ def invoker_from_settings(s: Settings) -> Invoker:
             return await asyncio.to_thread(_invoke_agentcore, arn, payload, session_id, AGENT_TIMEOUT_S)
 
         return agentcore
+    if s.agent_function:
+        name = s.agent_function
+
+        async def function(payload: dict[str, Any], _session_id: str) -> Any:
+            return await asyncio.to_thread(_invoke_lambda, name, payload, AGENT_TIMEOUT_S)
+
+        return function
     if s.agent_url:
         url = s.agent_url
 
@@ -142,6 +195,8 @@ def invoker_from_settings(s: Settings) -> Invoker:
         return local
 
     async def unconfigured(_payload: dict[str, Any], _session_id: str) -> Any:
-        raise GiveUp("no agent runtime configured: set WF_AGENT_RUNTIME_ARN, or WF_AGENT_URL locally")
+        raise GiveUp(
+            "no agent runtime configured: set WF_AGENT_RUNTIME_ARN or WF_AGENT_FUNCTION, or WF_AGENT_URL locally"
+        )
 
     return unconfigured

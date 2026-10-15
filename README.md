@@ -56,7 +56,7 @@ The exact schemas are pinned in
 | `services/mcp_server` | Streamable HTTP MCP server (stateless, JSON responses) |
 | `services/auth_server` | Minimal OAuth 2.1 authorization server (RFC 8414 / 9728, PKCE S256) |
 | `services/workers` | Watcher (every 15 min), outbox dispatcher, sweeper, canary |
-| `services/agents` | Strands agents on AgentCore Runtime; its own uv project (ADR-011) |
+| `services/agents` | Strands agents on AgentCore Runtime, or on Lambda (ADR-023); its own uv project (ADR-011) |
 | `services/harness` | Simulated Alexa+ (Path B): API with real OAuth sign-in, plus a voice-capable web page |
 | `db` | Forward-only migrations and the deterministic seed |
 | `scripts` | Dev keys and tokens, demo operations |
@@ -133,7 +133,9 @@ cross-Region and global) and its AgentCore quotas are all 0 and not adjustable i
 so a model call can only be throttled. Once AWS Support raises them, set `models_enabled: true`.
 Meanwhile `dev` runs Gemini through Strands (ADR-023, `gemini_enabled`): the harness and the drafts try
 Bedrock while models are on, then Gemini, then the keyword router or the template. Gemini's key is the
-plain-string secret `wf-<env>/models/gemini`, created by hand.
+plain-string secret `wf-<env>/models/gemini`, created by hand. `agents_host: lambda` runs the triage
+agents as a function in the async stack instead of on AgentCore, on the same chain: a Lead whose
+model fails hands the review to the offline engine. That is how `dev` offers deep reviews today.
 
 **Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
 and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and

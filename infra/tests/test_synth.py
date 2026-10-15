@@ -351,3 +351,36 @@ def test_without_reserved_concurrency_no_function_reserves_any(tmp_path: Path) -
 def test_by_default_the_mcp_server_and_dispatcher_reserve_concurrency(dev: dict[str, Template]) -> None:
     dev["mcp"].has_resource_properties("AWS::Lambda::Function", {"ReservedConcurrentExecutions": 20})
     dev["async"].has_resource_properties("AWS::Lambda::Function", {"ReservedConcurrentExecutions": 3})
+
+
+def test_deep_triage_runs_on_lambda_where_agentcore_cannot() -> None:
+    """ADR-023, the shipped dev config: the agents are a function outside the VPC that only the
+    dispatcher may invoke, on Gemini. There is no Agents stack, and deep triage is offered."""
+    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR)})
+    assert "agents" not in shipped
+    triage = shipped["async"].find_resources(
+        "AWS::Lambda::Function", {"Properties": {"FunctionName": "wf-dev-triage"}}
+    )
+    (props,) = (r["Properties"] for r in triage.values())
+    assert (
+        props["Handler"] == "agents.handler.handler" and props["Timeout"] == 95 and "VpcConfig" not in props
+    )
+    assert props["Environment"]["Variables"]["WF_GEMINI_SECRET"] == "wf-dev/models/gemini"
+    shipped["async"].has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": "wf-dev-dispatcher",
+            "Environment": {"Variables": Match.object_like({"WF_AGENT_FUNCTION": Match.any_value()})},
+        },
+    )
+    assert "lambda:InvokeFunction" in json.dumps(shipped["async"].to_json())
+    shipped["mcp"].has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Environment": {
+                "Variables": Match.object_like(
+                    {"WF_AGENTS_ENABLED": "true", "WF_GEMINI_MODEL_ID": "gemini-flash-lite-latest"}
+                )
+            }
+        },
+    )

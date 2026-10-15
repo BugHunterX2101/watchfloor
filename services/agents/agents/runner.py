@@ -10,6 +10,9 @@ Contract with ``workers.agentcore_client.final_output``:
   ``rejected`` (nothing survived the gate), ``data_unavailable`` (an MCP read
   failed) or ``agent_failed``.
 
+A model that fails the Lead (throttled, unreachable, no key) hands the job to
+the offline engine, whose result says ``"engine": "offline"`` (ADR-023).
+
 The work runs in its own task and reports through a queue, so the 90 s
 deadline cancels the work, never the code consuming the stream.
 """
@@ -23,6 +26,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from watchfloor_core import gemini
 from watchfloor_core.settings import Settings, get_settings
 
 from .data_tools import Caller, JobData, ToolFailed, mcp_connect
@@ -53,7 +57,7 @@ class JobIn(BaseModel):
 
 
 def pick_engine(s: Settings) -> Engine | None:
-    if s.sonnet_model_id and s.haiku_model_id:
+    if (s.sonnet_model_id and s.haiku_model_id) or gemini.configured(s):
         return "strands"
     if s.env in ("local", "test"):
         return "offline"
@@ -72,7 +76,7 @@ async def _default_lead(job: JobData, s: Settings, recall: Any) -> LeadDraft:
 
 async def _triage(
     job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit
-) -> TriageOutput:
+) -> tuple[Engine, TriageOutput]:
     try:
         session = connect(s.mcp_url, job_in.mcp_token)
         call = await asyncio.to_thread(session.__enter__)
@@ -88,9 +92,18 @@ async def _triage(
             draft = await asyncio.to_thread(offline_triage, job)
         else:
             recall = make_recall(s.memory_id, actor_id(job_in.workspace_id, job_in.user_ref))
-            draft = await lead(job, s, recall)
+            try:
+                draft = await lead(job, s, recall)
+            except (Rejected, ToolFailed, Misconfigured):
+                raise
+            except Exception:
+                log.warning(
+                    "triage %s: the model failed, the offline engine finishes", job_in.job_id, exc_info=True
+                )
+                engine = "offline"
+                draft = await asyncio.to_thread(offline_triage, job)
         emit({"type": "progress", "step": "checking"})
-        return finalize(draft, job)
+        return engine, finalize(draft, job)
     finally:
         await asyncio.to_thread(session.__exit__, None, None, None)
 
@@ -101,8 +114,8 @@ async def _work(
     deadline = asyncio.timeout(timeout_s)
     try:
         async with deadline:
-            out = await _triage(job_in, s, engine, connect, lead, emit)
-        emit({"type": "result", "engine": engine, "output": out.model_dump(mode="json")})
+            used, out = await _triage(job_in, s, engine, connect, lead, emit)
+        emit({"type": "result", "engine": used, "output": out.model_dump(mode="json")})
     except TimeoutError:
         if deadline.expired():
             emit(_error("timed_out", f"no result within {timeout_s:.0f} seconds"))
@@ -139,7 +152,10 @@ async def triage_events(
         return
     engine = pick_engine(s)
     if engine is None:
-        yield _error("misconfigured", f"WF_SONNET_MODEL_ID and WF_HAIKU_MODEL_ID must be set in {s.env}")
+        yield _error(
+            "misconfigured",
+            f"WF_SONNET_MODEL_ID and WF_HAIKU_MODEL_ID, or a Gemini model, must be set in {s.env}",
+        )
         return
 
     yield {"type": "progress", "step": "started", "job_id": job_in.job_id}

@@ -36,12 +36,12 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
-      # Deep triage needs models_enabled and agents_enabled in infra/config/dev.yaml (ADR-022).
-      # With either one false there is no Agents stack, so no agents image either.
+      # AgentCore needs models_enabled and agents_enabled in infra/config/dev.yaml (ADR-022). With
+      # either one false, or agents_host: lambda (ADR-023), there is no Agents stack, so no image.
       - name: Agents enabled?
         id: agents
         run: |
-          if grep -qE '^(models|agents)_enabled:[[:space:]]*false' infra/config/dev.yaml; then
+          if grep -qE '^(models|agents)_enabled:[[:space:]]*false|^agents_host:[[:space:]]*lambda' infra/config/dev.yaml; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"

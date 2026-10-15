@@ -16,4 +16,5 @@ def build(settings: Settings) -> Agent:
         tools=[],
         callback_handler=None,
         name="critic",
+        retry_strategy=None,  # fail at once on a throttle (ADR-023)
     )

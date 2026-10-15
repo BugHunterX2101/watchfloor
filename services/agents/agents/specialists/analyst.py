@@ -20,4 +20,5 @@ def build(data_tools: dict[str, Any], settings: Settings) -> Agent:
         tools=[data_tools[n] for n in TOOLS],
         callback_handler=None,
         name="signal_analyst",
+        retry_strategy=None,  # fail at once on a throttle (ADR-023)
     )

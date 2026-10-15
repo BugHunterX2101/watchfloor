@@ -18,4 +18,5 @@ def build(data_tools: dict[str, Any], settings: Settings) -> Agent:
         tools=[data_tools["get_playbook"]],
         callback_handler=None,
         name="playbook_strategist",
+        retry_strategy=None,  # fail at once on a throttle (ADR-023)
     )

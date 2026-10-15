@@ -50,9 +50,9 @@ class Settings(BaseModel):
     sonnet_model_id: str | None = None
     haiku_model_id: str | None = None
     # false where no Bedrock model may run: follow-up drafts use a template and the harness its
-    # offline engine. Deep triage also needs agents_enabled.
+    # offline engine. Deep triage needs agents_enabled, and Bedrock or a Gemini model.
     models_enabled: bool = True
-    # false where AgentCore Runtime is not deployed (ADR-022): deep triage is refused up front.
+    # false where no agents are deployed (ADR-022): deep triage is refused up front.
     agents_enabled: bool = True
     # Google AI Studio's Gemini API (ADR-023): the model wherever Bedrock can't run. The key comes from
     # WF_GEMINI_API_KEY (local) or the plain-string secret named by WF_GEMINI_SECRET (deployed).
@@ -60,6 +60,8 @@ class Settings(BaseModel):
     gemini_secret: str | None = None
     gemini_api_key: str | None = None
     agent_runtime_arn: str | None = None
+    # The agents as a plain Lambda function where AgentCore is refused (ADR-023).
+    agent_function: str | None = None
     # Local alternative to AgentCore: the agents container's /invocations endpoint.
     agent_url: str | None = None
     memory_id: str | None = None
@@ -110,6 +112,7 @@ def _from_env() -> Settings:
         gemini_secret=e("WF_GEMINI_SECRET") or None,
         gemini_api_key=e("WF_GEMINI_API_KEY") or None,
         agent_runtime_arn=e("WF_AGENT_RUNTIME_ARN") or None,
+        agent_function=e("WF_AGENT_FUNCTION") or None,
         agent_url=e("WF_AGENT_URL") or None,
         memory_id=e("WF_MEMORY_ID") or None,
         slack_secret_arn=e("WF_SLACK_SECRET_ARN") or None,

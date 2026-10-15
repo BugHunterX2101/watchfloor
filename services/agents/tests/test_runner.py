@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from typing import Any
 
 import httpx
+import pytest
 from agents import main
 from agents.data_tools import JobData
 from agents.runner import triage_events
@@ -119,3 +121,53 @@ async def test_runtime_serves_the_stream_as_sse(
     events = [json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")]
     assert events[-1]["type"] == "result"
     TriageOutput.model_validate(events[-1]["output"])
+
+
+def _draft() -> LeadDraft:
+    return LeadDraft(
+        voice_summary="Harbor & Pine went quiet after the proposal.",
+        risk_drivers=[DraftDriver(factor="R", claim="No reply in 9 days", evidence_ids=["act_3"])],
+        confidence=0.8,
+    )
+
+
+async def test_a_failing_model_hands_the_review_to_the_offline_engine(
+    payload: dict[str, Any], model_settings: Settings, mcp: FakeMCP
+) -> None:
+    """ADR-023: a throttled Lead (no back-off) ends in the offline engine's result, not a failed job."""
+    from strands.types.exceptions import ModelThrottledException
+
+    async def throttled(job: JobData, s: Settings, recall: Any) -> LeadDraft:
+        raise ModelThrottledException("quota exhausted")
+
+    events = await _events(payload, model_settings, mcp, lead=throttled)
+    assert events[-1]["type"] == "result" and events[-1]["engine"] == "offline"
+    TriageOutput.model_validate(events[-1]["output"])
+    assert mcp.opened == mcp.closed == 1
+
+
+async def test_gemini_alone_runs_the_agents(payload: dict[str, Any], mcp: FakeMCP) -> None:
+    gemini_only = Settings(env="dev", models_enabled=False, gemini_model_id="gemini-test", gemini_api_key="k")
+    seen: list[str | None] = []
+
+    async def lead(job: JobData, s: Settings, recall: Any) -> LeadDraft:
+        seen.append(s.gemini_model_id)
+        await asyncio.to_thread(job.read, "get_deal_timeline")
+        return _draft()
+
+    events = await _events(payload, gemini_only, mcp, lead=lead)
+    assert events[-1]["type"] == "result" and events[-1]["engine"] == "strands"
+    assert seen == ["gemini-test"]
+
+
+def test_the_lambda_handler_returns_the_whole_stream(
+    payload: dict[str, Any], offline_settings: Settings, mcp: FakeMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-023: the dispatcher reads the function's events as it reads the runtime's SSE stream."""
+    from agents import handler
+
+    bound = functools.partial(triage_events, settings=offline_settings, connect=mcp.connector())
+    monkeypatch.setattr(handler, "triage_events", bound)
+    out = handler.handler(payload, None)
+    assert [e["type"] for e in out["events"]] == ["progress", "progress", "progress", "result"]
+    json.dumps(out)  # what Lambda serializes

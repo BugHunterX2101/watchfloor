@@ -63,6 +63,8 @@ BUNDLES = {
             extras={"harness_web": ROOT / "services/harness/web/dist"},
             cwd=ROOT / "services/harness/api",
         ),
+        # the triage agents as a plain function where AgentCore is refused (ADR-023); own uv project
+        Bundle("agents", [], cwd=ROOT / "services/agents"),
     )
 }
 

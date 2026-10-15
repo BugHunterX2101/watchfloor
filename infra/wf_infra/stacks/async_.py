@@ -2,6 +2,8 @@
 
 Queue names are fixed (``wf-<env>-jobs``, ``wf-<env>-outbox``) because the MCP stack
 derives their URLs from config. Visibility timeouts exceed the dispatcher's 120 s timeout.
+With ``agents_host: lambda`` the triage agents run here too, as a function the dispatcher
+invokes (ADR-023). It is outside the VPC: it reaches only the MCP server and the model.
 """
 
 from __future__ import annotations
@@ -80,6 +82,40 @@ class AsyncStack(Stack):
         }
         if cfg.models_enabled:  # follow-up drafts on the fast model
             dispatcher_env["WF_HAIKU_MODEL_ID"] = cfg.models.haiku
+        self.triage = None
+        if cfg.triage_lambda:  # the agents as a plain function (ADR-023)
+            triage_env = (
+                {"WF_SONNET_MODEL_ID": cfg.models.sonnet, "WF_HAIKU_MODEL_ID": cfg.models.haiku}
+                if cfg.models_enabled
+                else {}
+            )
+            self.triage = PythonLambda(
+                self,
+                "Triage",
+                cfg=cfg,
+                name="triage",
+                bundle="agents",
+                handler="agents.handler.handler",
+                memory_size=1024,
+                timeout=Duration.seconds(95),  # the agents stop themselves at 90 s
+                reserved_concurrency=3,  # MAX_ACTIVE_JOBS
+                environment=triage_env,
+            ).function
+            if cfg.models_enabled:
+                self.triage.add_to_role_policy(
+                    iam.PolicyStatement(
+                        actions=[
+                            "bedrock:InvokeModel",
+                            "bedrock:InvokeModelWithResponseStream",
+                            "bedrock:Converse",
+                            "bedrock:ConverseStream",
+                        ],
+                        resources=bedrock_arns(cfg, cfg.models.sonnet, cfg.models.haiku),
+                    )
+                )
+            if cfg.gemini_enabled:
+                gemini_access(self, cfg, self.triage)
+            dispatcher_env["WF_AGENT_FUNCTION"] = self.triage.function_name
         if agents is not None:  # AgentCore: memory events and the agent runtime
             dispatcher_env["WF_MEMORY_ID"] = agents.memory_id
             if agents.runtime_arn:
@@ -104,6 +140,8 @@ class AsyncStack(Stack):
             queue.grant_send_messages(self.dispatcher)  # follow-up rows (DD §8.4)
         for secret in (data.app_secret, self.slack_secret, self.dispatcher_secret):
             secret.grant_read(self.dispatcher)
+        if self.triage is not None:
+            self.triage.grant_invoke(self.dispatcher)
         if cfg.gemini_enabled:  # follow-up drafts: after Bedrock, or alone where models are off (ADR-023)
             gemini_access(self, cfg, self.dispatcher)
         if cfg.models_enabled:

@@ -11,8 +11,15 @@ import httpx
 import pytest
 from watchfloor_core.models.triage import TriageOutput
 from watchfloor_core.services import slack_blocks
-from watchfloor_core.settings import get_settings
-from workers.agentcore_client import AgentTimeout, final_output, invoke_http
+from watchfloor_core.settings import Settings, get_settings
+from workers import agentcore_client
+from workers.agentcore_client import (
+    AgentTimeout,
+    final_output,
+    invoke_http,
+    invoker_from_settings,
+    lambda_output,
+)
 from workers.dispatcher import memory_text
 from workers.drafts import DraftRequest, clean, template_draft, user_prompt
 from workers.errors import GiveUp, RetryLater
@@ -328,3 +335,30 @@ async def test_job_token_request_shape_and_errors() -> None:
         await mint(s, "ws_lumenridge", "job_01ABC", client_secret="bad", transport=refused)
     with pytest.raises(RetryLater):
         await mint(s, "ws_lumenridge", "job_01ABC", client_secret="s3cret", transport=_status(503))
+
+
+def test_the_agents_function_returns_its_stream_as_events() -> None:
+    """ADR-023: the agents' Lambda returns {"events": [...]}, read like the runtime's SSE stream."""
+    progress = {"type": "progress", "step": "started"}
+    result = {"type": "result", "engine": "offline", "output": OUTPUT}
+    assert lambda_output(json.dumps({"events": [progress, result]}).encode()) == OUTPUT
+    timed_out = {"type": "error", "code": "timed_out", "error": "no result within 90 seconds"}
+    with pytest.raises(AgentTimeout):
+        lambda_output(json.dumps({"events": [progress, timed_out]}).encode())
+    with pytest.raises(GiveUp, match="no events"):
+        lambda_output(b'{"errorMessage": "boom"}')
+    with pytest.raises(GiveUp, match="not JSON"):
+        lambda_output(b"<html>")
+
+
+async def test_the_dispatcher_invokes_the_agents_function(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, str, float]] = []
+
+    def invoke(name: str, payload: dict[str, str], timeout_s: float) -> dict[str, object]:
+        seen.append((name, payload["job_id"], timeout_s))
+        return OUTPUT
+
+    monkeypatch.setattr(agentcore_client, "_invoke_lambda", invoke)
+    s = Settings(env="dev", agent_function="wf-dev-triage", agent_url="http://127.0.0.1:8083/invocations")
+    assert await invoker_from_settings(s)({"job_id": "job_1"}, "s" * 60) == OUTPUT
+    assert seen == [("wf-dev-triage", "job_1", agentcore_client.AGENT_TIMEOUT_S)]

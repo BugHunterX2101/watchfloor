@@ -29,6 +29,7 @@ def build_lead(job: JobData, settings: Settings, recall: Any) -> Agent:
         tools=make_specialist_tools(make_data_tools(job), recall=recall, settings=settings),
         callback_handler=None,
         name="triage_lead",
+        retry_strategy=None,  # fail at once on a throttle (ADR-023)
     )
 
 
