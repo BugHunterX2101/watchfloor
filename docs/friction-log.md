@@ -9,17 +9,19 @@ time, simple workaround) · **note** (worth knowing).
 
 ## Open spikes
 
-These still need an entry each (DESIGN.md §27).
+Each spike gets an entry when it is answered (DESIGN.md §27). Since entry 4, every question about
+the real Alexa+ client is **blocked**: answering it needs the toolkit's simulator or a deployed
+add-on, and the toolkit is closed to our account.
 
 | Spike | Question | Status |
 |---|---|---|
-| S1 | Alexa+ MCP Toolkit, CLI and simulator access; is `MCP-Protocol-Version` always sent? | answered: entry 4 (no toolkit access; Path B) |
-| S2 | Account-linking client registration; managed IdP vs. self-hosted (ADR-006) | open |
-| S3 | MCP Apps support in the simulator and on devices | spec side answered (ext-apps 2.0.3: nested `_meta.ui.resourceUri`, `text/html;profile=mcp-app`, `ui/initialize` handshake; views verified in the harness host). Alexa+ host support still open |
-| S4 | Elicitation or sampling support in the Alexa+ client | open |
-| S5 | Round trip from Alexa+ to `us-east-1` Lambda | open |
+| S1 | Alexa+ MCP Toolkit, CLI and simulator access; is `MCP-Protocol-Version` always sent? | access answered: entry 4 (no access; Path B). Header question blocked by entry 4 and still an assumption: the server rejects a missing header after `initialize` (CF-05, stricter than the spec's 2025-03-26 fallback). The harness always sends it; a real Alexa+ client that didn't would need that gate relaxed |
+| S2 | Account-linking client registration; managed IdP vs. self-hosted (ADR-006) | IdP answered by ADR-006 (self-hosted). Alexa+ client registration blocked by entry 4 |
+| S3 | MCP Apps support in the simulator and on devices | spec side answered (ext-apps 2.0.3: nested `_meta.ui.resourceUri`, `text/html;profile=mcp-app`, `ui/initialize` handshake; views verified in the harness host). Alexa+ host support blocked by entry 4 |
+| S4 | Elicitation or sampling support in the Alexa+ client | blocked by entry 4 |
+| S5 | Round trip from Alexa+ to `us-east-1` Lambda | blocked by entry 4 (the harness's round trip is measured by the latency probe) |
 | S6 | Bedrock profile ids, AgentCore session ids, Strands structured output, Memory namespaces | partly answered: entries 1–3 |
-| S7 | Locale and timezone passed by Alexa+ | open |
+| S7 | Locale and timezone passed by Alexa+ | blocked by entry 4; the workspace timezone is used |
 
 ---
 
@@ -83,7 +85,8 @@ These still need an entry each (DESIGN.md §27).
   is the MCP client, against the same self-hosted 2025-11-25 Streamable HTTP server, real OAuth and
   real protocol. The add-on work stays ready for when access opens: the Tier 1 service token
   ([ADR-024](adr/0024-alexa-service-token.md)), the listing pages and images, and
-  `scripts/addon_assets/fill_addon.py` (TECHNICAL.md §14).
+  `scripts/addon_assets/fill_addon.py` (TECHNICAL.md §14). The test IAM user, its access key and
+  both CLI profiles were deleted the same day.
 - **Suggestion:** Publish the CLI and the Local Inspector on public npm, as the MCP Inspector is,
   and keep only deploys gated. Failing that, an access-request form linked from the setup page, and
   a note that `AccessDenied` on this role means the account is not allowlisted.

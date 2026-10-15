@@ -86,14 +86,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: "evals-${{ github.ref_name }}", path: tests/evals/results/, if-no-files-found: ignore }
 
-      # ⚠ The Local Inspector's command name is unverified (TD §12.3): set the repository variable
-      # ALEXA_INSPECTOR_CMD to it, writing its report to inspector-report/. `alexa-ai deploy` stays a
-      # manual step behind the demo environment's required reviewers.
-      - name: Alexa+ Local Inspector
-        if: vars.ALEXA_INSPECTOR_CMD != ''
-        run: mkdir -p inspector-report && ${{ vars.ALEXA_INSPECTOR_CMD }}
-
-      - name: Keep the Inspector report
-        if: always() && vars.ALEXA_INSPECTOR_CMD != ''
-        uses: actions/upload-artifact@v4
-        with: { name: "inspector-${{ github.ref_name }}", path: inspector-report/ }
+      # No Alexa+ Local Inspector step: it is interactive (a browser UI) and installs from Amazon's
+      # private toolkit registry, which is closed to this account (friction log entry 4, TD §12.3).

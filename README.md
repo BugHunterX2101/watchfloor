@@ -4,9 +4,15 @@
 answers in a few seconds. It names the deals at risk, says why with evidence from the CRM, and
 proposes the next step. Nothing changes until you confirm it by voice.
 
-Watchfloor is a remote MCP server (protocol **2025-11-25**) that Alexa+ calls as a tool provider.
+Watchfloor is a remote MCP server (protocol **2025-11-25**) built for Alexa+ to call as a tool provider.
 Standing orders ("tell the team in Slack when a deal over $50K goes quiet for five days") run in
 the background, and a deep-triage agent team reviews a deal on request.
+
+**Path B.** The Alexa+ add-on toolkit was closed to our AWS account
+([friction log entry 4](docs/friction-log.md)), so this entry is a simulated Alexa+ experience, as
+the hackathon rules allow. The web harness (`services/harness`) is the MCP client. It signs in with
+real OAuth and calls the same deployed server over the real protocol. The add-on side (service token,
+listing, account linking) is built and ready if access opens ([ADR-024](docs/adr/0024-alexa-service-token.md)).
 
 > Demo video: _coming with the recording on Oct 21._ · Specs: [PRD](docs/PRD.md) ·
 > [Design](docs/DESIGN.md) · [Technical](docs/TECHNICAL.md) · [ADRs](docs/adr/)
@@ -226,15 +232,15 @@ uv run locust -f tests/load/locustfile.py --headless --host https://<mcp domain>
 it exercises the offline engine, so it checks the pipeline, not the model. Rebuild the golden set
 with `--write-golden` after a seed or RIGS change. The load profile's 20 rps is above the default
 rate limits, so raise `rate_limit_user` / `rate_limit_ws` in `infra/config/<env>.yaml` for the
-load window. `tests/evals/utterances.csv` is the 30-utterance sheet for the Alexa+ web simulator
-(DD §22.6), filled in by hand. Tagged releases run conformance, evals and the latency probe
+load window. `tests/evals/utterances.csv` is the 30-utterance sheet (DD §22.6), filled in by hand.
+On Path B it runs in the harness: type each utterance and record the first tool from the drawer. Tagged releases run conformance, evals and the latency probe
 against `demo`, and upload the eval results.
 
 ## Status
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) | Model-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false`) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) · Alexa+ add-on deploy and Local Inspector: the toolkit was closed to our account, so the entry uses Path B, the simulated Alexa+ harness (friction log entry 4); the add-on side is ready for when access opens (ADR-024, TECHNICAL.md §14) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Model-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false`) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along

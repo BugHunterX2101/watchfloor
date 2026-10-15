@@ -35,6 +35,7 @@ Decisions big enough to need an ADR link to one. Items marked **⚠ Verify** wai
 
 | Spec says | Built | Why / where |
 |---|---|---|
+| Path A preferred: a real Alexa+ add-on; the harness is a dev tool (PRD §19, TD §4.17) | **Path B**: the harness is the entry's Alexa+ experience. The add-on side is built but not deployed (ADR-024 service token, listing pages and images, `fill_addon.py`, TD §14) | Amazon's toolkit role refused our account after the access window closed ([friction log entry 4](friction-log.md)); the rules allow a simulated Alexa+ experience |
 | `harness/api` is a workspace member using FastAPI and the `mcp` SDK (TD §5) | Standalone uv project like the agents (ADR-011); Starlette like the other services; MCP over plain JSON-RPC (`mcp_http.py`) | Strands pins `mcp<2.2`. Plain JSON-RPC times every call exactly and needs no SDK session |
 | Strands agent + `MCPClient` (DD §17) | Each tool from `tools/list` is wrapped as a Strands `PythonAgentTool` | Per-call latency for the drawer, and the `ui://` view of the last call |
 | (not in spec) | Keyword router when `WF_HAIKU_MODEL_ID` is unset, local and test only; every turn is labelled `"engine": "offline"` | Exercise sign-in and the real tools without Bedrock, like ADR-013 |
@@ -93,7 +94,8 @@ local cost is on sign-in and job-token minting.
 | (not in spec) | Every eval job posts its plan to Slack and writes a memory record | An incoming webhook can't be redirected; documented in the runner and README |
 | Latency probe at n = 200 | Calls are paced at 55/min, interleaved across tools; a 429 is waited out and not counted | The per-user limit is 60/min; a 200-call run per tool takes about 18 minutes |
 | `conformance_remote.py` | CF-01..15 except CF-04 (needs an agent token, covered by the unit suite); the Host-header 421 check runs locally only | Behind API Gateway the Host header is the custom domain by construction |
-| Local Inspector in `release-demo` (TD §12.3, ⚠ Verify) | Runs only when the repository variable `ALEXA_INSPECTOR_CMD` is set | The command name is unverified; guessing it would fail every release |
+| Local Inspector in `release-demo` (TD §12.3) | No CI step | It is interactive (`addon-local-inspector <url>` opens a browser UI) and installs from Amazon's private toolkit registry, which is closed to our account (friction log entry 4) |
+| Utterance eval in the Alexa+ web simulator (DD §22.6) | Run by hand in the harness; `observed_tool` comes from the drawer | No simulator access (Path B) |
 | Load profile 20 rps (DD §21.3) | `rate_limit_user` / `rate_limit_ws` in the env config (defaults 60 / 600 per minute), passed to the MCP function | 20 rps is twice the per-workspace limit (DD §18.1); raise them for the load window only |
 | Offline engine drivers come from scored reasons | When no reason carries evidence (a healthy deal with only gaps), it cites the latest inbound conversation as an R driver, from its type and date only | `TriageOutput` needs at least one evidenced driver, so healthy deals failed review |
 | `make dev` | Sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` for honcho | A cp1252 console crashed honcho on the logs' `→` and `·` |

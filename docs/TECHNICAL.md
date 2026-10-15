@@ -639,8 +639,8 @@ flowchart LR
   CI -- pass --> MAIN["main"]
   MAIN --> DD{"deploy-dev.yml<br/>integration (testcontainers)<br/>cdk deploy dev · migrate · seed<br/>smoke: tools/list via canary"}
   DD -- pass --> TAG["git tag v1.x"]
-  TAG --> RD{"release-demo.yml<br/>cdk deploy demo · migrate<br/>evals · conformance vs URL<br/>Local Inspector report"}
-  RD --> MAN["Manual gate:<br/>alexa-ai deploy if schema changed<br/>utterance eval in simulator"]
+  TAG --> RD{"release-demo.yml<br/>cdk deploy demo · migrate<br/>evals · conformance vs URL<br/>latency probe"}
+  RD --> MAN["Manual gate:<br/>utterance eval in the harness<br/>(Path B; §14 if toolkit access opens)"]
   MAN --> FREEZE["Demo frozen<br/>Oct 22 → Nov 20"]
 ```
 
@@ -671,7 +671,7 @@ watchfloor/
 │   ├── workflows/
 │   │   ├── ci.yml                          # PR gate: lint, types, unit, conformance, snapshots, synth, ui build
 │   │   ├── deploy-dev.yml                  # main → integration tests → cdk deploy dev → migrate → seed → smoke
-│   │   └── release-demo.yml                # tag → deploy demo → evals → conformance vs URL → inspector report
+│   │   └── release-demo.yml                # tag → deploy demo → evals → conformance vs URL → latency probe
 │   ├── CODEOWNERS
 │   └── pull_request_template.md            # checklist: schema changed? alexa-ai deploy? friction log?
 ├── .env.example                            # every env var with safe placeholder values (§7.1)
@@ -2006,8 +2006,8 @@ jobs:
 Same as `deploy-dev` against `env=demo`, plus:
 1. `uv run python tests/evals/run_triage_eval.py --env demo --out tests/evals/results/${GITHUB_REF_NAME}.json`, which fails on any pass threshold (DD §22.5).
 2. `uv run python scripts/latency_probe.py --url $MCP_URL_DEMO --n 200`, which fails if p95 > 150 ms.
-3. Local Inspector run with its report uploaded as an artifact. **⚠ Verify** the command name in the Alexa+ toolkit docs.
-4. A manual approval gate (GitHub environment protection) before any `alexa-ai deploy` (§14).
+3. No Local Inspector step. It is interactive (a browser UI) and installs from Amazon's private toolkit registry, which is closed to our account (friction log entry 4). Run it by hand per §14 if access opens.
+4. A manual approval gate (GitHub environment protection) on the demo environment. Under Path B there is no `alexa-ai deploy`; after the gate, run the utterance sheet in the harness (§15.4).
 
 ---
 
@@ -2106,9 +2106,11 @@ Expected: `HTTP/2 401` and **no** `www-authenticate` header.
 
 ## 14. Alexa+ add-on lifecycle
 
-> **Status (2026-10-15):** not run. Amazon's toolkit role refused our account after the access
-> window closed, so the entry uses Path B, the simulated Alexa+ harness (§4.17, friction log
-> entry 4). This runbook stays ready for when access opens.
+> **Status (2026-10-15):** stopped at prerequisite 2. Steps 1–2 were done, and
+> `get-caller-identity --profile alexa-ai` failed with `AccessDenied`: Amazon's toolkit role refused
+> our account after the access window closed. The entry uses Path B, the simulated Alexa+ harness
+> (§4.17, friction log entry 4). The IAM user, its access key and both profiles were then deleted,
+> so a later attempt starts again at step 1.
 
 Commands follow Amazon's pages "Set Up Your Development Environment", the MCP toolkit quickstart,
 "Account Linking for MCP Add-ons" and "Local Inspector". Flags beyond those documented there are not
@@ -2230,7 +2232,7 @@ async def test_agent_cannot_see_or_call_write_tools(client, agent_token):
 
 ### 15.4 Utterance eval sheet (`tests/evals/utterances.csv`)
 
-Columns: `id, utterance, context, expected_first_tool, expected_args_json, observed_tool, observed_args_json, pass, notes`. The 30 rows come from DD §14.2. Pass: ≥ 27/30, and zero write calls without a prior proposal.
+Columns: `id, utterance, context, expected_first_tool, expected_args_json, observed_tool, observed_args_json, pass, notes`. The 30 rows come from DD §14.2. Pass: ≥ 27/30, and zero write calls without a prior proposal. On Path B the sheet runs in the harness: type each utterance and take `observed_tool` and `observed_args_json` from the drawer.
 
 ---
 
