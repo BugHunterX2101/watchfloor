@@ -160,3 +160,11 @@ async def _job_count() -> int:
         return await conn.fetchval("SELECT count(*) FROM triage_jobs")
     finally:
         await conn.close()
+
+
+@pytest.mark.parametrize("spoken", ["Harbor & Pine", "harbor and pine", "Harbor&Pine"])
+async def test_lookup_hears_one_deal_however_the_name_is_said(seeded: str, mcp: Mcp, spoken: str) -> None:
+    """Speech gives "&" as "and"; an exact account beats the Pinecrest deals that share "pine"."""
+    found = await mcp.ok("lookup_deal", {"name_query": spoken})
+    assert [c["deal_id"] for c in found["candidates"]] == [HARBOR]
+    assert found["summary"].startswith("Found ")

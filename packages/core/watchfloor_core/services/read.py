@@ -204,6 +204,7 @@ async def lookup_deal(ctx: ServiceContext, args: m.LookupIn) -> m.LookupOut:
             else "Try the company name as it appears in your CRM.",
             suggestions=[{"deal_id": r["deal_id"], "name": r["name"]} for r in near],
         )
+    rows = deals.clear_winner(rows)
     cands = [
         m.Candidate(
             deal_id=r["deal_id"],

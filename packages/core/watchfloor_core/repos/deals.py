@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -164,17 +165,37 @@ def like_escape(text: str) -> str:
     return text.replace("!", "!!").replace("%", "!%").replace("_", "!_")
 
 
+def spoken_name(text: str) -> str:
+    """Names as speech gives them: "Harbor & Pine" arrives as "Harbor and Pine"."""
+    return " ".join(re.sub(r"\s*&\s*", " and ", text.lower()).split())
+
+
+def clear_winner(rows: list[Any]) -> list[Any]:
+    """An exact name beats weaker matches outright: "Harbor & Pine" is one deal, not a question
+    about the Pinecrest deals too. Two deals at the same account still tie, and still ask."""
+    if (
+        len(rows) > 1
+        and rows[0]["match_score"] >= 0.9
+        and rows[1]["match_score"] < rows[0]["match_score"] - 0.25
+    ):
+        return rows[:1]
+    return rows
+
+
 async def find_by_name(
     conn: asyncpg.Connection, query: str, *, owner: str | None = None, limit: int = 3, threshold: float = 0.3
 ) -> list[asyncpg.Record]:
-    """Fuzzy match on account and deal names (pg_trgm word similarity), open deals only."""
+    """Fuzzy match on account and deal names (pg_trgm word similarity), open deals only. "&" and
+    "and" match each other on both sides, as in `spoken_name`."""
+    query = spoken_name(query)
     return await conn.fetch(
         """SELECT * FROM (
              SELECT d.id AS deal_id, d.name, a.name AS account, d.amount_cents, d.stage::text AS stage,
                     u.display_name AS owner,
-                    greatest(word_similarity(lower($1), lower(a.name)),
-                             word_similarity(lower($1), lower(d.name)),
-                             CASE WHEN lower(a.name) LIKE lower($5) || '%' ESCAPE '!' THEN 1.0 ELSE 0 END
+                    greatest(word_similarity($1, regexp_replace(lower(a.name), '\\s*&\\s*', ' and ', 'g')),
+                             word_similarity($1, regexp_replace(lower(d.name), '\\s*&\\s*', ' and ', 'g')),
+                             CASE WHEN regexp_replace(lower(a.name), '\\s*&\\s*', ' and ', 'g')
+                                       LIKE $5::text || '%' ESCAPE '!' THEN 1.0 ELSE 0 END
                     )::float8 AS match_score
              FROM deals d
              JOIN accounts a ON a.id = d.account_id
