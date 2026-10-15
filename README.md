@@ -21,7 +21,7 @@ listing, account linking) is built and ready if access opens ([ADR-024](docs/adr
 
 ```mermaid
 flowchart LR
-  A["Alexa+"] -->|"MCP 2025-11-25 · OAuth 2.1"| M["MCP server<br/>14 user tools"]
+  A["Simulated Alexa+<br/>(web harness, Path B)"] -->|"MCP 2025-11-25 · OAuth 2.1"| M["MCP server<br/>14 user tools"]
   M --> P[("Postgres 16<br/>RLS per workspace")]
   M -->|"outbox"| W["Workers<br/>watcher · dispatcher · sweeper"]
   W -->|"Slack"| S["#deals-at-risk"]
