@@ -13,7 +13,7 @@ These still need an entry each (DESIGN.md §27).
 
 | Spike | Question | Status |
 |---|---|---|
-| S1 | Alexa+ MCP Toolkit, CLI and simulator access; is `MCP-Protocol-Version` always sent? | open |
+| S1 | Alexa+ MCP Toolkit, CLI and simulator access; is `MCP-Protocol-Version` always sent? | answered: entry 4 (no toolkit access; Path B) |
 | S2 | Account-linking client registration; managed IdP vs. self-hosted (ADR-006) | open |
 | S3 | MCP Apps support in the simulator and on devices | spec side answered (ext-apps 2.0.3: nested `_meta.ui.resourceUri`, `text/html;profile=mcp-app`, `ui/initialize` handshake; views verified in the harness host). Alexa+ host support still open |
 | S4 | Elicitation or sampling support in the Alexa+ client | open |
@@ -62,3 +62,28 @@ These still need an entry each (DESIGN.md §27).
   otherwise `127.0.0.1`. A container without those markers would not be reachable.
 - **Workaround:** The agents' Dockerfile sets `DOCKER_CONTAINER=1`. Locally, loopback is what we want.
 - **Suggestion:** Document the rule next to `run()`, or accept an environment variable for the host.
+
+## 4. The Alexa+ toolkit is closed to an account that missed the access window
+
+- **Date:** 2026-10-15 · **Area:** Alexa+ MCP Toolkit (`alexa-ai` CLI) · **Severity:** blocker
+- **Task:** Install the `alexa-ai` CLI to scaffold, deploy and account-link the add-on (spike S1).
+- **Steps:** Following "Set Up Your Development Environment": an IAM user `alexa-ai-user` with one
+  inline policy allowing `sts:AssumeRole` on
+  `arn:aws:iam::372468808636:role/AddOn3PDeveloperToolsRead`, a profile `alexa-ai` assuming that
+  role (`source_profile = alexa-ai-user`, `us-west-2`), then
+  `aws sts get-caller-identity --profile alexa-ai`.
+- **Expected:** The assumed role in account `372468808636`, then `aws codeartifact login` and
+  `npm install -g @alexa-ai/cli`.
+- **Actual:** `AccessDenied ... is not authorized to perform: sts:AssumeRole`, for the dedicated
+  user and for an administrator alike. The IAM policy simulator allows the call on our side, so the
+  role's trust policy refuses the account. The CLI, the Local Inspector and the web simulator all
+  sit behind that role, and the access window had closed. The setup page does not say how an
+  account gets added, or what the error means.
+- **Workaround:** Path B, which the rules allow: the simulated Alexa+ harness (`services/harness`)
+  is the MCP client, against the same self-hosted 2025-11-25 Streamable HTTP server, real OAuth and
+  real protocol. The add-on work stays ready for when access opens: the Tier 1 service token
+  ([ADR-024](adr/0024-alexa-service-token.md)), the listing pages and images, and
+  `scripts/addon_assets/fill_addon.py` (TECHNICAL.md §14).
+- **Suggestion:** Publish the CLI and the Local Inspector on public npm, as the MCP Inspector is,
+  and keep only deploys gated. Failing that, an access-request form linked from the setup page, and
+  a note that `AccessDenied` on this role means the account is not allowlisted.

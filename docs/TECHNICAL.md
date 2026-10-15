@@ -2106,6 +2106,10 @@ Expected: `HTTP/2 401` and **no** `www-authenticate` header.
 
 ## 14. Alexa+ add-on lifecycle
 
+> **Status (2026-10-15):** not run. Amazon's toolkit role refused our account after the access
+> window closed, so the entry uses Path B, the simulated Alexa+ harness (§4.17, friction log
+> entry 4). This runbook stays ready for when access opens.
+
 Commands follow Amazon's pages "Set Up Your Development Environment", the MCP toolkit quickstart,
 "Account Linking for MCP Add-ons" and "Local Inspector". Flags beyond those documented there are not
 assumed.
