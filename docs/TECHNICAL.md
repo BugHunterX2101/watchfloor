@@ -2106,31 +2106,48 @@ Expected: `HTTP/2 401` and **no** `www-authenticate` header.
 
 ## 14. Alexa+ add-on lifecycle
 
-Commands follow Amazon's MCP add-on quickstart. Flags beyond those documented there are not assumed.
+Commands follow Amazon's pages "Set Up Your Development Environment", the MCP toolkit quickstart,
+"Account Linking for MCP Add-ons" and "Local Inspector". Flags beyond those documented there are not
+assumed.
+
+**Prerequisites.** macOS or Ubuntu (on Windows, Ubuntu under WSL), Node.js 24+, AWS CLI v2, and an
+AWS account that Amazon has allowlisted for the toolkit (the one given to the Alexa Solutions
+Architect). The CLI is in Amazon's private npm registry, reached through a role in Amazon's account
+`372468808636`:
+
+1. In the allowlisted AWS account, create an IAM user (e.g. `alexa-ai-tools`) with access keys and
+   one inline policy: `sts:AssumeRole` on `arn:aws:iam::372468808636:role/AddOn3PDeveloperToolsRead`.
+   It needs nothing else: Watchfloor is not a Category Action add-on, so no CDK runs in this flow.
+2. `aws configure --profile alexa-ai-user` with those keys; then a profile `alexa-ai` that assumes
+   the role with `source_profile = alexa-ai-user` and `region = us-west-2`.
+   `aws sts get-caller-identity --profile alexa-ai` must show account `372468808636`.
+3. Git credential helper for `https://git-codecommit.us-west-2.amazonaws.com` with
+   `aws codecommit credential-helper --profile alexa-ai`, and `UseHttpPath = true` for that host.
+4. `aws codeartifact login --tool npm --domain alexa-ai --repository npm-packages
+   --domain-owner 372468808636 --namespace @alexa-ai --region us-west-2 --profile alexa-ai`.
+5. `npm install -g @alexa-ai/cli`, then `alexa-ai --version`.
+
+**Lifecycle.**
 
 ```bash
-alexa-ai configure
-```
-
-```bash
-alexa-ai new mcp --name "Watchfloor" --locale en-US --mcp-server-url "https://mcp.dev.watchfloor.example/mcp"
-```
-
-```bash
-alexa-ai deploy
+alexa-ai configure                      # Login with Amazon; --no-browser on headless machines
+alexa-ai new mcp --name "Watchfloor" --locale en-US \
+  --mcp-server-url "https://k04yht6ng0.execute-api.us-east-1.amazonaws.com/mcp"   # answer Y to account linking
+uv run python scripts/addon_assets/fill_addon.py --check   # listing text, URLs and images (§7.2)
+alexa-ai deploy                         # development stage; prints the Add-on ID
+alexa-ai configure-account-linking --addon-id <id> --stage development --client-id wf-alexa   # prompts for the secret
 ```
 
 | Step | Notes |
 |---|---|
-| `configure` | Login with Amazon in a browser; credentials go to `~/.alexa-ai/credentials`. Use `--no-browser` on headless machines |
-| `new mcp` | Scaffolds `addon-package/`. Fill `addon.json` (§7.2) and assets, then commit them |
-| `deploy` | Uploads, builds and deploys to the **development** stage and returns the Add-on ID. **Required after any change to tool names, descriptions or schemas** (tool info refreshes only on deploy) |
-| Test | Web simulator (text + simulated screens), optionally routed to a physical device |
+| `new mcp` | Scaffolds `addon-package/`; commit it. `fill_addon.py` keeps every key the CLI wrote |
+| `deploy` | Uploads, builds and deploys to **development**. **Required after any change to tool names, descriptions or schemas** (tool info refreshes only on deploy). Alexa+ lists the tools with a Tier 1 `mcp:service` token (ADR-024) |
+| `configure-account-linking` | The secret is `client_secret` in `wf-<env>/auth/alexa-client`: paste it at the masked prompt (or export `ALEXA_CLIENT_SECRET`), never as an argument. The CLI then prints Alexa's redirect URIs: put them all in `alexa_redirect_uris` in the env config and run `make seed-remote ENV=<env> SEED_EVENT='{"seed": false}'` |
+| Test | Web simulator (text + simulated screens), optionally routed to a physical device; the 30 utterances in `tests/evals/utterances.csv` |
+| Inspect | `npm install -g @alexa-ai/addon-local-inspector`, then `addon-local-inspector <mcp-url>`. It is interactive (browser UI); its verdict lands in `certification-verdict.json` under the temp directory |
 | `submit` | Certification. **Not required for the hackathon.** Only run it deliberately |
 
 **Alternative:** the Add-on Agent Skill can drive the same flow from a coding agent (introspection → scaffold → assets → deploy). Record either path in the friction log.
-
-`make addon-deploy` wraps the following, in order: verify the schema snapshot is committed → `alexa-ai deploy` → print the Add-on ID. If it fails, add a friction-log entry by hand.
 
 ---
 
