@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 from conftest import (
     BOARD_HTML,
     BRIEFING,
@@ -17,7 +18,7 @@ from conftest import (
     make_config,
     sign_in,
 )
-from harness_api.agent import TURN_TIMEOUT_S, bedrock_model, to_messages
+from harness_api.agent import TURN_TIMEOUT_S, bedrock_model, gemini_model, to_messages
 from harness_api.app import create_app
 from harness_api.offline import deal_words
 
@@ -198,6 +199,41 @@ async def test_a_throttled_model_falls_back_without_backing_off(
     body = r.json()
     assert r.status_code == 200 and body["engine"] == "offline" and body["reply"] == BRIEFING
     assert elapsed < 3  # Strands' default retry would sleep 4 s before its first retry
+
+
+GEMINI = {"gemini_model_id": "gemini-flash-lite-latest", "gemini_api_key": "test-key"}
+
+
+async def test_a_throttled_bedrock_hands_the_turn_to_gemini(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harness_api import agent
+
+    monkeypatch.setattr(agent, "bedrock_model", lambda cfg: ThrottledModel("get_risk_briefing"))
+    monkeypatch.setattr(
+        agent, "gemini_model", lambda cfg: ScriptedModel("explain_deal_risk", {"deal_id": HARBOR})
+    )
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="amazon.nova-lite-v1:0", **GEMINI),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Why is Harbor at risk?"})
+        health = (await c.get("/healthz")).json()
+    body = r.json()
+    assert r.status_code == 200 and body["engine"] == "strands" and body["reply"] == EXPLAIN
+    assert health == {"ok": True, "engine": "strands", "models": ["bedrock", "gemini"]}
+
+
+def test_gemini_alone_runs_the_model_engine(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path, env="dev", models_enabled=False, **GEMINI)
+    assert cfg.engine == "strands"
+    model = gemini_model(cfg)
+    assert model.get_config()["model_id"] == "gemini-flash-lite-latest"
+    assert model.client_args["api_key"] == "test-key"
+    assert model.client_args["http_options"] == {"timeout": int(TURN_TIMEOUT_S * 1000)}
 
 
 def test_the_harness_fits_inside_api_gateway(tmp_path: Path) -> None:

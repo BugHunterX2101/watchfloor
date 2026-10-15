@@ -17,7 +17,7 @@ from aws_cdk import aws_secretsmanager as sm
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from ..common import PythonLambda, bedrock_arns
+from ..common import PythonLambda, bedrock_arns, gemini_access
 from ..config import EnvConfig
 from .agents import AgentsStack
 from .auth import AuthStack
@@ -104,6 +104,8 @@ class AsyncStack(Stack):
             queue.grant_send_messages(self.dispatcher)  # follow-up rows (DD §8.4)
         for secret in (data.app_secret, self.slack_secret, self.dispatcher_secret):
             secret.grant_read(self.dispatcher)
+        if cfg.gemini_enabled:  # follow-up drafts: after Bedrock, or alone where models are off (ADR-023)
+            gemini_access(self, cfg, self.dispatcher)
         if cfg.models_enabled:
             self.dispatcher.add_to_role_policy(
                 iam.PolicyStatement(  # follow-up drafts (the fast model, Converse)

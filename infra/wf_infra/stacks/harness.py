@@ -33,6 +33,7 @@ from ..common import (
     certificate,
     default_host_output,
     domain_mapping,
+    gemini_access,
     hosted_zone,
 )
 from ..config import EnvConfig
@@ -79,6 +80,8 @@ class HarnessStack(Stack):
                     resources=bedrock_arns(cfg, cfg.models.haiku),
                 )
             )
+        if cfg.gemini_enabled:  # after Bedrock, or alone where models are off (ADR-023)
+            gemini_access(self, cfg, fn)
         integration = integrations.HttpLambdaIntegration("Integ", fn)
         self.api = apigwv2.HttpApi(
             self,

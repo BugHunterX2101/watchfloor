@@ -57,6 +57,11 @@ class EnvConfig(BaseModel):
     # false: Bedrock models run (harness, drafts) but AgentCore is not deployed, so there is no Agents
     # stack and deep triage is refused up front (ADR-022). `-c wf:agentsEnabled=…` overrides it.
     agents_enabled: bool = True
+    # Google AI Studio's Gemini API, free tier (ADR-023): the model the harness and drafts use when
+    # Bedrock can't run, after Bedrock where models are on. Its key is the plain-string secret
+    # wf-<env>/models/gemini, stored by hand; until it is there, turns and drafts fall back as before.
+    gemini_enabled: bool = False
+    gemini_model: str = "gemini-flash-lite-latest"
     # false while AWS Support has not verified the account for CloudFront (a new account's
     # distributions are refused until then): the harness Lambda serves its page on its API's host.
     cdn: bool = True
@@ -109,6 +114,10 @@ class EnvConfig(BaseModel):
     @property
     def prefix(self) -> str:
         return f"wf-{self.env}"
+
+    @property
+    def gemini_secret_name(self) -> str:
+        return f"{self.prefix}/models/gemini"
 
     @property
     def mcp_host(self) -> str:

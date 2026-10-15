@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from watchfloor_core import gemini
 from watchfloor_core.settings import Settings, get_settings
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -38,13 +39,11 @@ class HarnessConfig:
 
     @property
     def engine(self) -> str | None:
-        """``strands`` with a Haiku-class model id; ``offline`` locally without one, or wherever models
-        are switched off (``WF_MODELS_ENABLED=false``); else None."""
-        if not self.core.models_enabled:
-            return "offline"
-        if self.core.haiku_model_id:
+        """``strands`` with a Bedrock model (models on, a Haiku-class id) or Gemini (ADR-023); else
+        ``offline`` locally or wherever models are switched off (``WF_MODELS_ENABLED=false``); else None."""
+        if (self.core.models_enabled and self.core.haiku_model_id) or gemini.configured(self.core):
             return "strands"
-        if self.core.env in ("local", "test"):
+        if not self.core.models_enabled or self.core.env in ("local", "test"):
             return "offline"
         return None
 

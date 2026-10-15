@@ -230,6 +230,69 @@ async def test_model_drafts_drop_nova_reasoning(monkeypatch: pytest.MonkeyPatch)
     assert draft == "Subject: Next steps\n\nHi Dana, see [link removed]"
 
 
+GEMINI_MODEL = "gemini-flash-lite-latest"
+
+
+async def test_gemini_drafts_keep_the_text_and_drop_any_thoughts() -> None:
+    from workers import drafts
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        parts = [
+            {"text": "Plan the email.", "thought": True},
+            {"text": "Subject: Hi\n\nSee https://x.example"},
+        ]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": parts}}]})
+
+    draft = await drafts.gemini_draft(
+        REQ, model_id=GEMINI_MODEL, api_key="test-key", transport=httpx.MockTransport(handler)
+    )
+    assert draft == "Subject: Hi\n\nSee [link removed]"
+    assert seen[0].url.path == f"/v1beta/models/{GEMINI_MODEL}:generateContent"
+    assert seen[0].headers["x-goog-api-key"] == "test-key" and "test-key" not in str(seen[0].url)
+    assert "untrusted" in json.loads(seen[0].content)["contents"][0]["parts"][0]["text"]
+
+
+@pytest.mark.parametrize(("status", "error"), [(429, RetryLater), (503, RetryLater), (400, GiveUp)])
+async def test_gemini_failures_say_whether_to_retry(status: int, error: type[Exception]) -> None:
+    from workers import drafts
+
+    transport = httpx.MockTransport(lambda r: httpx.Response(status, json={"error": {"message": "x"}}))
+    with pytest.raises(error):
+        await drafts.gemini_draft(REQ, model_id=GEMINI_MODEL, api_key="k", transport=transport)
+
+
+async def test_a_throttled_bedrock_hands_the_draft_to_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+    from watchfloor_core.settings import Settings
+    from workers import drafts
+
+    async def throttled(req: DraftRequest, **_: object) -> str:
+        raise RetryLater("bedrock ThrottlingException")
+
+    async def answered(req: DraftRequest, **_: object) -> str:
+        return "Subject: From Gemini"
+
+    monkeypatch.setattr(drafts, "bedrock_draft", throttled)
+    monkeypatch.setattr(drafts, "gemini_draft", answered)
+    s = Settings(env="dev", haiku_model_id="h", gemini_model_id=GEMINI_MODEL, gemini_api_key="k")
+    assert await drafts.drafter_from_settings(s)(REQ) == "Subject: From Gemini"
+
+
+async def test_when_every_model_fails_the_template_drafts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from watchfloor_core.settings import Settings
+    from workers import drafts
+
+    async def refused(req: DraftRequest, **_: object) -> str:
+        raise GiveUp("gemini 400")
+
+    monkeypatch.setattr(drafts, "gemini_draft", refused)
+    gemini_only = Settings(env="dev", models_enabled=False, gemini_model_id=GEMINI_MODEL, gemini_api_key="k")
+    draft = await drafts.drafter_from_settings(gemini_only)(REQ)
+    assert draft.startswith("Subject: Following up on Kestrel Platform") and "Template draft" in draft
+
+
 async def test_template_draft_is_labelled_and_link_free() -> None:
     draft = await template_draft(REQ)
     assert draft.startswith("Subject: Following up on Kestrel Platform")

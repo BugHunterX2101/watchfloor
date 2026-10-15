@@ -131,6 +131,9 @@ Agents stack, and `start_deep_triage` answers that deep reviews aren't available
 offline engine. That is how `dev` runs today: the account's Bedrock inference quotas (on-demand,
 cross-Region and global) and its AgentCore quotas are all 0 and not adjustable in Service Quotas,
 so a model call can only be throttled. Once AWS Support raises them, set `models_enabled: true`.
+Meanwhile `dev` runs Gemini through Strands (ADR-023, `gemini_enabled`): the harness and the drafts try
+Bedrock while models are on, then Gemini, then the keyword router or the template. Gemini's key is the
+plain-string secret `wf-<env>/models/gemini`, created by hand.
 
 **Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
 and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and
@@ -183,7 +186,9 @@ SEED_EVENT='{"seed": false}'` registers them without touching the data. Pushes t
 `dev`; a `demo` release only re-registers clients and logins, and `make demo-reset ENV=demo`
 resets the demo data before a recording.
 
-The only secret left to fill in by hand is `wf-<env>/slack/webhook` (the webhook URL). With custom
+Two secrets are filled in by hand: `wf-<env>/slack/webhook` (the webhook URL) and, where
+`gemini_enabled` is on, `wf-<env>/models/gemini` (a Google AI Studio API key as a plain string;
+nothing else creates it, so create it in Secrets Manager). With custom
 domains but no hosted zone in the config, point each host name at its stack's `DnsTarget` output.
 
 `make synth ENV=dev` checks the stacks without building anything; `make test-infra` synthesizes both

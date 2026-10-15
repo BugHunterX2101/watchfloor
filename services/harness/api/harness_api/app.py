@@ -31,7 +31,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import pkce
-from .agent import bedrock_model, run_turn
+from .agent import ModelFactory, model_chain, run_turn
 from .config import HarnessConfig, Misconfigured, get_config
 from .mcp_http import McpError, McpHttp, Unauthorized
 from .session import PKCE_COOKIE, PKCE_TTL_S, SESSION_COOKIE, SESSION_TTL_S, Box, Session
@@ -85,7 +85,7 @@ def create_app(
     *,
     auth_transport: httpx.AsyncBaseTransport | None = None,
     mcp_transport: httpx.AsyncBaseTransport | None = None,
-    model_factory: Callable[[HarnessConfig], Any] = bedrock_model,
+    model_factory: ModelFactory | None = None,
 ) -> Starlette:
     conf = cfg or get_config()
     box = Box(conf.session_secret)
@@ -251,7 +251,8 @@ def create_app(
         return await with_session(request, call)
 
     async def healthz(request: Request) -> Response:
-        return JSONResponse({"ok": True, "engine": conf.engine})
+        models = [name for name, _ in model_chain(conf)]  # names only, never a key
+        return JSONResponse({"ok": True, "engine": conf.engine, "models": models})
 
     async def not_built(request: Request) -> Response:
         return HTMLResponse(NOT_BUILT)

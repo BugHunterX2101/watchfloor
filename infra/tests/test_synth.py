@@ -275,6 +275,22 @@ def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
     assert "bedrock-throttles-reasoning" not in json.dumps(on["ops"].to_json())
 
 
+def test_gemini_runs_where_bedrock_cannot() -> None:
+    """ADR-023, the shipped dev config: models off, Gemini on. Both callers read the key, no Bedrock grant."""
+    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR)})
+    gemini_env = {
+        "WF_GEMINI_MODEL_ID": "gemini-flash-lite-latest",
+        "WF_GEMINI_SECRET": "wf-dev/models/gemini",
+    }
+    for name in ("async", "harness"):
+        text = json.dumps(shipped[name].to_json())
+        assert "bedrock" not in text and "secret:wf-dev/models/gemini-??????" in text
+        shipped[name].has_resource_properties(
+            "AWS::Lambda::Function", {"Environment": {"Variables": Match.object_like(gemini_env)}}
+        )
+    assert "GEMINI" not in json.dumps(_synth("dev")["harness"].to_json())  # off unless the config says so
+
+
 @pytest.mark.parametrize("env", ["dev", "demo"])
 def test_the_shipped_configs_synthesize(env: str) -> None:
     stacks = _synth(env, **{"wf:configDir": str(CONFIG_DIR)})

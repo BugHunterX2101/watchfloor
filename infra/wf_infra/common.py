@@ -12,6 +12,7 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_route53 as route53
 from aws_cdk import aws_route53_targets as targets
+from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
 from .config import EnvConfig
@@ -181,3 +182,14 @@ def domain_mapping(scope: Construct, cfg: EnvConfig, host: str | None) -> apigwv
 def default_host_output(scope: Construct, cfg: EnvConfig, api: apigwv2.HttpApi) -> None:
     """The host AWS assigned (scripts/default_hosts.py reads it into the config when there is no domain)."""
     CfnOutput(scope, "DefaultHost", value=f"{api.api_id}.execute-api.{cfg.region}.amazonaws.com")
+
+
+def gemini_access(scope: Construct, cfg: EnvConfig, fn: lambda_.Function) -> None:
+    """Gemini for one function (ADR-023): the model id, the key's secret name and read access to it.
+
+    The secret is stored by hand, so it is referenced by name rather than created here.
+    """
+    secret = sm.Secret.from_secret_name_v2(scope, "GeminiKey", cfg.gemini_secret_name)
+    fn.add_environment("WF_GEMINI_MODEL_ID", cfg.gemini_model)
+    fn.add_environment("WF_GEMINI_SECRET", cfg.gemini_secret_name)
+    secret.grant_read(fn)

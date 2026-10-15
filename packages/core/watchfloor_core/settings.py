@@ -54,6 +54,11 @@ class Settings(BaseModel):
     models_enabled: bool = True
     # false where AgentCore Runtime is not deployed (ADR-022): deep triage is refused up front.
     agents_enabled: bool = True
+    # Google AI Studio's Gemini API (ADR-023): the model wherever Bedrock can't run. The key comes from
+    # WF_GEMINI_API_KEY (local) or the plain-string secret named by WF_GEMINI_SECRET (deployed).
+    gemini_model_id: str | None = None
+    gemini_secret: str | None = None
+    gemini_api_key: str | None = None
     agent_runtime_arn: str | None = None
     # Local alternative to AgentCore: the agents container's /invocations endpoint.
     agent_url: str | None = None
@@ -101,6 +106,9 @@ def _from_env() -> Settings:
         haiku_model_id=e("WF_HAIKU_MODEL_ID"),
         models_enabled=_bool("WF_MODELS_ENABLED", True),
         agents_enabled=_bool("WF_AGENTS_ENABLED", True),
+        gemini_model_id=e("WF_GEMINI_MODEL_ID") or None,
+        gemini_secret=e("WF_GEMINI_SECRET") or None,
+        gemini_api_key=e("WF_GEMINI_API_KEY") or None,
         agent_runtime_arn=e("WF_AGENT_RUNTIME_ARN") or None,
         agent_url=e("WF_AGENT_URL") or None,
         memory_id=e("WF_MEMORY_ID") or None,

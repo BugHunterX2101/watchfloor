@@ -20,6 +20,9 @@ models:                            # Amazon Nova, in-Region on demand in us-east
   sonnet: amazon.nova-pro-v1:0     # reasoning tier: triage Lead, Strategist, Critic
   haiku: amazon.nova-lite-v1:0     # fast tier: harness, follow-up drafts, Analyst, Context
 
+gemini_enabled: true               # Google AI Studio free tier while Bedrock can't run (ADR-023)
+gemini_model: gemini-flash-lite-latest  # key: plain-string secret wf-dev/models/gemini, stored by hand
+
 alert_email: veditagrawal21@gmail.com          # SNS alarm and budget notifications (confirm the e-mail)
 canary_email: daniel@lumenridge.example     # seeded user the canary signs in as (own generated password)
 alexa_redirect_uris: []           # ⚠ S2: Alexa+ account-linking redirect URIs, once the skill exists

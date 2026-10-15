@@ -2,8 +2,9 @@
 
 Every MCP tool from ``tools/list`` becomes a Strands tool that calls the server
 through :class:`McpHttp`, so each call is timed and any ``ui://`` view it points
-to can be shown in the browser. Without a model id (local and test only) the
-offline keyword router answers instead, and the turn says so.
+to can be shown in the browser. The models are tried in order, Bedrock then Gemini
+(ADR-023). Without one, or when none answers, the offline keyword router answers
+instead, and the turn says so.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from watchfloor_core import gemini
 from watchfloor_core.bedrock import strip_reasoning, tool_use_options
 
 from .config import HarnessConfig, Misconfigured
@@ -33,6 +35,7 @@ UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather t
 MAX_TURNS = 6
 MAX_HISTORY = 12
 MAX_TOKENS = 1024  # room for Nova's <thinking> before a tool call; the prompt keeps replies short
+GEMINI_MAX_TOKENS = 2048  # Gemini counts any thinking against the output budget
 NO_REPLY = "I couldn't answer that just now. Please try again."
 
 Role = Literal["user", "assistant"]
@@ -130,6 +133,33 @@ def bedrock_model(cfg: HarnessConfig) -> Any:
     )
 
 
+def gemini_model(cfg: HarnessConfig) -> Any:
+    from strands.models.gemini import GeminiModel
+
+    key = gemini.api_key(cfg.core)
+    if not key or not cfg.core.gemini_model_id:
+        raise Misconfigured("no Gemini model id or API key")
+    # Gemini keeps its default temperature: Google advises against lowering it for tool use.
+    return GeminiModel(
+        client_args={"api_key": key, "http_options": {"timeout": int(TURN_TIMEOUT_S * 1000)}},
+        model_id=cfg.core.gemini_model_id,
+        params={"max_output_tokens": GEMINI_MAX_TOKENS},
+    )
+
+
+ModelFactory = Callable[[HarnessConfig], Any]
+
+
+def model_chain(cfg: HarnessConfig) -> list[tuple[str, ModelFactory]]:
+    """The models a turn tries, in order: Bedrock while models are on, then Gemini (ADR-023)."""
+    chain: list[tuple[str, ModelFactory]] = []
+    if cfg.core.models_enabled and cfg.core.haiku_model_id:
+        chain.append(("bedrock", bedrock_model))
+    if gemini.configured(cfg.core):
+        chain.append(("gemini", gemini_model))
+    return chain
+
+
 async def strands_turn(
     mcp: McpHttp,
     cfg: HarnessConfig,
@@ -167,26 +197,35 @@ async def run_turn(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     http: httpx.AsyncClient | None = None,
-    model_factory: Callable[[HarnessConfig], Any] = bedrock_model,
+    model_factory: ModelFactory | None = None,
     ui_cache: dict[str, tuple[float, str]] | None = None,
 ) -> TurnResult:
+    """``model_factory`` replaces the model chain (tests)."""
     engine = cfg.engine
     if engine is None:
-        raise Misconfigured(f"WF_HAIKU_MODEL_ID must be set in {cfg.core.env}")
+        raise Misconfigured(
+            f"a model (WF_HAIKU_MODEL_ID or WF_GEMINI_MODEL_ID) must be set in {cfg.core.env}"
+        )
     mcp = McpHttp(cfg.core.mcp_url, token, transport=transport, http=http)
     try:
-        if engine == "offline":
-            await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
-            reply = await offline_turn(mcp, message, history)
-        else:
-            try:
-                reply = await strands_turn(mcp, cfg, history, message, model_factory=model_factory)
-            except (Unauthorized, McpError, TimeoutError):
-                raise
-            except Exception as exc:  # Bedrock throttled or refused the model: the router still answers
-                log.warning("model turn failed (%s); the offline engine answers", type(exc).__name__)
+        reply: str | None = None
+        if engine == "strands":
+            chain = [("model", model_factory)] if model_factory else model_chain(cfg)
+            for name, factory in chain:
+                try:
+                    reply = await strands_turn(mcp, cfg, history, message, model_factory=factory)
+                    log.info("the %s model answered", name)
+                    break
+                except (Unauthorized, McpError, TimeoutError):
+                    raise
+                except Exception as exc:  # throttled, refused or no key: the next model, then the router
+                    log.warning("%s model turn failed (%s)", name, type(exc).__name__)
+            if reply is None:
                 engine = "offline"
                 reply = await offline_turn(mcp, message, history)
+        else:
+            await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
+            reply = await offline_turn(mcp, message, history)
         return TurnResult(reply=reply, engine=engine, calls=mcp.calls, ui=await _view(mcp, ui_cache))
     finally:
         await mcp.aclose()
