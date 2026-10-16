@@ -8,9 +8,10 @@
     uv run python scripts/demo.py outbox-retry --id 42   # re-arm a dead outbox row (or --all-dead)
 
 Locally, commands talk to Postgres directly, as the owner role with row-level security scoped to
-the workspace (``db.seed.ops``). With ``--env dev|demo`` they invoke the environment's Lambdas with
-your AWS credentials (``lambda:InvokeFunction``): ``wf-<env>-seeder`` resets, sets the clock, reads
-the status and re-arms outbox rows from inside the VPC; ``wf-<env>-watcher`` is the watcher run.
+the workspace (``db.seed.ops``). With ``--env dev|demo`` they run the environment's jobs with your
+AWS credentials, as Lambda invokes or, with ``compute: ecs``, one-off ECS tasks (``scripts/run_task.py``,
+ADR-025): the seeder resets, sets the clock, reads the status and re-arms outbox rows from inside
+the VPC; the watcher job is the watcher run.
 
 Clock offsets are honoured only by processes running with ``WF_DEMO_MODE=true``
 (DD §24; ``demo_mode`` in ``infra/config/<env>.yaml``); elsewhere the stored offset is ignored.
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import re
 import sys
@@ -31,6 +31,9 @@ import asyncpg
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import run_task  # noqa: E402
 
 from db.seed import scenarios  # noqa: E402
 from db.seed.ops import (  # noqa: E402, F401  (scoped and NAMES are re-exported for the tests)
@@ -124,36 +127,21 @@ def _rearmed(ids: list[int]) -> str:
 # ---------------------------------------------------------------- dev and demo, through the Lambdas
 
 
-class RemoteError(Exception):
-    """A Lambda invoke that failed, or a function that raised."""
-
-
-def config_value(env: str, key: str) -> str | None:
-    """A top-level scalar from ``infra/config/<env>.yaml`` (no YAML parser in the dev environment)."""
-    path = ROOT / "infra" / "config" / f"{env}.yaml"
-    if not path.is_file():
-        return None
-    match = re.search(rf"^{key}:[ \t]*([^\s#]+)", path.read_text(encoding="utf-8"), re.MULTILINE)
-    value = match.group(1).strip("'\"") if match else None
-    return None if value in ("null", "~") else value
+RemoteError = run_task.RemoteError  # an invoke or a task that failed, or a job that raised
+config_value = run_task.config_value
 
 
 def invoke(function: str, event: dict[str, Any], *, region: str | None, timeout: int = OP_TIMEOUT_S) -> Any:
-    """Invoke ``function`` synchronously, once: a reset or a watcher run must not repeat on a retry."""
-    import boto3
-    from botocore.config import Config
-    from botocore.exceptions import BotoCoreError, ClientError
-
-    config = Config(region_name=region, read_timeout=timeout, retries={"max_attempts": 0})
-    client = boto3.client("lambda", config=config)
-    try:
-        r = client.invoke(FunctionName=function, Payload=json.dumps(event).encode())
-    except (BotoCoreError, ClientError) as exc:
-        raise RemoteError(f"{function}: {exc}") from None
-    body = json.loads(r["Payload"].read() or b"null")
-    if r.get("FunctionError"):
-        raise RemoteError(f"{function}: {body.get('errorType')}: {body.get('errorMessage')}")
-    return body
+    """Run ``wf-<env>-<job>`` once, on the environment's compute (ADR-025, ``scripts/run_task.py``):
+    a Lambda invoke, or a one-off ECS task. A reset or a watcher run must not repeat on a retry."""
+    match = re.fullmatch(r"wf-(dev|demo)-(seeder|watcher)", function)
+    if match is None:
+        raise RemoteError(f"{function}: not a job this script runs")
+    env, job = match.groups()
+    if run_task.compute_of(env) == "ecs":
+        # A Fargate task needs a minute to start; the Lambda read timeouts don't cover that.
+        return run_task.run_ecs(env, job, event, region=region, timeout=max(timeout, run_task.TIMEOUT_S[job]))
+    return run_task.invoke_lambda(function, event, region=region, timeout=timeout)
 
 
 def run_remote(opts: argparse.Namespace) -> int:

@@ -1,4 +1,4 @@
-"""Shared plumbing for the worker Lambdas and their local command-line twins.
+"""Shared plumbing for the worker Lambdas, the ECS worker service and their local command-line twins.
 
 Each Lambda keeps one event loop for the life of its container, so the asyncpg
 pool opened by the first invocation is reused by warm ones. Metrics go out as
@@ -55,14 +55,48 @@ async def workspace_ids() -> list[str]:
         return await workspaces.all_ids(conn)
 
 
+def _unit(name: str) -> str:
+    return "Milliseconds" if name.endswith("Ms") else "Count"
+
+
+@lru_cache(maxsize=1)
+def _cloudwatch() -> Any:
+    import boto3  # lazy: only in AWS
+    from botocore.config import Config
+
+    # Short and bounded: a metric must never hold up the work it describes.
+    return boto3.client(
+        "cloudwatch", config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 2})
+    )
+
+
+def put_metrics(dims: dict[str, str], values: dict[str, float]) -> None:
+    """The same values through PutMetricData, where stdout is not read as EMF (ECS, ADR-025)."""
+    dimensions = [{"Name": k, "Value": v} for k, v in dims.items()]
+    try:
+        _cloudwatch().put_metric_data(
+            Namespace=NAMESPACE,
+            MetricData=[
+                {"MetricName": name, "Dimensions": dimensions, "Value": float(value), "Unit": _unit(name)}
+                for name, value in values.items()
+            ],
+        )
+    except Exception as exc:  # noqa: BLE001 - observability is best effort
+        log.warning("metrics not sent (%s): %s %s", type(exc).__name__, dims, values)
+
+
 def emit_metrics(service: str, values: dict[str, float], dimensions: dict[str, str] | None = None) -> None:
     """One EMF record. Names ending in ``Ms`` are milliseconds; everything else is a count.
 
-    Only inside Lambda, where stdout feeds CloudWatch; locally the values go to the debug log.
+    Inside Lambda stdout feeds CloudWatch; on ECS (``WF_METRICS_API=true``) the values go through
+    the metrics API instead; locally they go to the debug log.
     """
     dims = {"service": service, **(dimensions or {})}
     if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-        log.debug("metrics %s %s", dims, values)
+        if os.environ.get("WF_METRICS_API", "").lower() == "true":
+            put_metrics(dims, values)
+        else:
+            log.debug("metrics %s %s", dims, values)
         return
     record = {
         "_aws": {
@@ -71,10 +105,7 @@ def emit_metrics(service: str, values: dict[str, float], dimensions: dict[str, s
                 {
                     "Namespace": NAMESPACE,
                     "Dimensions": [list(dims)],
-                    "Metrics": [
-                        {"Name": name, "Unit": "Milliseconds" if name.endswith("Ms") else "Count"}
-                        for name in values
-                    ],
+                    "Metrics": [{"Name": name, "Unit": _unit(name)} for name in values],
                 }
             ],
         },

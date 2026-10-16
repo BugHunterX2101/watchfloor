@@ -1,5 +1,9 @@
-"""Auth (DD §18.1, ADR-006): KMS ES256 signing key, the authorization server Lambda, its HTTP API,
-the generated OAuth client and login secrets, and the seeder Lambda that registers them."""
+"""Auth (DD §18.1, ADR-006): KMS ES256 signing key, the authorization server, its HTTP API, the
+generated OAuth client and login secrets, and the seeder that registers them.
+
+The server and the seeder are Lambda functions, or with ``compute: ecs`` (ADR-025) a Fargate service
+behind the same HTTP API and a one-off task definition.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +14,11 @@ from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigwv2
 from aws_cdk import aws_apigatewayv2_integrations as integrations
 from aws_cdk import aws_kms as kms
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import PythonLambda, default_host_output, domain_mapping
+from ..common import Container, PythonLambda, default_host_output, domain_mapping, service_integration
 from ..config import EnvConfig
 from .data import DataStack
 from .net import NetStack
@@ -47,28 +52,48 @@ class AuthStack(Stack):
             secret_name=f"{cfg.prefix}/auth/session",
             generate_secret_string=sm.SecretStringGenerator(exclude_punctuation=True, password_length=48),
         )
-        fn = PythonLambda(
-            self,
-            "Fn",
-            cfg=cfg,
-            name="auth-server",
-            bundle="auth_server",
-            web_adapter=True,
-            memory_size=512,
-            timeout=Duration.seconds(10),
-            vpc=net.vpc,
-            security_groups=[net.lambda_sg],
-            environment={
-                "WF_AUTH_DB_SECRET_ARN": data.auth_secret.secret_arn,
-                "WF_KMS_KEY_ID": self.signing_key.key_arn,
-                # A CloudFormation dynamic reference: resolved at deploy time, never written into the template.
-                "WF_SESSION_SECRET": session.secret_value.unsafe_unwrap(),
-                "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
-                "WF_ALLOWED_HOSTS": cfg.auth_host,
-            },
-        ).function
-        data.auth_secret.grant_read(fn)
-        self.signing_key.grant(fn, "kms:Sign", "kms:GetPublicKey", "kms:DescribeKey")
+        server_env = {
+            "WF_AUTH_DB_SECRET_ARN": data.auth_secret.secret_arn,
+            "WF_KMS_KEY_ID": self.signing_key.key_arn,
+            "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
+            "WF_ALLOWED_HOSTS": cfg.auth_host,
+        }
+        server: lambda_.Function | Container
+        integ: apigwv2.HttpRouteIntegration
+        if cfg.ecs:
+            server = Container(
+                self,
+                "Server",
+                cfg=cfg,
+                name="auth-server",
+                bundle="auth_server",
+                environment=server_env,
+                http=True,
+                health_path="/healthz",
+            )
+            server.add_secret_env("WF_SESSION_SECRET", session)
+            integ = service_integration(server.service(net, discovery="auth", srv=True), net)
+        else:
+            server = PythonLambda(
+                self,
+                "Fn",
+                cfg=cfg,
+                name="auth-server",
+                bundle="auth_server",
+                web_adapter=True,
+                memory_size=512,
+                timeout=Duration.seconds(10),
+                vpc=net.vpc,
+                security_groups=[net.lambda_sg],
+                environment={
+                    **server_env,
+                    # A CloudFormation dynamic reference: resolved at deploy time, never written into the template.
+                    "WF_SESSION_SECRET": session.secret_value.unsafe_unwrap(),
+                },
+            ).function
+            integ = integrations.HttpLambdaIntegration("Integ", server)
+        data.auth_secret.grant_read(server)
+        self.signing_key.grant(server, "kms:Sign", "kms:GetPublicKey", "kms:DescribeKey")
 
         # OAuth client secrets and logins, generated here and registered by the seeder (README, Deploy).
         # The Alexa+ secret is read from Secrets Manager when the skill's account linking is set up.
@@ -86,32 +111,47 @@ class AuthStack(Stack):
             "WF_DEMO_LOGIN_SECRET_ARN": self.demo_login_secret,
             "WF_CANARY_SECRET_ARN": self.canary_secret,
         }
+        seeder_env = {
+            "WF_OWNER_DB_SECRET_ARN": data.owner_secret.secret_arn,
+            "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
+            "WF_ALEXA_REDIRECT_URIS": ",".join(cfg.alexa_redirect_uris),
+            **{env: secret.secret_arn for env, secret in login_secrets.items()},
+        }
         # One-shot, like the migrator: `make seed-remote ENV=…` (auth_server.seeder).
-        self.seeder = PythonLambda(
-            self,
-            "Seeder",
-            cfg=cfg,
-            name="seeder",
-            bundle="auth_server",
-            handler="auth_server.seeder.handler",
-            memory_size=1024,
-            timeout=Duration.minutes(5),
-            vpc=net.vpc,
-            security_groups=[net.lambda_sg],
-            environment={
-                "WF_OWNER_DB_SECRET_ARN": data.owner_secret.secret_arn,
-                "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
-                "WF_ALEXA_REDIRECT_URIS": ",".join(cfg.alexa_redirect_uris),
-                **{env: secret.secret_arn for env, secret in login_secrets.items()},
-            },
-        ).function
+        self.seeder: lambda_.Function | Container
+        if cfg.ecs:  # Argon2id hashes every login: more CPU than the services need
+            self.seeder = Container(
+                self,
+                "Seeder",
+                cfg=cfg,
+                name="seeder",
+                bundle="auth_server",
+                command=["python", "-m", "auth_server.seeder"],
+                cpu=512,
+                memory_mib=1024,
+                environment=seeder_env,
+            )
+            CfnOutput(self, "SeederTaskFamily", value=self.seeder.task_definition.family)
+        else:
+            self.seeder = PythonLambda(
+                self,
+                "Seeder",
+                cfg=cfg,
+                name="seeder",
+                bundle="auth_server",
+                handler="auth_server.seeder.handler",
+                memory_size=1024,
+                timeout=Duration.minutes(5),
+                vpc=net.vpc,
+                security_groups=[net.lambda_sg],
+                environment=seeder_env,
+            ).function
+            CfnOutput(self, "SeederName", value=self.seeder.function_name)
         for secret in (data.owner_secret, *login_secrets.values()):
             secret.grant_read(self.seeder)
-        CfnOutput(self, "SeederName", value=self.seeder.function_name)
         CfnOutput(self, "AlexaClientSecretName", value=self.alexa_secret.secret_name)
         CfnOutput(self, "DemoLoginSecretName", value=self.demo_login_secret.secret_name)
 
-        integ = integrations.HttpLambdaIntegration("Integ", fn)
         self.api = apigwv2.HttpApi(
             self,
             "Api",
@@ -119,7 +159,7 @@ class AuthStack(Stack):
             default_domain_mapping=domain_mapping(self, cfg, cfg.auth_domain),
         )
         self.api.add_routes(path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=integ)
-        self.function = fn
+        self.function = server
         CfnOutput(self, "Issuer", value=cfg.issuer)
         default_host_output(self, cfg, self.api)
 

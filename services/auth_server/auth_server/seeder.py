@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from functools import lru_cache
 from typing import Any
 
@@ -126,3 +127,21 @@ def handler(event: dict[str, Any] | None, _ctx: object) -> dict[str, Any]:
             harness_redirect_uris=_uris("WF_HARNESS_REDIRECT_URI"),
         )
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """The same run as a one-off ECS task (ADR-025, ``scripts/run_task.py``):
+
+        python -m auth_server.seeder '{"seed": true, "bootstrap": true}'
+
+    The event is the one JSON argument (none: both steps). The result, as the Lambda returns it
+    and so without a secret, is the last line on stdout; a failure raises, so the task exits
+    non-zero."""
+    args = sys.argv[1:] if argv is None else argv
+    event = json.loads(args[0]) if args else {}
+    print(json.dumps(handler(event, None), default=str), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

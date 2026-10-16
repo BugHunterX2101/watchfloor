@@ -32,6 +32,7 @@ agents_enabled: true
 agents_host: lambda               # AgentCore refused on this account (CreateMemory 403, 2026-10-10): agents on Lambda (ADR-023)
 cdn: false                         # CloudFront refused until AWS Support verifies the account (ADR-015)
 reserve_concurrency: false         # Lambda concurrency quota is 10 on a new account (ADR-016)
+compute: ecs                       # Lambda refused account-wide since 2026-10-16: Fargate services (ADR-025)
 demo_mode: false
 provisioned_concurrency: 0         # saves ~$9/month of the credits; cold starts instead
 db_backup_days: 1                  # Free plan account: RDS backup retention is capped

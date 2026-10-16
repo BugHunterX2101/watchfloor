@@ -10,9 +10,10 @@ from typing import Any
 import app as infra_app
 import aws_cdk as cdk
 import pytest
+import yaml
 from aws_cdk.assertions import Match, Template
 from wf_infra import common
-from wf_infra.config import CONFIG_DIR, PENDING_HOST
+from wf_infra.config import CONFIG_DIR, PENDING_HOST, EnvConfig
 
 FIXTURES = Path(__file__).resolve().parent / "config"  # the full design; infra/config is the shipped one
 
@@ -241,7 +242,12 @@ def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
     """A Free plan account on Nova (ADR-022): Bedrock grants for one in-Region model, no Agents stack."""
     on = _synth(
         "dev",
-        **{"wf:modelsEnabled": "true", "wf:agentsEnabled": "false", "wf:configDir": str(CONFIG_DIR)},
+        **{
+            "wf:modelsEnabled": "true",
+            "wf:agentsEnabled": "false",
+            "wf:configDir": str(CONFIG_DIR),
+            "wf:compute": "lambda",
+        },
     )
     assert "agents" not in on
     nova = "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
@@ -276,8 +282,9 @@ def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
 
 
 def test_gemini_runs_where_bedrock_cannot() -> None:
-    """ADR-023, the shipped dev config: models off, Gemini on. Both callers read the key, no Bedrock grant."""
-    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR)})
+    """ADR-023, the shipped dev config on Lambda: models off, Gemini on. Both callers read the key, no
+    Bedrock grant. (On ECS, test_ecs_*.)"""
+    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR), "wf:compute": "lambda"})
     gemini_env = {
         "WF_GEMINI_MODEL_ID": "gemini-flash-lite-latest",
         "WF_GEMINI_SECRET": "wf-dev/models/gemini",
@@ -354,9 +361,9 @@ def test_by_default_the_mcp_server_and_dispatcher_reserve_concurrency(dev: dict[
 
 
 def test_deep_triage_runs_on_lambda_where_agentcore_cannot() -> None:
-    """ADR-023, the shipped dev config: the agents are a function outside the VPC that only the
-    dispatcher may invoke, on Gemini. There is no Agents stack, and deep triage is offered."""
-    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR)})
+    """ADR-023, the shipped dev config on Lambda: the agents are a function outside the VPC that only
+    the dispatcher may invoke, on Gemini. There is no Agents stack, and deep triage is offered."""
+    shipped = _synth("dev", **{"wf:configDir": str(CONFIG_DIR), "wf:compute": "lambda"})
     assert "agents" not in shipped
     triage = shipped["async"].find_resources(
         "AWS::Lambda::Function", {"Properties": {"FunctionName": "wf-dev-triage"}}
@@ -384,3 +391,204 @@ def test_deep_triage_runs_on_lambda_where_agentcore_cannot() -> None:
             }
         },
     )
+
+
+# ---------------------------------------------------------------- compute: ecs (ADR-025)
+
+ON_LAMBDA = ("AWS::Lambda::", "Custom::", "AWS::CloudFormation::CustomResource")
+
+
+@pytest.fixture(scope="module")
+def ecs() -> dict[str, Template]:
+    """The shipped dev config: Lambda refused account-wide, every service on Fargate."""
+    return _synth("dev", **{"wf:configDir": str(CONFIG_DIR)})
+
+
+def _containers(t: Template) -> list[dict[str, Any]]:
+    return [
+        c
+        for td in t.find_resources("AWS::ECS::TaskDefinition").values()
+        for c in td["Properties"]["ContainerDefinitions"]
+    ]
+
+
+def _web(t: Template) -> dict[str, Any]:
+    (container,) = (c for c in _containers(t) if c.get("PortMappings"))
+    return container
+
+
+def _env(container: dict[str, Any]) -> dict[str, Any]:
+    return {e["Name"]: e["Value"] for e in container.get("Environment", [])}
+
+
+def test_ecs_deploys_nothing_that_runs_on_lambda(ecs: dict[str, Template]) -> None:
+    """No function, permission, event source mapping, layer or CDK custom resource: on an account
+    that refuses Lambda any of them fails, and fails its stack with it."""
+    for name, t in ecs.items():
+        types = {r["Type"] for r in t.to_json()["Resources"].values()}
+        assert not {x for x in types if x.startswith(ON_LAMBDA)}, name
+    ecs["net"].has_resource_properties("AWS::ECS::Cluster", {"ClusterName": "wf-dev"})
+    ecs["net"].has_resource_properties(
+        "AWS::ServiceDiscovery::PrivateDnsNamespace", {"Name": "wf-dev.internal"}
+    )
+    ecs["net"].resource_count_is("AWS::ApiGatewayV2::VpcLink", 1)
+    assert {"ClusterName", "TaskSubnets", "TaskSecurityGroup"} <= set(ecs["net"].to_json()["Outputs"])
+
+
+def test_ecs_apis_reach_their_services_through_the_vpc_link(ecs: dict[str, Template]) -> None:
+    for name in ("auth", "mcp", "harness"):
+        t = ecs[name]
+        t.has_resource_properties(
+            "AWS::ApiGatewayV2::Integration",
+            {
+                "IntegrationType": "HTTP_PROXY",
+                "ConnectionType": "VPC_LINK",
+                "RequestParameters": {"overwrite:header.x-wf-host": "$context.domainName"},
+            },
+        )
+        t.has_resource_properties(
+            "AWS::ServiceDiscovery::Service",
+            {"Name": name, "DnsConfig": Match.object_like({"DnsRecords": [{"TTL": 10, "Type": "SRV"}]})},
+        )
+        t.has_resource_properties(
+            "AWS::ECS::Service",
+            {
+                "LaunchType": "FARGATE",
+                "DesiredCount": 1,
+                "DeploymentConfiguration": Match.object_like(
+                    {
+                        "MinimumHealthyPercent": 100,
+                        "DeploymentCircuitBreaker": {"Enable": True, "Rollback": True},
+                    }
+                ),
+            },
+        )
+        web = _web(t)
+        env = _env(web)
+        bind = ("0.0.0.0", "8080", "*")  # noqa: S104 - the container's own interface; only the VPC link reaches it
+        assert (env["WF_BIND_HOST"], env["PORT"], env["FORWARDED_ALLOW_IPS"]) == bind
+        assert web["HealthCheck"]["Command"][:2] == ["CMD", "python"]
+        assert "{{resolve:secretsmanager" not in json.dumps(t.to_json()), "secrets are injected at start"
+    mcp = _env(_web(ecs["mcp"]))
+    assert mcp["WF_HOST_HEADER"] == "x-wf-host" and mcp["WF_JOBS_QUEUE_URL"].endswith("/wf-dev-jobs-svc")
+    ecs["mcp"].has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {
+            "MetricTransformations": [
+                Match.object_like(
+                    {
+                        "MetricName": "ToolLatencyMs",
+                        "MetricNamespace": "Watchfloor",
+                        "Dimensions": [{"Key": "tool", "Value": "$.tool"}],
+                    }
+                )
+            ]
+        },
+    )
+    harness = _web(ecs["harness"])
+    assert _env(harness)["WF_HARNESS_WEB_DIST"] == "/var/task/harness_web"
+    assert [s["Name"] for s in harness["Secrets"]] == ["WF_HARNESS_SESSION_SECRET"]
+    ecs["harness"].has_resource_properties("AWS::ApiGatewayV2::Route", {"RouteKey": "GET /"})
+
+
+def test_ecs_workers_do_the_four_functions_jobs(ecs: dict[str, Template]) -> None:
+    """Dispatcher, watcher, sweeper and canary in one service; the agents in another, by private DNS."""
+    a = ecs["async"]
+    for queue in ("jobs", "outbox", "jobs-dlq", "outbox-dlq"):  # new queues: no orphaned mapping reaches them
+        a.has_resource_properties("AWS::SQS::Queue", {"QueueName": f"wf-dev-{queue}-svc"})
+    containers = {c["Name"]: c for c in _containers(a)}
+    workers, triage = containers["workers"], containers["triage"]
+    assert workers["Command"] == ["python", "-m", "workers.service"]
+    env = _env(workers)
+    assert env["WF_AGENT_URL"] == "http://triage.wf-dev.internal:8080/invocations"
+    assert env["WF_METRICS_API"] == "true" and {"WF_CANARY_SECRET_ARN", "WF_SLACK_SECRET_ARN"} <= set(env)
+    assert triage["Command"] == ["python", "-m", "agents.main"] and _env(triage)["DOCKER_CONTAINER"] == "1"
+    a.has_resource_properties(
+        "AWS::ServiceDiscovery::Service",
+        {"Name": "triage", "DnsConfig": Match.object_like({"DnsRecords": [{"TTL": 10, "Type": "A"}]})},
+    )
+    # One consumer and one scheduler: never two workers tasks at once.
+    a.has_resource_properties(
+        "AWS::ECS::Service",
+        {"DeploymentConfiguration": Match.object_like({"MinimumHealthyPercent": 0, "MaximumPercent": 100})},
+    )
+    text = json.dumps(a.to_json())
+    assert "sqs:ReceiveMessage" in text and "cloudwatch:PutMetricData" in text
+    assert '"cloudwatch:namespace": "Watchfloor"' in text
+    for name in ("async", "auth", "data", "harness", "mcp"):
+        for td in ecs[name].find_resources("AWS::ECS::TaskDefinition").values():
+            assert td["Properties"]["RuntimePlatform"] == {
+                "CpuArchitecture": "ARM64",
+                "OperatingSystemFamily": "LINUX",
+            }
+
+
+def test_ecs_one_off_jobs_are_task_definitions(ecs: dict[str, Template]) -> None:
+    ecs["data"].has_resource_properties(
+        "AWS::ECS::TaskDefinition",
+        {
+            "Family": "wf-dev-migrator",
+            "ContainerDefinitions": [
+                Match.object_like({"Name": "migrator", "Command": ["python", "-m", "workers.migrator"]})
+            ],
+        },
+    )
+    ecs["auth"].has_resource_properties(
+        "AWS::ECS::TaskDefinition",
+        {
+            "Family": "wf-dev-seeder",
+            "Cpu": "512",
+            "Memory": "1024",
+            "ContainerDefinitions": [
+                Match.object_like({"Name": "seeder", "Command": ["python", "-m", "auth_server.seeder"]})
+            ],
+        },
+    )
+    alarms = [
+        r["Properties"]["AlarmName"] for r in ecs["ops"].find_resources("AWS::CloudWatch::Alarm").values()
+    ]
+    assert "wf-dev-canary" in alarms and "wf-dev-spillover" not in alarms  # no alias on ECS
+
+
+def test_ecs_needs_the_page_served_without_cloudfront() -> None:
+    """The page upload and the bucket cleanup are custom resources, which run on Lambda."""
+    data = yaml.safe_load((FIXTURES / "free" / "dev.yaml").read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="cdn: false"):
+        EnvConfig.model_validate({**data, "compute": "ecs"})
+    cfg = EnvConfig.model_validate({**data, "compute": "ecs", "cdn": False})
+    assert cfg.queue_name("jobs") == "wf-dev-jobs-svc" and cfg.queue_url("jobs").endswith("/wf-dev-jobs-svc")
+    assert EnvConfig.model_validate(data).queue_name("jobs") == "wf-dev-jobs"
+
+
+def _exports(stacks: dict[str, Template]) -> dict[str, Any]:
+    found: dict[str, Any] = {}
+    for t in stacks.values():
+        for out in t.to_json().get("Outputs", {}).values():
+            if "Export" in out:
+                name = out["Export"]["Name"]
+                assert name not in found, f"export {name} twice"
+                found[name] = out["Value"]
+    return found
+
+
+def test_the_move_to_ecs_keeps_every_export_the_deployed_ops_stack_imports(ecs: dict[str, Template]) -> None:
+    """The exports the Lambda-era Ops stack imports (listed from dev, 2026-10-17). Async and Mcp deploy
+    before Ops, and CloudFormation refuses to change or drop an export another stack still imports, so
+    each must survive with its value until Ops has been updated."""
+    imported_by_ops = {
+        "wf-dev-async:ExportsOutputFnGetAttJobsDlqB53173A1QueueName299FCEF1": "wf-dev-jobs-dlq",
+        "wf-dev-async:ExportsOutputFnGetAttOutboxDlqFF3CB47FQueueName3435D3EA": "wf-dev-outbox-dlq",
+        "wf-dev-mcp:ExportsOutputRefFn733158FE11753353": "wf-dev-mcp-server",
+    }
+    exports = _exports(ecs)
+    for name, value in imported_by_ops.items():
+        assert exports.get(name) == value, name
+    for name in (
+        "wf-dev-mcp:ExportsOutputRefApiF70053CD5653BA4D",
+        "wf-dev-auth:ExportsOutputRefCanaryLoginSecretEA929801C2CE77D5",
+    ):
+        assert name in exports, name  # values are tokens of resources that stay
+    ops = json.dumps(ecs["ops"].to_json())
+    assert "wf-dev-async:" not in ops, "Ops names the dead-letter queues itself"
+    lambda_mode = _synth("dev", **{"wf:configDir": str(CONFIG_DIR), "wf:compute": "lambda"})
+    assert set(imported_by_ops) <= set(_exports(lambda_mode))  # and no export twice, on either compute

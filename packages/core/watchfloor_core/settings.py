@@ -35,6 +35,10 @@ class Settings(BaseModel):
     # where nothing listens, and costs about 2 s per new connection.
     jwks_url: str = "http://127.0.0.1:8081/jwks.json"
     allowed_hosts: frozenset[str] = Field(default_factory=lambda: frozenset({"localhost", "127.0.0.1"}))
+    # The header the host check reads. On ECS (ADR-025) the HTTP API reaches the container through a
+    # VPC link, so the public host arrives in a header the API itself sets on every request
+    # (x-wf-host = $context.domainName; a client's own value is overwritten), not in Host.
+    host_header: str = "host"
     allowed_origins: frozenset[str] = frozenset()
     protocol_versions: frozenset[str] = frozenset({"2025-11-25"})
     jobs_queue_url: str | None = None
@@ -94,6 +98,7 @@ def _from_env() -> Settings:
         issuer=e("WF_ISSUER", "http://localhost:8081"),
         jwks_url=e("WF_JWKS_URL", "http://127.0.0.1:8081/jwks.json"),
         allowed_hosts=_csv("WF_ALLOWED_HOSTS", "localhost,127.0.0.1"),
+        host_header=(e("WF_HOST_HEADER") or "host").strip().lower(),
         allowed_origins=_csv("WF_ALLOWED_ORIGINS"),
         protocol_versions=_csv("WF_PROTOCOL_VERSIONS", "2025-11-25"),
         jobs_queue_url=e("WF_JOBS_QUEUE_URL"),

@@ -103,7 +103,37 @@ Resources:
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/wf-${Env}-agents
-              - Sid: MigrateAndSeed # make migrate-remote, make seed-remote
+              # compute: ecs (ADR-025): the same jobs as one-off Fargate tasks (scripts/run_task.py)
+              - Sid: OneOffTasks
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/wf-${Env}-migrator:*
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/wf-${Env}-seeder:*
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/wf-${Env}-workers:*
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/wf-${Env}
+              - Sid: OneOffTaskStatus
+                Effect: Allow
+                Action: ecs:DescribeTasks
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/wf-${Env}/*
+              - Sid: OneOffTaskDefinitions # DescribeTaskDefinition takes no resource-level permission
+                Effect: Allow
+                Action: ecs:DescribeTaskDefinition
+                Resource: "*"
+              - Sid: OneOffTaskRoles # the task and execution roles CDK names after the wf-<env>-* stacks
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/wf-${Env}-*
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              - Sid: OneOffTaskLogs # the job's output: its result is the last line
+                Effect: Allow
+                Action: logs:GetLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:wf-${Env}-*:log-stream:*
+              - Sid: MigrateAndSeed # make migrate-remote, make seed-remote (compute: lambda)
                 Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:

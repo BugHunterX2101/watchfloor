@@ -28,19 +28,27 @@ def host_name(host_header: str) -> str:
 
 class EdgeGuard:
     def __init__(
-        self, app: ASGIApp, *, hosts: Iterable[str], origins: Iterable[str], max_body: int = MAX_BODY
+        self,
+        app: ASGIApp,
+        *,
+        hosts: Iterable[str],
+        origins: Iterable[str],
+        max_body: int = MAX_BODY,
+        host_header: str = "host",
     ) -> None:
         self.app = app
         self.hosts = frozenset(h.lower() for h in hosts)
         self.origins = frozenset(origins)
         self.max_body = max_body
+        # "host", or on ECS the header the HTTP API sets to its own domain (Settings.host_header)
+        self.host_header = host_header
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         h = Headers(scope=scope)
-        if host_name(h.get("host", "")) not in self.hosts:
+        if host_name(h.get(self.host_header, "")) not in self.hosts:
             await respond(send, 421)
             return
         origin = h.get("origin")

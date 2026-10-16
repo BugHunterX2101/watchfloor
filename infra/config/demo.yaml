@@ -27,6 +27,8 @@ budgets_usd: []                    # the account-wide budget lives in dev.yaml
 models_enabled: true               # Nova runs on a Free plan account, paid from the credits
 agents_enabled: false              # AgentCore not deployed yet: deep triage is refused (ADR-022)
 demo_mode: true                    # honours workspace clock offsets (DD §24)
-provisioned_concurrency: 1
+compute: ecs                       # Lambda refused account-wide since 2026-10-16: Fargate services (ADR-025)
+cdn: false                         # CloudFront refused until AWS Support verifies the account (ADR-015)
+provisioned_concurrency: 1         # Lambda only; no effect with compute: ecs
 agent_image_tag: demo
 removal_protection: true

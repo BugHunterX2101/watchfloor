@@ -182,3 +182,25 @@ add-on, and the toolkit is closed to our account.
   2026-10-15).
 - **Suggestion:** A total deadline per agent call, alongside the retry count, so an agent behind an
   HTTP front door can bound its latency without giving up retries entirely.
+
+## 11. Lambda refuses every call on the account, without a reason
+
+- **Date:** 2026-10-16 · **Area:** AWS Lambda (account) · **Severity:** blocker
+- **Task:** Deploy `dev` after a code change (`cdk deploy`, wf-dev-data first).
+- **Steps:** The stack updated the migrator function; then, as the administrator,
+  `aws lambda list-functions`, `get-account-settings` and `get-function-configuration`.
+- **Expected:** The update goes through, as every deploy had since 2026-10-09.
+- **Actual:** `AccessDeniedException` with no message on the update and on its rollback, which left
+  the stack in `UPDATE_ROLLBACK_FAILED`. Every Lambda call since returns the same in every Region,
+  for a caller with `AdministratorAccess`, outside any AWS Organization; other services answer
+  normally, the Free plan is active with credits left, and CloudTrail has no record of the denied
+  calls. API Gateway could no longer invoke the functions, so the live environment answered 500.
+  The console and the error say nothing about why or what to do.
+- **Workaround:** `continue-update-rollback` with the migrator skipped, then the services moved to
+  ECS Fargate behind the same HTTP APIs (VPC link and Cloud Map), with the Lambda resources removed
+  from the templates so CloudFormation never calls Lambda again
+  ([ADR-025](adr/0025-ecs-when-lambda-is-refused.md)). A support case asks for the restriction's
+  reason and its lifting.
+- **Suggestion:** When an account-level restriction denies a service, say so in the error (a
+  distinct error code and a link to the AWS Health event or the support path), not an empty
+  `AccessDeniedException` that reads like an IAM problem.

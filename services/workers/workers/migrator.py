@@ -15,6 +15,7 @@ Packaging: the Lambda zip carries the repository's ``db/`` package beside ``work
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -57,3 +58,15 @@ def handler(_event: object, _ctx: object) -> dict[str, Any]:
         if os.environ.get(env)
     }
     return runtime.run_in_lambda(_run(dsn, passwords))
+
+
+def main() -> int:
+    """The same run as a one-off ECS task (ADR-025, ``scripts/run_task.py``): the result, as the
+    Lambda returns it, is the last line on stdout. A failure raises, so the task exits non-zero."""
+    runtime.configure_logging()
+    print(json.dumps(handler(None, None), default=str), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

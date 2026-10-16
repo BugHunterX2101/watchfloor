@@ -82,8 +82,8 @@ The exact schemas are pinned in
 | `packages/core` | Shared domain: RIGS scoring, repositories, services, models, playbook |
 | `services/mcp_server` | Streamable HTTP MCP server (stateless, JSON responses) |
 | `services/auth_server` | Minimal OAuth 2.1 authorization server (RFC 8414 / 9728, PKCE S256) |
-| `services/workers` | Watcher (every 15 min), outbox dispatcher, sweeper, canary |
-| `services/agents` | Strands agents on AgentCore Runtime, or on Lambda (ADR-023); its own uv project (ADR-011) |
+| `services/workers` | Watcher (every 15 min), outbox dispatcher, sweeper, canary; on ECS, one service runs all four (ADR-025) |
+| `services/agents` | Strands agents on AgentCore Runtime, or in the async stack as a function or a container (ADR-023, ADR-025); its own uv project (ADR-011) |
 | `services/harness` | Simulated Alexa+ (Path B): API with real OAuth sign-in, plus a voice-capable web page |
 | `db` | Forward-only migrations and the deterministic seed |
 | `infra` | AWS CDK app (Python): eight stacks per environment; its own uv project |
@@ -134,16 +134,20 @@ messages print to the console.
 
 | Command | Effect |
 |---|---|
-| `make demo-reset` | Re-seed relative to now and assert the scenario scores (`ENV=dev\|demo`: through the seeder Lambda) |
+| `make demo-reset` | Re-seed relative to now and assert the scenario scores (`ENV=dev\|demo`: through the seeder job) |
 | `make demo-clock OFFSET=+14h` | Jump the workspace clock to "next morning", then run the watcher (needs `WF_DEMO_MODE=true`) |
 | `make demo-clock OFFSET=0` | Back to real time |
 | `make demo-watch-now` | One watcher run: fires standing orders now |
 | `make demo-status` | Bands, scenario scores, board, pending proposals, jobs, outbox backlog |
 | `uv run python scripts/demo.py outbox-retry --id N` | Re-arm a dead outbox row (`--all-dead` for all of them) |
 
-Each takes `ENV=dev|demo` (for the script, `--env`) to act on a deployed environment: `wf-<env>-seeder`
-resets, sets the clock, reports status and re-arms outbox rows from inside the VPC, and
-`wf-<env>-watcher` is the watcher run. Your AWS credentials need `lambda:InvokeFunction` on both.
+Each takes `ENV=dev|demo` (for the script, `--env`) to act on a deployed environment: the seeder
+job resets, sets the clock, reports status and re-arms outbox rows from inside the VPC, and the
+watcher job is the watcher run. With `compute: ecs` (the shipped configs, ADR-025) each is a one-off
+Fargate task that `scripts/run_task.py` starts and waits for, about a minute longer than a Lambda
+invoke; your AWS credentials need what the deploy role grants for it (`ecs:RunTask` and its
+companions in `infra/bootstrap/github-deploy-role.yaml`). With `compute: lambda` they invoke
+`wf-<env>-seeder` and `wf-<env>-watcher`, which needs `lambda:InvokeFunction` on both.
 Offsets take effect only where `demo_mode: true` (`demo`, not `dev`); `demo-clock` warns otherwise.
 
 ## Deploy to AWS
@@ -168,6 +172,13 @@ plain-string secret `wf-<env>/models/gemini`, created by hand. `agents_host: lam
 agents as a function in the async stack instead of on AgentCore, on the same chain: a Lead whose
 model fails hands the review to the offline engine. That is how `dev` offers deep reviews today.
 
+**Where it runs** (`compute`, ADR-025). Since 2026-10-16 the account refuses every Lambda call, so
+the shipped configs set `compute: ecs`: the same packaged bundles run as arm64 Fargate containers
+behind the same HTTP APIs (a VPC link and Cloud Map, no load balancer), one service each for the
+auth server, the MCP server, the harness, the triage agents and the workers (dispatcher, watcher,
+sweeper and canary in one process). The migrator and the seeder are one-off tasks. `compute: lambda`
+is the original layout, unchanged, for when AWS lifts the restriction.
+
 **Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
 and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and
 the harness on its CloudFront host (`<id>.cloudfront.net`), or, with `cdn: false` as in `dev` today
@@ -175,14 +186,16 @@ the harness on its CloudFront host (`<id>.cloudfront.net`), or, with `cdn: false
 do, and never change after that, so `make cdk-deploy` (run by `make deploy` and both deploy
 workflows) writes them into the config as `mcp_domain`, `auth_domain` and `harness_domain`: before
 deploying, from stacks that already exist, and after a first deploy, which it then repeats so every
-Lambda uses them. Commit them when the workflow's notice shows them. With a domain, set the three
+service uses them. Commit them when the workflow's notice shows them. With a domain, set the three
 host names and `certificate_arn` instead (and `hosted_zone_*` to have CDK create the DNS records).
 
 What `dev` costs, before credits: about $25–30 a month (Postgres `t4g.micro` and its storage, the
-NAT instance and its public IPv4 address, about ten secrets, a KMS key, alarms and logs). `dev` ships without provisioned
-concurrency, which would add about $9; `demo` keeps it for its latency gate, so deploy one
-environment at a time on a credits-only account. The budget in `dev.yaml` e-mails at $15, $25 and
-$35 of monthly usage, before credits.
+NAT instance and its public IPv4 address, about ten secrets, a KMS key, alarms and logs), plus about
+$40 for the five Fargate services on `compute: ecs` (0.25 vCPU each at the arm64 rates, and the
+private DNS zone). On `compute: lambda` `dev` ships without provisioned concurrency, which would add
+about $9, and `demo` keeps it for its latency gate. Deploy one environment at a time on a
+credits-only account. The budget in `dev.yaml` e-mails at $15, $25 and $35 of monthly usage, before
+credits.
 
 **Before the first deploy**
 1. Fill in `infra/config/<env>.yaml`: account, the alert e-mail, the Bedrock model ids (⚠ Verify
@@ -205,7 +218,7 @@ make deploy ENV=dev AGENT_RUNTIME=false   # everything except the agent runtime
 make agents-image ENV=dev && make agents-push ENV=dev REPO=<RepositoryUri output>
 make deploy ENV=dev              # now with the runtime
 make migrate-remote ENV=dev      # migrations, then logins for wf_app / wf_auth from their secrets
-make seed-remote ENV=dev         # demo workspace, OAuth clients and logins (the seeder Lambda)
+make seed-remote ENV=dev         # demo workspace, OAuth clients and logins (the seeder job)
 ```
 `seed-remote` is the AWS twin of `make seed` + `make auth-bootstrap`. Every secret it registers is
 generated by the Auth stack in Secrets Manager, and none is printed:
@@ -268,7 +281,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Bedrock-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false` and Gemini, ADR-023) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher jobs) · CDK stacks and CI/CD: **dev is deployed** (us-east-1, on ECS Fargate since the account began refusing Lambda, ADR-025), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Bedrock-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false` and Gemini, ADR-023) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along

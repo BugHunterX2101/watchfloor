@@ -16,7 +16,13 @@ def build_middleware(settings: Settings, jwks: JwksCache) -> list[Middleware]:
     s = settings
     return [
         Middleware(Telemetry),  # 1 trace id + latency
-        Middleware(EdgeGuard, hosts=s.allowed_hosts, origins=s.allowed_origins, max_body=MAX_BODY),  # 2
+        Middleware(
+            EdgeGuard,
+            hosts=s.allowed_hosts,
+            origins=s.allowed_origins,
+            max_body=MAX_BODY,
+            host_header=s.host_header,
+        ),  # 2
         Middleware(
             BearerAuth, issuer=s.issuer, audience=s.resource_uri, jwks=jwks
         ),  # 3 401, no WWW-Authenticate

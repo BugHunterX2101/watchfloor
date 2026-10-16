@@ -1,4 +1,5 @@
-"""Data (DD §18.1): RDS Postgres 16, three login secrets, and the migrator Lambda.
+"""Data (DD §18.1): RDS Postgres 16, three login secrets, and the migrator (a Lambda, or on ECS a
+one-off task definition, ADR-025).
 
 - ``wf_owner`` is the master user (RDS-managed secret): migrations and seeding.
 - ``wf_app`` and ``wf_auth`` get generated secrets attached to the instance. Migration
@@ -11,11 +12,12 @@ from typing import Any
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_rds as rds
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import PythonLambda
+from ..common import Container, PythonLambda
 from ..config import EnvConfig
 from .net import NetStack
 
@@ -55,25 +57,39 @@ class DataStack(Stack):
         self.app_secret = self._login("App", "wf_app", cfg)
         self.auth_secret = self._login("Auth", "wf_auth", cfg)
 
-        self.migrator = PythonLambda(
-            self,
-            "Migrator",
-            cfg=cfg,
-            name="migrator",
-            bundle="workers",
-            handler="workers.migrator.handler",
-            timeout=Duration.minutes(2),
-            vpc=net.vpc,
-            security_groups=[net.lambda_sg],
-            environment={
-                "WF_OWNER_DB_SECRET_ARN": self.owner_secret.secret_arn,
-                "WF_APP_DB_SECRET_ARN": self.app_secret.secret_arn,
-                "WF_AUTH_DB_SECRET_ARN": self.auth_secret.secret_arn,
-            },
-        ).function
+        migrator_env = {
+            "WF_OWNER_DB_SECRET_ARN": self.owner_secret.secret_arn,
+            "WF_APP_DB_SECRET_ARN": self.app_secret.secret_arn,
+            "WF_AUTH_DB_SECRET_ARN": self.auth_secret.secret_arn,
+        }
+        self.migrator: lambda_.Function | Container
+        if cfg.ecs:  # a one-off task, started by scripts/run_task.py (ADR-025)
+            self.migrator = Container(
+                self,
+                "Migrator",
+                cfg=cfg,
+                name="migrator",
+                bundle="workers",
+                command=["python", "-m", "workers.migrator"],
+                environment=migrator_env,
+            )
+            CfnOutput(self, "MigratorTaskFamily", value=self.migrator.task_definition.family)
+        else:
+            self.migrator = PythonLambda(
+                self,
+                "Migrator",
+                cfg=cfg,
+                name="migrator",
+                bundle="workers",
+                handler="workers.migrator.handler",
+                timeout=Duration.minutes(2),
+                vpc=net.vpc,
+                security_groups=[net.lambda_sg],
+                environment=migrator_env,
+            ).function
+            CfnOutput(self, "MigratorName", value=self.migrator.function_name)
         for secret in (self.owner_secret, self.app_secret, self.auth_secret):
             secret.grant_read(self.migrator)
-        CfnOutput(self, "MigratorName", value=self.migrator.function_name)
 
     def _login(self, construct_id: str, username: str, cfg: EnvConfig) -> sm.ISecret:
         secret = rds.DatabaseSecret(

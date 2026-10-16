@@ -75,6 +75,10 @@ class EnvConfig(BaseModel):
     # false while the account's Lambda concurrency quota is 10 (a new account's): reserving any would
     # take the unreserved pool below its minimum of 10, so the functions share the 10 instead (ADR-016).
     reserve_concurrency: bool = True
+    # Where the services run (ADR-025). "lambda": functions behind the HTTP APIs, SQS event sources and
+    # EventBridge schedules. "ecs": Fargate containers built from the same packaged bundles, reached by
+    # the same HTTP APIs through a VPC link and Cloud Map, for an account where Lambda is refused.
+    compute: Literal["lambda", "ecs"] = "lambda"
     alert_email: str
     # Seeded user the canary signs in as, with its own generated password (wf-<env>/canary/login).
     canary_email: str = "daniel@lumenridge.example"
@@ -107,6 +111,10 @@ class EnvConfig(BaseModel):
             raise ValueError("a certificate_arn needs all three host names (mcp, auth and harness_domain)")
         if (self.hosted_zone_id or self.hosted_zone_name) and not self.certificate_arn:
             raise ValueError("a hosted zone is for custom domains: set certificate_arn too")
+        if self.compute == "ecs" and self.cdn:
+            # The page upload (BucketDeployment) and the bucket's cleanup are CDK custom resources,
+            # which run on Lambda; on ECS the harness container serves the page itself.
+            raise ValueError("compute: ecs needs cdn: false (the page deployment runs on Lambda)")
         return self
 
     @property
@@ -119,8 +127,13 @@ class EnvConfig(BaseModel):
         return self.models_enabled and self.agents_enabled and self.agents_host == "agentcore"
 
     @property
+    def ecs(self) -> bool:
+        return self.compute == "ecs"
+
+    @property
     def triage_lambda(self) -> bool:
-        """The agents run as a Lambda function (ADR-023), on Bedrock or Gemini."""
+        """The agents run in the Async stack (ADR-023), on Bedrock or Gemini: a Lambda function, or a
+        container on ECS (``agents_host: lambda`` names that place, whichever compute runs it)."""
         return (
             self.agents_enabled
             and self.agents_host == "lambda"
@@ -164,9 +177,15 @@ class EnvConfig(BaseModel):
     def harness_url(self) -> str:
         return f"https://{self.harness_host}"
 
+    def queue_name(self, name: str) -> str:
+        """``wf-<env>-jobs`` and so on. On ECS the queues are new ones (``…-jobs-svc``): the Lambda event
+        source mappings that outlive a blocked Lambda keep pointing at the old queues, so they can
+        never take a message the workers container is waiting for (ADR-025)."""
+        return f"{self.prefix}-{name}-svc" if self.ecs else f"{self.prefix}-{name}"
+
     def queue_url(self, name: str) -> str:
         """SQS URLs are deterministic for named queues, so the MCP stack needs no Async reference."""
-        return f"https://sqs.{self.region}.amazonaws.com/{self.account}/{self.prefix}-{name}"
+        return f"https://sqs.{self.region}.amazonaws.com/{self.account}/{self.queue_name(name)}"
 
 
 def load_config(env: str, *, account: str | None = None, directory: Path = CONFIG_DIR) -> EnvConfig:

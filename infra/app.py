@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 import aws_cdk as cdk
-from wf_infra.config import CONFIG_DIR, load_config
+from wf_infra.config import CONFIG_DIR, EnvConfig, load_config
 from wf_infra.stacks.agents import AgentsStack
 from wf_infra.stacks.async_ import AsyncStack
 from wf_infra.stacks.auth import AuthStack
@@ -34,6 +34,9 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
         override = app.node.try_get_context(key)  # one synth, either way
         if override is not None:
             cfg = cfg.model_copy(update={field: str(override).lower() in ("true", "1")})
+    compute = app.node.try_get_context("wf:compute")  # `-c wf:compute=lambda|ecs`, validated like the file
+    if compute is not None:
+        cfg = EnvConfig.model_validate({**cfg.model_dump(), "compute": str(compute)})
     aws_env = cdk.Environment(account=cfg.account, region=cfg.region)
     p = cfg.prefix
 
@@ -44,7 +47,8 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     # Without models or without agents (ADR-022) there is no AgentCore to deploy.
     agents = AgentsStack(app, f"{p}-agents", cfg=cfg, env=aws_env) if cfg.agents_on else None
     asyncs = AsyncStack(app, f"{p}-async", cfg=cfg, net=net, data=data, auth=auth, agents=agents, env=aws_env)
-    harness = HarnessStack(app, f"{p}-harness", cfg=cfg, env=aws_env)
+    # On Lambda the harness is outside the VPC; on ECS (ADR-025) it runs in it, behind the VPC link.
+    harness = HarnessStack(app, f"{p}-harness", cfg=cfg, net=net if cfg.ecs else None, env=aws_env)
     ops = OpsStack(app, f"{p}-ops", cfg=cfg, auth=auth, mcp=mcp, asyncs=asyncs, env=aws_env)
     # Mcp reaches Auth (JWKS) and the Async queues through fixed URLs, so it has no stack dependency on
     # them. A send before the queues exist only logs; the sweeper republishes the outbox row (ADR-008).

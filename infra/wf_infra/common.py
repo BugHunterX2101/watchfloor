@@ -1,26 +1,41 @@
-"""Shared building blocks: the uv-packaged Python Lambda, environment presets and custom domains."""
+"""Shared building blocks: the uv-packaged Python Lambda and its ECS twin, environment presets and
+custom domains."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
+import jsii
 from aws_cdk import CfnOutput, Duration, RemovalPolicy
 from aws_cdk import aws_apigatewayv2 as apigwv2
+from aws_cdk import aws_apigatewayv2_integrations as integrations
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_ecr_assets as ecr_assets
+from aws_cdk import aws_ecs as ecs
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_route53 as route53
 from aws_cdk import aws_route53_targets as targets
 from aws_cdk import aws_secretsmanager as sm
+from aws_cdk import aws_servicediscovery as servicediscovery
 from constructs import Construct
 
 from .config import EnvConfig
 
+if TYPE_CHECKING:
+    from .stacks.net import NetStack
+
 BUILD_DIR = Path(__file__).resolve().parents[1] / "build"
 STUB_CONTEXT = "wf:stubAssets"
 NAMESPACE = "Watchfloor"
+STUB_IMAGE = "public.ecr.aws/docker/library/python:3.12-slim-bookworm"  # synth-only runs
+HTTP_PORT = 8080
+# The header the HTTP API sets to its own domain on the way into a container (ADR-025): through a VPC
+# link, Host names the integration, so the MCP server's host check reads this one instead.
+GATEWAY_HOST_HEADER = "x-wf-host"
 
 
 def lambda_code(scope: Construct, bundle: str) -> lambda_.Code:
@@ -142,6 +157,174 @@ class PythonLambda(Construct):
         )
 
 
+def container_image(scope: Construct, bundle: str) -> ecs.ContainerImage:
+    """The bundle as an arm64 image (scripts/package_lambdas.py writes its Dockerfile), or a public
+    stand-in for synth-only runs. CDK builds and pushes it to the bootstrap repository on deploy."""
+    path = BUILD_DIR / bundle
+    packaged = (path / ".packaged").is_file()
+    if packaged and (path / "Dockerfile").is_file():
+        return ecs.ContainerImage.from_asset(str(path), platform=ecr_assets.Platform.LINUX_ARM64)
+    if scope.node.try_get_context(STUB_CONTEXT) in (True, "true", "1"):
+        return ecs.ContainerImage.from_registry(STUB_IMAGE)
+    if packaged:  # packaged before bundles carried a Dockerfile
+        raise RuntimeError(f"infra/build/{bundle} has no Dockerfile: run `make package` again")
+    raise RuntimeError(
+        f"infra/build/{bundle} is missing: run `make package`, or synth with -c {STUB_CONTEXT}=true"
+    )
+
+
+def http_health(path: str) -> ecs.HealthCheck:
+    """Healthy below 500, like the Lambda Web Adapter's readiness check: the MCP server answers a
+    request without the gateway's host header with 421, which still shows it is serving."""
+    probe = (
+        "import sys, urllib.error, urllib.request\n"
+        "try:\n"
+        f"    urllib.request.urlopen('http://127.0.0.1:{HTTP_PORT}{path}', timeout=3)\n"
+        "except urllib.error.HTTPError as e:\n"
+        "    sys.exit(1 if e.code >= 500 else 0)\n"
+        "except Exception:\n"
+        "    sys.exit(1)\n"
+    )
+    return ecs.HealthCheck(
+        command=["CMD", "python", "-c", probe],
+        interval=Duration.seconds(15),
+        timeout=Duration.seconds(5),
+        retries=3,
+        start_period=Duration.seconds(60),
+    )
+
+
+@jsii.implements(iam.IGrantable)
+class Container(Construct):
+    """One packaged bundle as an arm64 Fargate task: the ECS twin of :class:`PythonLambda` (ADR-025).
+
+    Same base environment and its own log group; grants go to the task role, so ``secret.grant_read``,
+    ``add_environment`` and ``add_to_role_policy`` read as they do for a function. ``http`` makes it a
+    web service: Uvicorn on 0.0.0.0:8080, trusting the forwarded headers of the API's VPC link (only
+    that link and the other services reach the port). :meth:`service` keeps one task running; without
+    it the task definition is a one-off job (``scripts/run_task.py``).
+    """
+
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        cfg: EnvConfig,
+        name: str,
+        bundle: str,
+        command: list[str] | None = None,
+        cpu: int = 256,
+        memory_mib: int = 512,
+        environment: dict[str, str] | None = None,
+        http: bool = False,
+        health_path: str | None = None,
+    ) -> None:
+        super().__init__(scope, construct_id)
+        self.cfg = cfg
+        self.name = name
+        # Lambda sets the Region for the SDK; say it here too rather than rely on the task's agent.
+        env = {**base_env(cfg, name), "AWS_REGION": cfg.region, "AWS_DEFAULT_REGION": cfg.region}
+        env.update(environment or {})
+        if http:
+            env.update(
+                {"WF_BIND_HOST": "0.0.0.0", "PORT": str(HTTP_PORT), "FORWARDED_ALLOW_IPS": "*"}  # noqa: S104
+            )
+        self.task_definition = ecs.FargateTaskDefinition(
+            self,
+            "Task",
+            family=f"{cfg.prefix}-{name}",
+            cpu=cpu,
+            memory_limit_mib=memory_mib,
+            runtime_platform=ecs.RuntimePlatform(
+                cpu_architecture=ecs.CpuArchitecture.ARM64,
+                operating_system_family=ecs.OperatingSystemFamily.LINUX,
+            ),
+        )
+        self.log_group = logs.LogGroup(
+            self, "Logs", retention=logs.RetentionDays.ONE_MONTH, removal_policy=RemovalPolicy.DESTROY
+        )
+        self.container = self.task_definition.add_container(
+            "App",
+            container_name=name,
+            image=container_image(self, bundle),
+            command=command,
+            environment=env,
+            logging=ecs.LogDrivers.aws_logs(stream_prefix=name, log_group=self.log_group),
+            port_mappings=[ecs.PortMapping(container_port=HTTP_PORT)] if http else None,
+            health_check=http_health(health_path) if health_path else None,
+            stop_timeout=Duration.seconds(120),  # Fargate's maximum: room to finish in-flight work
+        )
+
+    @property
+    def grant_principal(self) -> iam.IPrincipal:
+        return self.task_definition.task_role
+
+    def add_environment(self, key: str, value: str) -> None:
+        self.container.add_environment(key, value)
+
+    def add_to_role_policy(self, statement: iam.PolicyStatement) -> None:
+        self.task_definition.add_to_task_role_policy(statement)
+
+    def add_secret_env(self, key: str, secret: sm.ISecret) -> None:
+        """A secret ECS injects at start (the execution role reads it), never written into the task
+        definition, where a function's dynamic reference would be resolved into plain text."""
+        self.container.add_secret(key, ecs.Secret.from_secrets_manager(secret))
+
+    def service(
+        self, net: NetStack, *, discovery: str | None = None, srv: bool = False, rolling: bool = True
+    ) -> ecs.FargateService:
+        """Keep one task running in the private subnets, registered in Cloud Map as ``discovery``
+        (SRV records for an HTTP API's integration, A records for a service-to-service call).
+
+        ``rolling``: start the new task before stopping the old (no gap). A single consumer of the
+        queues and the schedules sets it False, so two never run the watcher at once.
+        """
+        assert net.cluster is not None and net.namespace is not None  # NetStack builds them on ECS
+        cloud_map = None
+        if discovery:
+            cloud_map = ecs.CloudMapOptions(
+                name=discovery,
+                cloud_map_namespace=net.namespace,
+                dns_record_type=(
+                    servicediscovery.DnsRecordType.SRV if srv else servicediscovery.DnsRecordType.A
+                ),
+                dns_ttl=Duration.seconds(10),
+                container=self.container if srv else None,
+                container_port=HTTP_PORT if srv else None,
+            )
+        return ecs.FargateService(
+            self,
+            "Service",
+            cluster=net.cluster,
+            task_definition=self.task_definition,
+            service_name=f"{self.cfg.prefix}-{self.name}",
+            desired_count=1,
+            min_healthy_percent=100 if rolling else 0,
+            max_healthy_percent=200 if rolling else 100,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            security_groups=[net.lambda_sg],
+            assign_public_ip=False,
+            circuit_breaker=ecs.DeploymentCircuitBreaker(enable=True, rollback=True),
+            cloud_map_options=cloud_map,
+            propagate_tags=ecs.PropagatedTagSource.SERVICE,
+        )
+
+
+def service_integration(service: ecs.FargateService, net: NetStack) -> apigwv2.HttpRouteIntegration:
+    """An HTTP API's way into a container (ADR-025): its VPC link to the service's Cloud Map SRV
+    records. The API's own domain goes along in ``x-wf-host``, overwriting whatever a client sent."""
+    assert service.cloud_map_service is not None and net.vpc_link is not None
+    return integrations.HttpServiceDiscoveryIntegration(
+        "Integ",
+        service.cloud_map_service,
+        vpc_link=net.vpc_link,
+        parameter_mapping=apigwv2.ParameterMapping().overwrite_header(
+            GATEWAY_HOST_HEADER, apigwv2.MappingValue.context_variable("domainName")
+        ),
+    )
+
+
 def certificate(scope: Construct, cfg: EnvConfig) -> acm.ICertificate:
     assert cfg.certificate_arn is not None  # callers check cfg.custom_domains
     return acm.Certificate.from_certificate_arn(scope, "Certificate", cfg.certificate_arn)
@@ -190,7 +373,7 @@ def default_host_output(scope: Construct, cfg: EnvConfig, api: apigwv2.HttpApi) 
     CfnOutput(scope, "DefaultHost", value=f"{api.api_id}.execute-api.{cfg.region}.amazonaws.com")
 
 
-def gemini_access(scope: Construct, cfg: EnvConfig, fn: lambda_.Function) -> None:
+def gemini_access(scope: Construct, cfg: EnvConfig, fn: lambda_.Function | Container) -> None:
     """Gemini for one function (ADR-023): the key's secret name and read access to it.
 
     The secret is stored by hand, so it is referenced by name rather than created here (once per

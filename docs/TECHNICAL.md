@@ -822,7 +822,8 @@ watchfloor/
 │   │       ├── watcher.py                  # 15-min recompute + rules + daily snapshot + purges
 │   │       ├── sweeper.py                  # outbox re-enqueue, proposal expiry, timed-out jobs
 │   │       ├── canary.py                   # tools/list + get_risk_briefing with canary user
-│   │       ├── migrator.py                 # one-shot Lambda: applies db/migrations in VPC
+│   │       ├── migrator.py                 # one-shot Lambda or ECS task: applies db/migrations in VPC
+│   │       ├── service.py                  # ECS (ADR-025): SQS consumers + sweeper/watcher/canary schedules
 │   │       ├── slack.py                    # webhook client (429 aware)
 │   │       ├── drafts.py                   # Haiku-class follow-up drafts (never sent to the buyer)
 │   │       ├── agentcore_client.py         # invoke the triage agent, collect its output
@@ -914,7 +915,8 @@ watchfloor/
 │   ├── dev_keys.py                         # generates local ES256 key pair (gitignored output)
 │   ├── dev_token.py                        # mints a local JWT for curl testing (local/dev only)
 │   ├── demo.py                             # reset · clock · watch-now · status · outbox-retry
-│   ├── package_lambdas.py                  # Lambda zip directories in infra/build/ (make package)
+│   ├── package_lambdas.py                  # Lambda zip directories in infra/build/, each also an image (make package)
+│   ├── run_task.py                         # migrator · seeder · watcher, once: Lambda invoke or ECS task (ADR-025)
 │   ├── default_hosts.py                    # writes the hosts AWS assigned into infra/config/<env>.yaml
 │   ├── remote_mcp.py                       # sign in as a real user against a running server
 │   ├── conformance_remote.py               # CF-01..15 against a URL
@@ -2655,13 +2657,16 @@ agents-push:          ## push the agents image built by agents-image: make agent
 	aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $${REPO%%/*}
 	docker tag wf-agents:$(ENV) $(REPO):$(ENV) && docker push $(REPO):$(ENV)
 
-migrate-remote:       ## run the migrator Lambda in ENV=dev|demo (migrations + role logins)
-	aws lambda invoke --function-name wf-$(ENV)-migrator --cli-read-timeout 150 /dev/stdout
+# Both run once on the environment's compute: a Lambda invoke, or a one-off ECS task (ADR-025), and
+# fail the make when the job fails (scripts/run_task.py).
+migrate-remote:       ## run the migrator in ENV=dev|demo (migrations + role logins)
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	uv run python scripts/run_task.py --env $(ENV) migrator
 
 SEED_EVENT ?= {}
-seed-remote:          ## run the seeder Lambda in ENV=dev|demo: reset the demo workspace + OAuth clients and logins
+seed-remote:          ## run the seeder in ENV=dev|demo: reset the demo workspace + OAuth clients and logins
 	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
-	aws lambda invoke --function-name wf-$(ENV)-seeder --cli-read-timeout 330 --cli-binary-format raw-in-base64-out --payload '$(SEED_EVENT)' /dev/stdout
+	uv run python scripts/run_task.py --env $(ENV) seeder '$(SEED_EVENT)'
 
 snapshot:             ## regenerate the tools/list snapshot after changing a tool
 	cd services/mcp_server && uv run python -m mcp_server.tools.snapshot

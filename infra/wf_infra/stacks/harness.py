@@ -6,7 +6,8 @@ therefore stays first-party, as it is locally.
 
 With ``cdn: false`` (an account AWS has not verified for CloudFront yet, ADR-015) there is no
 bucket or distribution: the Lambda serves the page it was packaged with, as it does locally, on
-the API's own host.
+the API's own host. With ``compute: ecs`` (ADR-025, which implies ``cdn: false``) a Fargate
+service does the same behind the same HTTP API.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from aws_cdk import aws_apigatewayv2_integrations as integrations
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_route53 as route53
 from aws_cdk import aws_route53_targets as targets
 from aws_cdk import aws_s3 as s3
@@ -28,6 +30,7 @@ from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
 from ..common import (
+    Container,
     PythonLambda,
     bedrock_arns,
     certificate,
@@ -35,8 +38,10 @@ from ..common import (
     domain_mapping,
     gemini_access,
     hosted_zone,
+    service_integration,
 )
 from ..config import EnvConfig
+from .net import NetStack
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "services" / "harness" / "web" / "dist"
 API_PATHS = ("/converse", "/api/*", "/oauth/*", "/healthz")
@@ -44,7 +49,15 @@ PACKAGED_WEB_DIST = "/var/task/harness_web"  # scripts/package_lambdas.py copies
 
 
 class HarnessStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, *, cfg: EnvConfig, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        cfg: EnvConfig,
+        net: NetStack | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         session = sm.Secret(
             self,
@@ -52,21 +65,39 @@ class HarnessStack(Stack):
             secret_name=f"{cfg.prefix}/harness/session",
             generate_secret_string=sm.SecretStringGenerator(exclude_punctuation=True, password_length=48),
         )
-        fn = PythonLambda(
-            self,
-            "Fn",
-            cfg=cfg,
-            name="harness-api",
-            bundle="harness_api",
-            web_adapter=True,
-            memory_size=512,
-            timeout=Duration.seconds(60),
-            environment={
-                "WF_HARNESS_SESSION_SECRET": session.secret_value.unsafe_unwrap(),  # dynamic reference
-                "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
-                "WF_HARNESS_WEB_URL": "/",
-            },
-        ).function
+        env = {
+            "WF_HARNESS_REDIRECT_URI": f"{cfg.harness_url}/oauth/callback",
+            "WF_HARNESS_WEB_URL": "/",
+        }
+        fn: lambda_.Function | Container
+        if cfg.ecs:  # ADR-025: the container serves its packaged page, as the Lambda does without a CDN
+            assert net is not None, "compute: ecs runs the harness in the VPC (pass net)"
+            fn = Container(
+                self,
+                "Server",
+                cfg=cfg,
+                name="harness-api",
+                bundle="harness_api",
+                environment=env,  # WF_HARNESS_WEB_DIST below: compute: ecs implies cdn: false
+                http=True,
+                health_path="/healthz",
+            )
+            fn.add_secret_env("WF_HARNESS_SESSION_SECRET", session)
+        else:
+            fn = PythonLambda(
+                self,
+                "Fn",
+                cfg=cfg,
+                name="harness-api",
+                bundle="harness_api",
+                web_adapter=True,
+                memory_size=512,
+                timeout=Duration.seconds(60),
+                environment={
+                    "WF_HARNESS_SESSION_SECRET": session.secret_value.unsafe_unwrap(),  # dynamic reference
+                    **env,
+                },
+            ).function
         if cfg.models_enabled:  # otherwise the harness runs its offline engine (WF_MODELS_ENABLED=false)
             fn.add_environment("WF_HAIKU_MODEL_ID", cfg.models.haiku)
             fn.add_to_role_policy(
@@ -82,7 +113,12 @@ class HarnessStack(Stack):
             )
         if cfg.gemini_enabled:  # after Bedrock, or alone where models are off (ADR-023)
             gemini_access(self, cfg, fn)
-        integration = integrations.HttpLambdaIntegration("Integ", fn)
+        integration: apigwv2.HttpRouteIntegration
+        if isinstance(fn, Container):
+            assert net is not None
+            integration = service_integration(fn.service(net, discovery="harness", srv=True), net)
+        else:
+            integration = integrations.HttpLambdaIntegration("Integ", fn)
         self.api = apigwv2.HttpApi(
             self,
             "Api",

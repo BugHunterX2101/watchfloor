@@ -7,7 +7,8 @@ For each bundle:
 3. add what the wheel leaves out: ``run.sh`` for Web Adapter services, the built
    MCP Apps views (``ui_dist`` is gitignored, so hatchling skips it) and the
    repository's ``db/`` package for the migrator;
-4. drop ``__pycache__`` and write a ``.packaged`` marker the CDK app checks for.
+4. drop ``__pycache__``, write the ``Dockerfile`` that makes the bundle an ECS image too (ADR-025)
+   and a ``.packaged`` marker the CDK app checks for.
 
 Package on Linux (CI) for deploys: Windows does not keep the executable bit that
 ``run.sh`` needs as a Lambda handler.
@@ -69,6 +70,20 @@ BUNDLES = {
 }
 
 
+# Every bundle is also a container image (ADR-025): the same files on the same Python, so a service
+# runs identically on Lambda and on ECS Fargate (arm64). Debian bookworm's glibc 2.36 runs the
+# manylinux_2_28 wheels. The ECS task definition sets the command where a bundle has no run.sh.
+DOCKERFILE = """\
+# Written by scripts/package_lambdas.py: this bundle as an arm64 image for ECS Fargate (ADR-025).
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
+ENV PYTHONPATH=/var/task PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+WORKDIR /var/task
+COPY . .
+USER 10001
+CMD ["sh", "run.sh"]
+"""
+
+
 def run(cmd: list[str], cwd: Path = ROOT) -> None:
     print("  $", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=cwd, check=True)  # noqa: S603 - uv with arguments this script builds
@@ -113,11 +128,14 @@ def build(bundle: Bundle, out: Path) -> int:
         )
         # The python3.12 runtime is Amazon Linux 2023 (glibc 2.34), so manylinux_2_28 wheels run there;
         # some dependencies (asyncpg 0.32) no longer publish manylinux2014 aarch64 wheels.
+        # --refresh: uv rebuilds a local project only when its pyproject.toml changes, so without it a
+        # new module (workers/service.py, say) would be left out of a bundle built on the same machine.
         run(
             [
                 "uv",
                 "pip",
                 "install",
+                "--refresh",
                 "--target",
                 str(target),
                 "--python-platform",
@@ -142,6 +160,7 @@ def build(bundle: Bundle, out: Path) -> int:
     for cache in target.rglob("__pycache__"):
         shutil.rmtree(cache, ignore_errors=True)
     strip_native(target)
+    (target / "Dockerfile").write_text(DOCKERFILE, encoding="utf-8")
     size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
     (target / ".packaged").write_text(f"{bundle.name}\n", encoding="utf-8")
     return size

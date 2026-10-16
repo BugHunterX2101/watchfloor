@@ -134,13 +134,16 @@ agents-push:          ## push the agents image built by agents-image: make agent
 	aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $${REPO%%/*}
 	docker tag wf-agents:$(ENV) $(REPO):$(ENV) && docker push $(REPO):$(ENV)
 
-migrate-remote:       ## run the migrator Lambda in ENV=dev|demo (migrations + role logins)
-	aws lambda invoke --function-name wf-$(ENV)-migrator --cli-read-timeout 150 /dev/stdout
+# Both run once on the environment's compute: a Lambda invoke, or a one-off ECS task (ADR-025), and
+# fail the make when the job fails (scripts/run_task.py).
+migrate-remote:       ## run the migrator in ENV=dev|demo (migrations + role logins)
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	uv run python scripts/run_task.py --env $(ENV) migrator
 
 SEED_EVENT ?= {}
-seed-remote:          ## run the seeder Lambda in ENV=dev|demo: reset the demo workspace + OAuth clients and logins
+seed-remote:          ## run the seeder in ENV=dev|demo: reset the demo workspace + OAuth clients and logins
 	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
-	aws lambda invoke --function-name wf-$(ENV)-seeder --cli-read-timeout 330 --cli-binary-format raw-in-base64-out --payload '$(SEED_EVENT)' /dev/stdout
+	uv run python scripts/run_task.py --env $(ENV) seeder '$(SEED_EVENT)'
 
 snapshot:             ## regenerate the tools/list snapshot after changing a tool
 	cd services/mcp_server && uv run python -m mcp_server.tools.snapshot
