@@ -17,6 +17,27 @@ listing, account linking) is built and ready if access opens ([ADR-024](docs/adr
 > Demo video: _coming with the recording on Oct 21._ · Specs: [PRD](docs/PRD.md) ·
 > [Design](docs/DESIGN.md) · [Technical](docs/TECHNICAL.md) · [ADRs](docs/adr/)
 
+## Try it
+
+1. Open the hosted harness at <https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/> and select
+   **Sign in**. That runs the real OAuth flow (PKCE) against Watchfloor's auth server.
+2. Sign in as `priya@lumenridge.example`. The password is in the Devpost testing instructions; it is
+   never in this repository.
+3. Pick a suggestion or ask in your own words: "What needs my attention today?", "Why is Kestrel
+   at risk?", "Dig into Kestrel", then "Is the Kestrel review finished?". To act, tap a deal on
+   the board and **Propose**, or say "Post a heads-up about Kestrel to the team", then "yes";
+   "undo" takes it back. "Tell me when a deal over $50K goes quiet for five days" sets a standing
+   order. The mic button uses the browser's speech recognition (Chrome or Edge); typing works
+   everywhere.
+
+Every tool call, with its latency, is listed beside the conversation. If the language model is
+unavailable or out of quota, a keyword router answers the briefing, explain, review and
+standing-order questions, and the board's buttons still act; free-form requests to act or to set
+an order need the model. The data is a synthetic sales team (Lumenridge) and its deals, so nothing
+you do reaches a real customer.
+[Privacy](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/privacy) ·
+[Terms](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/terms)
+
 ## How it works
 
 ```mermaid
@@ -47,9 +68,9 @@ flowchart LR
 |---|---|
 | `get_risk_briefing` · `explain_deal_risk` · `lookup_deal` | `explain_deal_risk` · `get_deal_timeline` · `get_deal_history` |
 | `start_deep_triage` · `get_triage_result` | `get_account_context` · `get_prior_triage` · `get_playbook` |
-| `propose_action` · `confirm_action` · `log_deal_update` | |
+| `propose_action` · `confirm_action` · `undo_action` · `extend_preview` | |
+| `log_deal_update` · `update_briefing_preferences` | |
 | `set_standing_order` · `list_standing_orders` · `remove_standing_order` | |
-| `update_briefing_preferences` | |
 
 The exact schemas are pinned in
 [`services/mcp_server/schemas/tools.snapshot.json`](services/mcp_server/schemas/tools.snapshot.json).
@@ -65,6 +86,7 @@ The exact schemas are pinned in
 | `services/agents` | Strands agents on AgentCore Runtime, or on Lambda (ADR-023); its own uv project (ADR-011) |
 | `services/harness` | Simulated Alexa+ (Path B): API with real OAuth sign-in, plus a voice-capable web page |
 | `db` | Forward-only migrations and the deterministic seed |
+| `infra` | AWS CDK app (Python): eight stacks per environment; its own uv project |
 | `scripts` | Dev keys and tokens, demo operations |
 | `tests` | Unit, conformance, integration and security suites |
 | `docs` | Specs, ADRs, implementation notes, friction log, feature requests |
@@ -74,7 +96,7 @@ The exact schemas are pinned in
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), Docker, and `make` (Git Bash works on Windows).
 
 ```bash
-make bootstrap                  # Python dependencies (workspace + agents project)
+make bootstrap                  # Python projects (workspace, agents, harness) + both web builds (needs Node)
 cp .env.example .env            # local placeholders only
 make db-up                      # Postgres 16 on 127.0.0.1:55432
 make migrate                    # schema, row-level security, roles
@@ -103,7 +125,10 @@ curl -s http://localhost:8080/mcp \
 ```
 
 Without Bedrock model ids, the local agent uses a deterministic offline engine, and its result
-event names the engine (ADR-013). The offline engine never runs in `dev` or `demo`. Without a Slack webhook, Slack messages print to the console.
+event names the engine (ADR-013). In `dev` and `demo` it never stands in for a missing model (that
+job ends `misconfigured`); it only finishes a review whose model failed, and the result says
+`engine: offline` and "the quick, rule-based review" (ADR-023). Without a Slack webhook, Slack
+messages print to the console.
 
 ### Demo operations
 
@@ -128,8 +153,8 @@ harness, ops. Pushes to `main` deploy `dev`, and `v*.*.*` tags deploy `demo` (`.
 
 **On an AWS Free plan account** (new accounts since July 2025 start on it), the models are Amazon
 Nova, which runs on demand in us-east-1 and is paid from the credits (ADR-022). Nova Lite runs the
-harness, the follow-up drafts and the fast specialists. Nova Pro runs the triage Lead. Both configs
-ship with `models_enabled: true` and `agents_enabled: false`, so everything deploys except the
+harness, the follow-up drafts and the fast specialists. Nova Pro runs the triage Lead. The `demo`
+config ships with `models_enabled: true` and `agents_enabled: false`, so everything deploys except the
 Agents stack, and `start_deep_triage` answers that deep reviews aren't available. Set
 `agents_enabled: true` to deploy AgentCore Runtime as well; on its first run with agents on,
 `deploy-dev` creates the image repository, pushes the agents image, then creates the runtime.
@@ -145,7 +170,8 @@ model fails hands the review to the offline engine. That is how `dev` offers dee
 
 **Without a domain** (the shipped configs: `certificate_arn: null`), nothing needs buying. The MCP
 and auth servers answer on their API Gateway hosts (`<id>.execute-api.us-east-1.amazonaws.com`) and
-the harness on its CloudFront host (`<id>.cloudfront.net`). Those hosts exist only once the stacks
+the harness on its CloudFront host (`<id>.cloudfront.net`), or, with `cdn: false` as in `dev` today
+(ADR-015), on its own API Gateway host. Those hosts exist only once the stacks
 do, and never change after that, so `make cdk-deploy` (run by `make deploy` and both deploy
 workflows) writes them into the config as `mcp_domain`, `auth_domain` and `harness_domain`: before
 deploying, from stacks that already exist, and after a first deploy, which it then repeats so every
@@ -165,7 +191,9 @@ $35 of monthly usage, before credits.
 2. `npx aws-cdk@2 bootstrap aws://<account>/us-east-1` once per account.
 3. The GitHub OIDC deploy role, once per environment (`CreateOidcProvider=false` for the second):
    ```bash
-   aws cloudformation deploy --template-file infra/bootstrap/github-deploy-role.yaml      --stack-name wf-dev-github-deploy --capabilities CAPABILITY_NAMED_IAM      --parameter-overrides Env=dev CreateOidcProvider=true
+   aws cloudformation deploy --template-file infra/bootstrap/github-deploy-role.yaml \
+     --stack-name wf-dev-github-deploy --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides Env=dev CreateOidcProvider=true
    ```
    Its `RoleArn` output is the repository secret `AWS_DEPLOY_ROLE_DEV` (`_DEMO` for demo); add
    `AWS_ACCOUNT_ID` as a repository variable, and GitHub environments named `dev` and `demo` (the
@@ -240,8 +268,12 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Model-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false`) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher Lambdas) · CDK stacks and CI/CD: **dev is deployed** (us-east-1), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Bedrock-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false` and Gemini, ADR-023) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along
 the way are in the [friction log](docs/friction-log.md).
+
+## License
+
+[Apache License 2.0](LICENSE). The demo data is synthetic; the people and companies in it are made up.

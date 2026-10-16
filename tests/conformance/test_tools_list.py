@@ -56,7 +56,9 @@ def _snapshot() -> dict[str, list[dict]]:
 async def test_cf03_user_sees_exactly_14_tools_matching_snapshot(mcp: Mcp) -> None:
     tools = await mcp.tools()
     assert [t["name"] for t in tools] == USER_TOOLS
-    assert tools == _snapshot()["user"], "tools/list drifted; regenerate the snapshot and run alexa-ai deploy"
+    assert tools == _snapshot()["user"], (
+        "tools/list drifted; run make snapshot and re-run the utterance sheet"
+    )
 
 
 async def test_cf04_agent_sees_6_tools_and_no_write_tools(mcp: Mcp, token_factory: TokenFactory) -> None:

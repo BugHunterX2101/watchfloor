@@ -1,8 +1,9 @@
 """Tool descriptions as shipped (DD §6.3, exact text).
 
-They drive Alexa+'s tool selection: each says when to call, why, and what it
-returns, with no overlap. Changing any string requires ``alexa-ai deploy``
-(tool info refreshes only on deploy) and updates the schema snapshot.
+They drive the assistant's tool selection: each says when to call, why, and what it
+returns, with no overlap. Changing any string changes the schema snapshot (``make snapshot``);
+the harness reads tools/list on every turn, so a redeploy of this server is all it takes
+(a published Alexa+ add-on would also need ``alexa-ai deploy``).
 """
 
 from __future__ import annotations

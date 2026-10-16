@@ -27,7 +27,7 @@ jobs:
       - name: Tool schema snapshot unchanged
         run: |
           (cd services/mcp_server && uv run python -m mcp_server.tools.snapshot --check) || {
-            echo "::error::Tool schemas changed. Run 'make snapshot' and 'make addon-deploy'."; exit 1; }
+            echo "::error::Tool schemas changed. Run 'make snapshot', commit it, then re-run the utterance sheet in the harness."; exit 1; }
       - run: uv run pytest -q   # unit, conformance, integration, security (Postgres above)
 
   agents:

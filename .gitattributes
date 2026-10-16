@@ -1,0 +1,8 @@
+# LF everywhere, on every machine: the tool-schema snapshot is checked byte for byte
+# (make snapshot-check), and the Lambda run.sh scripts must not carry a CR when they are packaged on Windows.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

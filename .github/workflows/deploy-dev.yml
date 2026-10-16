@@ -36,16 +36,14 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
-      # AgentCore needs models_enabled and agents_enabled in infra/config/dev.yaml (ADR-022). With
-      # either one false, or agents_host: lambda (ADR-023), there is no Agents stack, so no image.
+      # The image is for AgentCore only: models_enabled, agents_enabled and agents_host: agentcore in
+      # infra/config/dev.yaml (ADR-022, ADR-023). The config itself answers, so no flag is missed.
       - name: Agents enabled?
         id: agents
+        working-directory: infra
         run: |
-          if grep -qE '^(models|agents)_enabled:[[:space:]]*false|^agents_host:[[:space:]]*lambda' infra/config/dev.yaml; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
+          uv sync --frozen
+          uv run --frozen python -c 'from wf_infra.config import load_config as c; print("enabled=" + str(c("dev").agents_on).lower())' >> "$GITHUB_OUTPUT"
 
       # The first deploy with agents on has no image repository yet: deploy once without the runtime
       # (that creates the repository), push the image, and let the next step create the runtime.

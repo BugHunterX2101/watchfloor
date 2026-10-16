@@ -1,4 +1,24 @@
-Contents
+# Watchfloor
+
+_Product Requirements Document · Alexa+ track_
+
+An ambient operations and risk-triage add-on for Alexa+. It watches a B2B sales pipeline, tells you what is at risk and why, and takes action only after you say yes.
+
+| | |
+|---|---|
+| Status | Draft v1.0 for build |
+| Date | Thu, Oct 8, 2026 |
+| Primary track | Alexa+ (self-hosted MCP server) |
+| Mini challenge | AWS Builder (Bedrock + AgentCore + Strands) |
+| Hard deadline | Fri, Oct 23, 12:00 PT = Sat, Oct 24, 00:30 IST |
+| Working name | Watchfloor. The source calls it the “Ambient Enterprise Operations and Risk Triage Agent”. |
+
+> **Design-time document (Oct 8, 2026).** It records the plan the build started from. Where it differs from
+> what shipped (Path B, the simulated Alexa+ harness, since Oct 15; the models of ADR-022 and ADR-023), the
+> [README](../README.md), [TECHNICAL.md](TECHNICAL.md) and [implementation notes](implementation-notes.md)
+> are current.
+
+## Contents
 
 1. [Executive summary](#summary)
 2. [What the research changed](#research)
@@ -26,38 +46,9 @@ Contents
 24. [Appendix B: friction log](#friction)
 25. [Sources](#sources)
 
-Product Requirements Document · Alexa+ track
+<a id="summary"></a>
 
-# Watchfloor
-
-An ambient operations and risk-triage add-on for Alexa+. It watches a B2B sales pipeline, tells you what is at risk and why, and takes action only after you say yes.
-
-Status
-
-Draft v1.0 for build
-
-Date
-
-Thu, Oct 8, 2026
-
-Primary track
-
-Alexa+ (self-hosted MCP server)
-
-Mini challenge
-
-AWS Builder (Bedrock + AgentCore + Strands)
-
-Hard deadline
-
-Fri, Oct 23, 12:00 PT\
-= Sat, Oct 24, 00:30 IST
-
-Working name
-
-Watchfloor. The source calls it the “Ambient Enterprise Operations and Risk Triage Agent”.
-
-## 01Executive summary
+## 1. Executive summary
 
 The source research proposes a voice-triggered “Ambient Enterprise Operations and Risk Triage Agent” for the Alexa+ track. It would sit on a self-hosted MCP server and use AWS Strands Agents and Amazon Bedrock AgentCore. The core bet is sound: a stateful, agentic Alexa+ add-on with real business utility, layered onto the AWS Builder mini challenge. Checked against the official rules and the Alexa+ developer docs, though, several of its technical and strategic assumptions would have cost the entry points, and one would have broken it outright.
 
@@ -87,7 +78,9 @@ Every write goes through `propose_action` then `confirm_action` with a single-us
 
 The plan targets four of the judges' named “creative” Alexa+ patterns: cross-service agentic workflow, state across sessions, MCP Apps, and media cards. It also logs friction throughout for the bonus of up to 10%.
 
-## 02What the research changed
+<a id="research"></a>
+
+## 2. What the research changed
 
 Each claim in the source document was checked against the official Devpost rules, Amazon's Alexa+ MCP Toolkit documentation, the MCP specification and PyPI. Appendix A has the full audit. These findings change the product:
 
@@ -109,7 +102,9 @@ Also missing from the source
 
 The source never mentions OAuth 2.1 with PKCE S256 and RFC 9728 Protected Resource Metadata (both required for account linking), MCP Apps for on-screen UI, the `addon.json` listing assets, the Local Inspector or the web simulator. It also misses that the MCP Toolkit is US-only and that hackathon AWS credit codes ran out on Oct 7. The models it names are outdated: use current Bedrock Claude models, not Claude 3.5 or Gemini.
 
-## 03Problem and opportunity
+<a id="problem"></a>
+
+## 3. Problem and opportunity
 
 ### Problem statement
 
@@ -130,7 +125,9 @@ At small B2B companies the founder or a sales manager usually owns the pipeline,
 | H3 | Voice updates fix CRM hygiene. | Next-step and next-step-date completeness rises from baseline to 80% or more. |
 | H4 | Deterministic scoring is trusted more than opaque AI scores. | At least 70% thumbs-up on “was this flag useful?” |
 
-## 04Goals and non-goals
+<a id="goals"></a>
+
+## 4. Goals and non-goals
 
 ### Goals
 
@@ -148,7 +145,9 @@ At small B2B companies the founder or a sales manager usually owns the pipeline,
 - Proactive voice notifications on Alexa. Proactive delivery goes through Slack.
 - Purchasing flows on Alexa+.
 
-## 05Users and jobs to be done
+<a id="users"></a>
+
+## 5. Users and jobs to be done
 
 | Persona | Context | Job to be done | Today's pain |
 | --- | --- | --- | --- |
@@ -156,7 +155,9 @@ At small B2B companies the founder or a sales manager usually owns the pipeline,
 | **Marcus**, sales manager or RevOps lead secondary | Owns forecast accuracy and CRM hygiene. Lives in Slack. | “Flag silent deals early and keep the CRM honest without nagging reps.” | Stale next steps and close dates make every forecast call a guessing game. |
 | **Maya**, account executive recipient | Gets tasks and reassignments through Slack and the CRM. | “Give me a clear ask with the context attached.” | Vague “check on Kestrel?” pings with no reason or deadline. |
 
-## 06Product principles
+<a id="principles"></a>
+
+## 6. Product principles
 
 1. **Alexa+ thinks, Watchfloor knows.** Spoken quality depends on how complete our data is. Return rich `structuredContent` and let Alexa+ phrase it.
 2. **The fast path is deterministic, the slow path is asynchronous.** Nothing nondeterministic or slow runs inside a tool call.
@@ -166,7 +167,9 @@ At small B2B companies the founder or a sales manager usually owns the pipeline,
 6. **Never return nothing.** Empty results become a helpful error with a next step, as Amazon's tool-design guide requires.
 7. **Declare only what you honor.** Every schema field is implemented, and nothing undeclared is returned.
 
-## 07Solution overview and the RIGS risk model
+<a id="solution"></a>
+
+## 7. Solution overview and the RIGS risk model
 
 ### Experience pillars
 
@@ -237,7 +240,9 @@ S
 
 100 × (0.30·0.90 + 0.25·0.70 + 0.25·0.50 + 0.20·0.80) = 73
 
-## 08Core journeys and user stories
+<a id="journeys"></a>
+
+## 8. Core journeys and user stories
 
 Alexa's lines are illustrative. Alexa+ writes its own wording from the data our tools return.
 
@@ -292,7 +297,9 @@ Priya“Log for Harbor and Pine: they want a security review, and the decision m
 | US-7 | As Priya, I update the CRM by voice. | Notes and next steps apply immediately. Changes to close date or amount return a proposal. The score recomputes before the response returns. | P1 |
 | US-8 | As Priya, I see the triage board on my Echo Show. | The MCP App renders the ranked list and deal detail with band labels in text, not color alone. Text-only devices get the same facts. | P1 |
 
-## 09Functional requirements
+<a id="requirements"></a>
+
+## 9. Functional requirements
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
@@ -316,7 +323,9 @@ Priya“Log for Harbor and Pine: they want a security review, and the decision m
 | FR-18 | Split specialists into A2A services (`serve_a2a`, agent cards). | P2 |
 | FR-19 | Clinic-ops domain pack (non-PHI: staffing gaps, overbooking, supply stockouts). | P2 |
 
-## 10MCP tool surface
+<a id="tools"></a>
+
+## 10. MCP tool surface
 
 Amazon's tool guidance says each tool should cover one customer intent, descriptions should say when to call it and what it returns, and tools should not overlap. Alexa+ fills the arguments from conversation, so language understanding happens on Alexa's side and our tools stay deterministic.
 
@@ -338,7 +347,9 @@ Amazon's tool guidance says each tool should cover one customer intent, descript
 
 **Why the confirmation uses two tools.** It does not depend on elicitation support in the Alexa+ client, which is unconfirmed (see §22). Alexa+ asks the user naturally between the two calls, and the MCP App can show Approve and Decline buttons that call the same tools.
 
-## 11System architecture
+<a id="architecture"></a>
+
+## 11. System architecture
 
 ```mermaid
 flowchart LR
@@ -411,7 +422,9 @@ sequenceDiagram
 | Notifications | Slack incoming webhook with Block Kit | Kept from the source. Interactive Slack buttons are P2. |
 | Infrastructure as code | AWS CDK (Python) | Gives judges a reproducible setup. One command deploys. |
 
-## 12Protocol conformance and security
+<a id="security"></a>
+
+## 12. Protocol conformance and security
 
 ### MCP 2025-11-25 Streamable HTTP conformance
 
@@ -442,7 +455,9 @@ sequenceDiagram
 | Cross-tenant leakage | Missing workspace filter in a query | `workspace_id` from token claims on every query, enforced by Postgres row-level security |
 | Secret exposure | Keys committed to the public repo | Secrets Manager, `.env.example` only, GitHub secret scanning, Authorization headers redacted in logs |
 
-## 13Agents, models and memory
+<a id="agents"></a>
+
+## 13. Agents, models and memory
 
 ### Deep-triage topology: agents as tools
 
@@ -488,7 +503,9 @@ Recommended actions are never executed by agents. Each one maps directly to a `p
 | Tool selection by Alexa+ | 30 scripted utterances in the web simulator | ≥ 90% correct first tool |
 | Prompt-injection resistance | 10 deals with hostile notes | 0 unconfirmed side effects |
 
-## 14Data model
+<a id="data"></a>
+
+## 14. Data model
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
@@ -504,7 +521,9 @@ Recommended actions are never executed by agents. Each one maps directly to a `p
 | `triage_jobs` | id, deal_id, status, result (jsonb), started_at, finished_at | Deduplicated per deal for 10 minutes |
 | `audit_log` | id, user_id, tool, args_hash, outcome, latency_ms, trace_id, at | Kept 30 days in the demo |
 
-## 15Non-functional requirements
+<a id="nfr"></a>
+
+## 15. Non-functional requirements
 
 | Area | Requirement |
 | --- | --- |
@@ -517,7 +536,9 @@ Recommended actions are never executed by agents. Each one maps directly to a `p
 | Compatibility | MCP 2025-11-25. Text-only Alexa devices get the full facts without the UI. |
 | Reproducibility | `cdk deploy` plus `make seed` reproduces the demo. The README has setup and run steps, as the rules require. |
 
-## 16Success metrics
+<a id="metrics"></a>
+
+## 16. Success metrics
 
 ### Hackathon scorecard, mapped to the official criteria
 
@@ -538,7 +559,9 @@ Recommended actions are never executed by agents. Each one maps directly to a `p
 - Flag precision: 70% or more “useful” ratings.
 - Engagement: 4 or more briefings per user per week; 40% or more of users with at least one standing order.
 
-## 17Differentiation
+<a id="competition"></a>
+
+## 17. Differentiation
 
 |  | Watchfloor | Voice-to-CRM bridges (e.g. EchoPipeline-AI, a hackathon entrant) | Revenue-intelligence suites | CRM-native AI assistants |
 | --- | --- | --- | --- | --- |
@@ -552,7 +575,9 @@ Competitor cells for hackathon entrants rely only on public video titles and des
 
 **Positioning:** For founder-led B2B sales teams, Watchfloor is the ambient risk desk that tells you which deals are slipping, why, and what to do. You act by voice in seconds, and nothing happens without your yes.
 
-## 18Demo video script (2:50)
+<a id="demo"></a>
+
+## 18. Demo video script (2:50)
 
 Judges are not required to watch past 3:00, so the best moment goes first.
 
@@ -568,7 +593,9 @@ Judges are not required to watch past 3:00, so the best moment goes first.
 
 Record from the Alexa+ web simulator or a physical device on Path A, or from the web harness on Path B. Use no copyrighted music and no third-party trademarks beyond what the rules allow.
 
-## 1915-day delivery plan
+<a id="plan"></a>
+
+## 19. 15-day delivery plan
 
 Decision gate · Fri Oct 9
 
@@ -647,7 +674,9 @@ Services frozen and monitored. Demo credentials stay valid.
 3. Then simplify the swarm to Lead plus Critic. Never cut AgentCore, which the AWS Builder entry depends on.
 4. Never cut: latency, auth, confirmation, the friction log or video quality.
 
-## 20Submission checklist
+<a id="submission"></a>
+
+## 20. Submission checklist
 
 - Public GitHub repo with an open-source license visible in the About section, *or* a private repo shared with testing@devpost.com and the listed Amazon reviewers. GitHub invitations expire after 7 days, so send them at submission time.
 - The repo calls MCP at runtime (server entry point and MCP config), not just in the README. The README covers setup, run, seed and architecture.
@@ -659,7 +688,9 @@ Services frozen and monitored. Demo credentials stay valid.
 - Testing instructions with demo account credentials for judges. Privacy policy and terms URLs are live.
 - Services, budget alarms and canary stay running through Nov 20, 12:00 PT.
 
-## 21Risks and mitigations
+<a id="risks"></a>
+
+## 21. Risks and mitigations
 
 | Risk | Likelihood / impact | Mitigation |
 | --- | --- | --- |
@@ -673,7 +704,9 @@ Services frozen and monitored. Demo credentials stay valid.
 | Outage during judging | Low / High | Canary alarms, frozen deployments, a runbook in the README. |
 | Spec drift to 2026-07-28 | Low / Low | Stateless design and tolerance for unknown headers; upgrade behind a flag after the hackathon. |
 
-## 22Open questions
+<a id="questions"></a>
+
+## 22. Open questions
 
 1. Can your developer account reach the Alexa+ MCP Toolkit and web simulator from your location? This decides Path A or B by Oct 9.
 2. Does the Alexa+ client support MCP elicitation, and does the web simulator render MCP Apps? This affects the confirmation UX and the board's priority.
@@ -684,7 +717,9 @@ Services frozen and monitored. Demo credentials stay valid.
 
 ---
 
-## AAppendix A: Audit of the source document
+<a id="audit"></a>
+
+## Appendix A: Audit of the source document
 
 | Source claim | Verdict | Correction and evidence |
 | --- | --- | --- |
@@ -707,7 +742,9 @@ Services frozen and monitored. Demo credentials stay valid.
 | “Mathematically maximizes” and “practically secures” a win | Overclaim | Judging is discretionary and may include AI-assisted analysis. Alignment improves odds; it guarantees nothing. |
 | AWS credits not discussed | Missed | The $150 credit codes ran out on Oct 7, so budget for your own spend (§15). |
 
-## BAppendix B: Friction log template
+<a id="friction"></a>
+
+## Appendix B: Friction log template
 
 Log entries as you go, starting on day 0. Each entry uses the fields the rules require. Log only friction you actually experience; invented or padded entries will hurt credibility.
 
@@ -722,7 +759,9 @@ Log entries as you go, starting on day 0. Each entry uses the fields the rules r
 
 Likely areas to watch: tool changes needing a redeploy, metadata and PKCE debugging, simulator access, AgentCore streaming behind async invocation, Bedrock inference-profile IDs.
 
-## ·Sources
+<a id="sources"></a>
+
+## Sources
 
 - [Official rules: Build, Ship, Shape, Amazon Developer Hackathon (Devpost)](https://amazonappdev2026.devpost.com/rules)
 - [Hackathon overview, prizes, judges and judging criteria (Devpost)](https://amazonappdev2026.devpost.com/)

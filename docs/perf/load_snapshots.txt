@@ -1,0 +1,78 @@
+-- load_snapshots · commit 079be7d · 136 deals · 1837 activities · 118 scores
+
+-- statement 1 of 4: 0.075 ms
+SELECT id, stage::text AS stage, amount_cents, economic_buyer_id, next_step,
+                  next_step_date, decision_process
+           FROM deals
+           WHERE stage NOT IN ('won', 'lost') AND ($1::text[] IS NULL OR id = ANY($1))
+
+Seq Scan on deals  (cost=0.00..12.87 rows=97 width=138) (actual time=0.014..0.060 rows=118 loops=1)
+  Filter: ((workspace_id = current_setting('app.workspace_id'::text, true)) AND (stage <> ALL ('{won,lost}'::deal_stage[])))
+  Rows Removed by Filter: 18
+  Buffers: shared hit=10
+Planning Time: 0.098 ms
+Execution Time: 0.075 ms
+
+-- statement 2 of 4: 2.211 ms
+SELECT DISTINCT ON (deal_id) deal_id, id, occurred_at
+                FROM activities
+                WHERE occurred_at <= $1 AND ((type = 'email' AND direction = 'inbound') OR (type = 'call' AND direction = 'inbound') OR type = 'meeting') AND ($2::text[] IS NULL OR deal_id = ANY($2))
+                ORDER BY deal_id, occurred_at DESC
+
+Unique  (cost=162.51..165.30 rows=118 width=68) (actual time=2.006..2.179 rows=118 loops=1)
+  Buffers: shared hit=82
+  ->  Sort  (cost=162.51..163.91 rows=557 width=68) (actual time=2.004..2.062 rows=1215 loops=1)
+        Sort Key: deal_id, occurred_at DESC
+        Sort Method: quicksort  Memory: 162kB
+        Buffers: shared hit=82
+        ->  Seq Scan on activities  (cost=0.00..137.11 rows=557 width=68) (actual time=0.041..0.675 rows=1215 loops=1)
+              Filter: ((occurred_at <= '2026-10-16 06:00:19.271802+00'::timestamp with time zone) AND (workspace_id = current_setting('app.workspace_id'::text, true)) AND (((type = 'email'::act_type) AND (direction = 'inbound'::act_dir)) OR ((type = 'call'::act_type) AND (direction = 'inbound'::act_dir)) OR (type = 'meeting'::act_type)))
+              Rows Removed by Filter: 622
+              Buffers: shared hit=82
+Planning Time: 0.101 ms
+Execution Time: 2.211 ms
+
+-- statement 3 of 4: 1.225 ms
+SELECT deal_id,
+                  count(*) FILTER (WHERE type = 'email' AND direction = 'inbound') AS replies,
+                  count(*) FILTER (WHERE type = 'meeting')                         AS meetings,
+                  count(*) FILTER (WHERE type = 'call' AND direction = 'inbound')  AS calls,
+                  count(*) FILTER (WHERE type = 'doc_view')                        AS views,
+                  array_agg(id ORDER BY occurred_at DESC) FILTER (WHERE ((type = 'email' AND direction = 'inbound') OR (type = 'call' AND direction = 'inbound') OR type = 'meeting')) AS two_way_ids,
+                  array_agg(id ORDER BY occurred_at DESC) FILTER (WHERE type = 'doc_view') AS view_ids
+                FROM activities
+                WHERE occurred_at > $1::timestamptz - make_interval(days => $3) AND occurred_at <= $1::timestamptz
+                  AND ($2::text[] IS NULL OR deal_id = ANY($2))
+                GROUP BY deal_id
+
+GroupAggregate  (cost=141.28..163.67 rows=116 width=125) (actual time=0.857..1.132 rows=114 loops=1)
+  Group Key: deal_id
+  Buffers: shared hit=82
+  ->  Sort  (cost=141.28..142.31 rows=413 width=76) (actual time=0.846..0.874 rows=415 loops=1)
+        Sort Key: deal_id, occurred_at DESC
+        Sort Method: quicksort  Memory: 67kB
+        Buffers: shared hit=82
+        ->  Seq Scan on activities  (cost=0.00..123.33 rows=413 width=76) (actual time=0.027..0.395 rows=415 loops=1)
+              Filter: ((occurred_at <= '2026-10-16 06:00:19.271802+00'::timestamp with time zone) AND (occurred_at > ('2026-10-16 06:00:19.271802+00'::timestamp with time zone - '14 days'::interval)) AND (workspace_id = current_setting('app.workspace_id'::text, true)))
+              Rows Removed by Filter: 1422
+              Buffers: shared hit=82
+Planning Time: 0.181 ms
+Execution Time: 1.225 ms
+
+-- statement 4 of 4: 0.070 ms
+SELECT id, deal_id, field, old_value, new_value, changed_at
+           FROM deal_history
+           WHERE field IN ('close_date', 'stage', 'amount_cents')
+             AND changed_at > $1::timestamptz - make_interval(days => $3) AND changed_at <= $1::timestamptz
+             AND ($2::text[] IS NULL OR deal_id = ANY($2))
+           ORDER BY changed_at, id
+
+Sort  (cost=3.35..3.42 rows=27 width=102) (actual time=0.052..0.054 rows=27 loops=1)
+  Sort Key: changed_at, id
+  Sort Method: quicksort  Memory: 28kB
+  Buffers: shared hit=2
+  ->  Seq Scan on deal_history  (cost=0.00..2.71 rows=27 width=102) (actual time=0.013..0.031 rows=27 loops=1)
+        Filter: ((changed_at <= '2026-10-16 06:00:19.271802+00'::timestamp with time zone) AND (field = ANY ('{close_date,stage,amount_cents}'::text[])) AND (changed_at > ('2026-10-16 06:00:19.271802+00'::timestamp with time zone - '90 days'::interval)) AND (workspace_id = current_setting('app.workspace_id'::text, true)))
+        Buffers: shared hit=2
+Planning Time: 0.119 ms
+Execution Time: 0.070 ms

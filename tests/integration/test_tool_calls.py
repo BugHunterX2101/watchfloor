@@ -82,11 +82,17 @@ async def test_the_same_standing_order_twice_is_one_order(seeded: str, mcp: Mcp)
     """A repeated request (or a replayed turn) must not double every alert."""
     before = len((await mcp.ok("list_standing_orders", {}))["rules"])
     first = await mcp.ok("set_standing_order", {"min_amount_usd": 60000, "quiet_days": 6})
-    again = await mcp.ok("set_standing_order", {"quiet_days": 6, "min_amount_usd": 60000})
-    assert again["rule_id"] == first["rule_id"] and again["summary"].startswith("You already have")
-    assert len((await mcp.ok("list_standing_orders", {}))["rules"]) == before + 1
-    other = await mcp.ok("set_standing_order", {"min_amount_usd": 60000, "quiet_days": 7})
-    assert other["rule_id"] != first["rule_id"]
+    made = [first["rule_id"]]
+    try:
+        again = await mcp.ok("set_standing_order", {"quiet_days": 6, "min_amount_usd": 60000})
+        assert again["rule_id"] == first["rule_id"] and again["summary"].startswith("You already have")
+        assert len((await mcp.ok("list_standing_orders", {}))["rules"]) == before + 1
+        other = await mcp.ok("set_standing_order", {"min_amount_usd": 60000, "quiet_days": 7})
+        made.append(other["rule_id"])
+        assert other["rule_id"] != first["rule_id"]
+    finally:  # the workspace is shared by the session: later tests count the alerts every rule fires
+        for rule_id in made:
+            await mcp.ok("remove_standing_order", {"rule_id": rule_id})
 
 
 async def test_log_update_applies_now_and_proposes_forecast_changes(seeded: str, mcp: Mcp) -> None:

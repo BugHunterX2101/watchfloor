@@ -297,7 +297,9 @@ async def test_triage_job_runs_gates_and_stores(seeded: str, sqs_stub: list[int]
     assert plan["kind"] == "slack_message" and plan["id"] in sqs_stub, (
         "the Slack plan is published after commit"
     )
-    assert fakes.memories and fakes.memories[0].endswith(f"({NORTHGATE}): drivers R; recommended P01.")
+    assert fakes.memories and fakes.memories[0].endswith(
+        f"({NORTHGATE}): drivers R; Watchfloor recommended P01."
+    )
 
     assert await dispatcher.process(WS, oid, fakes.deps()) == "skipped"
     assert len(fakes.invocations) == 1

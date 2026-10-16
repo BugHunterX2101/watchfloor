@@ -2,7 +2,7 @@
 
 CI runs ``python -m mcp_server.tools.snapshot --check``; any change to a tool
 name, description or schema fails the build until the snapshot is regenerated
-and committed (and ``alexa-ai deploy`` is run, DD §22.2).
+and committed, then the utterance sheet is re-run in the harness (TD §15.4).
 """
 
 from __future__ import annotations

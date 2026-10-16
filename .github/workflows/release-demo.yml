@@ -34,19 +34,17 @@ jobs:
           (cd services/harness/api && uv sync --frozen)
           make package
 
-      # models_enabled or agents_enabled false in infra/config/demo.yaml skips the agents image and
-      # the deep-triage evals: there is no AgentCore to run them on (ADR-022).
+      # infra/config/demo.yaml decides, read through the config itself: the agents image only for
+      # AgentCore (ADR-022), the deep-triage evals wherever deep triage runs, AgentCore or Lambda (ADR-023).
       - name: Agents enabled?
         id: models
+        working-directory: infra
         run: |
-          if grep -qE '^(models|agents)_enabled:[[:space:]]*false' infra/config/demo.yaml; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
+          uv sync --frozen
+          uv run --frozen python -c 'from wf_infra.config import load_config as c; d = c("demo"); print("image=" + str(d.agents_on).lower()); print("triage=" + str(d.triage_on).lower())' >> "$GITHUB_OUTPUT"
 
       - name: Push the agents image
-        if: steps.models.outputs.enabled == 'true'
+        if: steps.models.outputs.image == 'true'
         run: |
           REPO=$(aws ecr describe-repositories --repository-names wf-demo-agents \
                    --query 'repositories[0].repositoryUri' --output text)
@@ -75,7 +73,7 @@ jobs:
         run: make conformance-remote ENV=demo
 
       - name: Deep-triage evals (DD §22.5 thresholds)
-        if: steps.models.outputs.enabled == 'true'
+        if: steps.models.outputs.triage == 'true'
         run: make evals ENV=demo OUT=tests/evals/results/${GITHUB_REF_NAME}.json
 
       - name: Latency probe (p95 ≤ 150 ms, p99 ≤ 300 ms)

@@ -80,5 +80,6 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
 }
 
 export async function logout(): Promise<void> {
-  await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  const r = await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }

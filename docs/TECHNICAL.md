@@ -7,7 +7,7 @@
 |---|---|
 | Document | Technical Document (TD), v1.0 |
 | Date | Thu, Oct 8, 2026 |
-| Builds on | `Watchfloor PRD.md` (v1.0) · `Watchfloor-Design-Doc.md` (v1.0) |
+| Builds on | [PRD.md](PRD.md) (v1.0) · [DESIGN.md](DESIGN.md) (v1.0) |
 | Audience | Builders, reviewers, hackathon judges reading the repo |
 | Deadline | Fri, Oct 23, 2026, 12:00 PT (Sat, Oct 24, 00:30 IST). Internal target: Thu, Oct 22, 17:00 PT |
 | Protocol | MCP **2025-11-25**, Streamable HTTP, stateless, JSON responses |
@@ -105,7 +105,7 @@ Exact versions are pinned in `uv.lock` and `package-lock.json`. The table lists 
 |---|---|---|---|
 | Language (services) | Python | 3.12 | Lambda runtime `python3.12`; Strands, AgentCore and the MCP SDK are all Python-first |
 | Package manager | uv (workspace mode) | latest stable, pinned in CI | Fast, reproducible lockfile, workspace members |
-| MCP | `mcp` (official Python SDK) | First version whose server negotiates `2025-11-25` **⚠ Verify (S5)** | Spec-conformant Streamable HTTP and the low-level server |
+| MCP | `mcp` (official Python SDK) | `>=2.3,<3` (negotiates `2025-11-25`; CF-01..15) | Spec-conformant Streamable HTTP and the low-level server |
 | ASGI | Starlette + Uvicorn | current stable | Minimal overhead; Lambda Web Adapter fronts Uvicorn |
 | Validation | Pydantic v2 | ≥ 2.7 | Schemas generated from models; fast `model_dump_json` |
 | DB driver | asyncpg | current stable | Fastest Postgres driver for Python; prepared-statement cache |
@@ -117,15 +117,15 @@ Exact versions are pinned in `uv.lock` and `package-lock.json`. The table lists 
 | Observability | AWS Lambda Powertools (Python) | v3 | Logger, Metrics (EMF), Tracer |
 | Agents | `strands-agents` | current stable | Agents-as-tools, MCP client, Bedrock models |
 | Agent runtime | `bedrock-agentcore` | 1.24.x (still classified "Alpha" on PyPI) | `BedrockAgentCoreApp`, Memory client |
-| Models | Amazon Bedrock: Claude Sonnet 5.5 (inference profile), Claude Haiku-class | IDs **⚠ Verify (S6)** | Quality for the Lead, Strategist and Critic; speed and cost for the Analyst and Context agents |
+| Models | Amazon Bedrock: Amazon Nova Pro (reasoning tier) and Nova Lite (fast tier), on demand in `us-east-1` (ADR-022); Gemini through Strands where Bedrock can't run (ADR-023) | `amazon.nova-pro-v1:0`, `amazon.nova-lite-v1:0` (`models:` in `infra/config/*.yaml`) | Quality for the Lead, Strategist and Critic; speed and cost for the harness, drafts, Analyst and Context. The `sonnet`/`haiku` names are the tiers, not the vendor |
 | Database | PostgreSQL | 16 (RDS `db.t4g.micro`) | RLS, `pg_trgm`, JSONB |
 | UI (MCP Apps) | TypeScript + Preact + Vite + `vite-plugin-singlefile` | Node 20 LTS | Single-file HTML resources |
-| MCP Apps SDK | `@modelcontextprotocol/ext-apps` | pinned **⚠ Verify (S3)** | Host bridge (tool results in, tool calls out) |
+| MCP Apps SDK | `@modelcontextprotocol/ext-apps` | `^2.0.3` (S3 spec side answered) | Host bridge (tool results in, tool calls out) |
 | IaC | AWS CDK v2 (Python) | `aws-cdk-lib` 2.x | Same language as the services |
-| NAT | `cdk-fck-nat` | pinned **⚠ Verify** | Cheap egress (ADR-009) |
-| Testing | pytest, pytest-asyncio, Hypothesis, testcontainers, httpx, Locust | current stable | Unit, property, integration, conformance, load |
-| Lint and type | ruff, pyright | current stable | `pyright --strict` on `watchfloor_core` |
-| Secrets scanning | gitleaks (pre-commit) + GitHub push protection | — | Public repo hygiene |
+| NAT | `cdk-fck-nat` | `>=1.5` | Cheap egress (ADR-009) |
+| Testing | pytest, pytest-asyncio, Hypothesis, httpx, Locust | current stable | Unit, property, integration (docker-compose Postgres), conformance, load |
+| Lint | ruff (lint + format) | current stable | Strict rule set (§20.2); no type checker gates CI |
+| Secrets scanning | GitHub push protection; `.env` and `.secrets/` gitignored | — | Public repo hygiene |
 
 ---
 
@@ -634,7 +634,7 @@ erDiagram
 ```mermaid
 flowchart LR
   DEV["Feature branch"] --> PR["Pull request"]
-  PR --> CI{"ci.yml<br/>ruff · pyright · unit · conformance (ASGI)<br/>schema snapshot · cdk synth · ui build"}
+  PR --> CI{"ci.yml<br/>ruff · uv lock · schema snapshot<br/>unit · conformance · integration (Postgres)<br/>agents · harness · ui build · cdk synth"}
   CI -- fail --> DEV
   CI -- pass --> MAIN["main"]
   MAIN --> DD{"deploy-dev.yml<br/>integration (testcontainers)<br/>cdk deploy dev · migrate · seed<br/>smoke: tools/list via canary"}
@@ -663,53 +663,41 @@ flowchart TD
 
 ## 5. Repository file structure
 
-Every file listed below has a defined owner and purpose. `(gen)` marks generated artifacts, which are produced by the build and never edited by hand.
+This is the tree as built (a few `__init__.py` files and lockfiles are left out). `(gen)` marks generated artifacts, which are produced by the build, gitignored and never edited by hand.
 
 ```
 watchfloor/
 ├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml                          # PR gate: lint, types, unit, conformance, snapshots, synth, ui build
-│   │   ├── deploy-dev.yml                  # main → integration tests → cdk deploy dev → migrate → seed → smoke
-│   │   └── release-demo.yml                # tag → deploy demo → evals → conformance vs URL → latency probe
-│   ├── CODEOWNERS
-│   └── pull_request_template.md            # checklist: schema changed? alexa-ai deploy? friction log?
+│   └── workflows/
+│       ├── ci.yml                          # PR gate: ruff, uv lock, tool snapshot, root suite on Postgres; agents,
+│       │                                   #   harness, ui and infra suites/builds as their own jobs
+│       ├── deploy-dev.yml                  # main → checks → package → cdk deploy dev → migrate → seed → conformance
+│       └── release-demo.yml                # tag → deploy demo → migrate → clients → conformance → evals → latency
+├── .gitattributes                          # LF everywhere (the snapshot check is byte for byte)
 ├── .env.example                            # every env var with safe placeholder values (§7.1)
 ├── .gitignore
-├── .pre-commit-config.yaml                 # ruff, ruff-format, gitleaks, end-of-file-fixer
 ├── LICENSE                                 # Apache-2.0 (visible in GitHub "About")
 ├── README.md                               # judge-facing: what, demo link, setup, run, architecture, testing
 ├── Makefile                                # developer entry points (Appendix A.1)
 ├── Procfile.dev                            # local multi-process runner (Appendix A.5)
 ├── docker-compose.yml                      # local Postgres 16 (Appendix A.2)
-├── pyproject.toml                          # uv workspace root + ruff/pyright/pytest config (Appendix A.3)
+├── pyproject.toml                          # uv workspace root + ruff/pytest config (Appendix A.3)
 ├── uv.lock                                 # (gen) pinned dependency graph
 │
 ├── docs/
 │   ├── PRD.md                              # Watchfloor PRD v1.0
 │   ├── DESIGN.md                           # Design Document v1.0
 │   ├── TECHNICAL.md                        # this document
-│   ├── adr/
-│   │   ├── 0001-stateless-mcp-2025-11-25.md
-│   │   ├── 0002-deterministic-hot-path.md
-│   │   ├── 0003-two-tool-confirmation.md
-│   │   ├── 0004-agents-as-tools.md
-│   │   ├── 0005-postgres-rules-and-prefs.md
-│   │   ├── 0006-self-hosted-oauth.md
-│   │   ├── 0007-agents-read-via-mcp.md
-│   │   ├── 0008-transactional-outbox.md
-│   │   ├── 0009-nat-instance.md
-│   │   └── 0010-rigs-heuristic.md
+│   ├── implementation-notes.md             # where the build departs from DD/TD, and why
+│   ├── adr/                                # 0001–0024 (0011 onward record decisions made while building)
 │   ├── friction-log.md                     # live; required fields per entry (DD §27)
 │   ├── feature-requests.md                 # description · why · priority
-│   ├── perf/                               # EXPLAIN ANALYZE plans, Locust reports
-│   └── images/                             # architecture PNG exports, screenshots for README/Devpost
+│   └── perf/                               # EXPLAIN (ANALYZE, BUFFERS) plans of the hot-path queries
 │
 ├── packages/
 │   └── core/
 │       ├── pyproject.toml                  # name = "watchfloor-core"
 │       └── watchfloor_core/
-│           ├── __init__.py
 │           ├── settings.py                 # typed env settings shared by all services
 │           ├── clock.py                    # Clock: real now + demo offset (DEMO_MODE only)
 │           ├── db.py                       # asyncpg pool, ws_tx() workspace-scoped transactions
@@ -718,217 +706,242 @@ watchfloor/
 │           ├── speech.py                   # money_display, date_display, list joining
 │           ├── tokens.py                   # confirmation tokens, JCS params hash
 │           ├── principal.py                # Principal dataclass + scope constants
+│           ├── envelope.py                 # untrusted-content envelope for CRM free text (DD §10.6)
+│           ├── queue.py                    # best-effort hand-off of committed outbox rows to SQS
+│           ├── bedrock.py · gemini.py      # model ids and replies: Bedrock (ADR-022), Gemini (ADR-023)
+│           ├── usage.py                    # one model-usage log line per harness turn and per triage job
 │           ├── rigs.py                     # pure RIGS engine (DD §7)
 │           ├── rigs_params.py              # loads config/rigs.yaml → StageParams, Weights
 │           ├── config/
-│           │   └── rigs.yaml               # stage norms, baselines, weights, thresholds (rigs-1.1)
+│           │   ├── rigs.yaml               # stage norms, baselines, weights, thresholds
+│           │   └── playbook.yaml           # P01–P12 (DD §10.8), read by get_playbook
 │           ├── models/
 │           │   ├── domain.py               # DealSnapshot, Engagement, FieldChange, Reason, RigsResult, Band
-│           │   ├── tools.py                # Pydantic I/O models for all 19 tools (source of JSON Schemas)
+│           │   ├── tools.py                # Pydantic I/O models for every tool (source of JSON Schemas)
+│           │   ├── schema.py               # JSON Schema generation for the tool contracts
 │           │   └── triage.py               # TriageOutput, Driver, RecommendedAction
 │           ├── repos/                      # SQL only; one module per aggregate
-│           │   ├── deals.py                # load_snapshot(), find_by_name(), apply_update()
-│           │   ├── scores.py               # upsert_score(), ranked_risks(), trend_14d()
-│           │   ├── proposals.py            # create(), claim(), get_by_token_hash(), supersede()
-│           │   ├── rules.py                # create(), list_active(), deactivate(), matches(), fired_since()
-│           │   ├── jobs.py                 # create_or_dedupe(), mark_running(), complete(), fail()
-│           │   ├── outbox.py               # enqueue(), due(), mark_sent(), backoff()
-│           │   ├── prefs.py                # get(), update(), last_briefing_at(), touch_last_briefing()
-│           │   ├── tasks.py                # create()
-│           │   ├── workspaces.py           # all_ids(), clock_offset()
-│           │   ├── maintenance.py          # purge_old()
-│           │   ├── audit.py                # record()
-│           │   └── ratelimit.py            # hit(subject, limit) → allowed
+│           │   ├── deals.py                # set-based load_snapshot(), name lookup, apply_update()
+│           │   ├── scores.py               # upsert, ranked_risks(), trend_14d()
+│           │   ├── proposals.py            # proposals and single-use confirmation tokens
+│           │   ├── rules.py                # standing orders and the alerts they fire
+│           │   ├── jobs.py                 # deep-triage jobs
+│           │   ├── outbox.py               # transactional outbox (ADR-008)
+│           │   ├── prefs.py                # explicit briefing preferences
+│           │   ├── users.py · workspaces.py
+│           │   └── misc.py                 # tasks, audit log, rate limits, activities, contacts, purges
 │           └── services/                   # business logic used by tools AND workers
-│               ├── briefing.py             # build_briefing()
-│               ├── explain.py              # explain_deal()
-│               ├── actions.py              # propose(), confirm(), executors
-│               ├── rules.py                # describe_rule(), create_rule(), evaluate_rules()
-│               ├── triage.py               # start_triage(), get_result()
-│               ├── updates.py              # log_update()
-│               └── scoring.py              # recompute_deal(), recompute_workspace(), daily_snapshot_if_due()
+│               ├── context.py              # per-call context: who, which workspace, what time it is there
+│               ├── read.py                 # briefing, explanation, lookup
+│               ├── agent_read.py           # the agent-only reads (DD §6.5)
+│               ├── actions.py              # propose → confirm → undo (DD §8, ADR-021)
+│               ├── rules.py                # describe, CRUD, watcher evaluation
+│               ├── triage.py               # start with dedupe, read results, complete
+│               ├── updates.py              # voice CRM updates and briefing preferences
+│               ├── scoring.py              # recompute and persist RIGS scores, daily snapshots
+│               └── slack_blocks.py         # Block Kit builders; user text escaped
 │
 ├── services/
 │   ├── mcp_server/
-│   │   ├── pyproject.toml                  # depends on watchfloor-core, mcp, starlette, uvicorn, pyjwt, powertools
+│   │   ├── pyproject.toml                  # watchfloor-core, mcp, starlette, uvicorn, pyjwt, httpx, orjson
 │   │   ├── run.sh                          # exec uvicorn mcp_server.app:app --host 127.0.0.1 --port 8080
 │   │   ├── mcp_server/
-│   │   │   ├── __init__.py
 │   │   │   ├── app.py                      # Starlette app: routes, lifespan, middleware wiring
 │   │   │   ├── server.py                   # low-level Server: list_tools / call_tool / resources
 │   │   │   ├── session.py                  # StreamableHTTPSessionManager(stateless, json_response)
 │   │   │   ├── context.py                  # current_principal() contextvar + request fallback
 │   │   │   ├── wellknown.py                # PRM (RFC 9728), /healthz
+│   │   │   ├── resources.py                # ui:// resources → ui_dist/*.html
+│   │   │   ├── ui_dist/                    # (gen) single-file HTML built from ui/
 │   │   │   ├── middleware/
 │   │   │   │   ├── __init__.py             # build_middleware() order (§6.2)
-│   │   │   │   ├── telemetry.py            # trace id, timing, EMF
+│   │   │   │   ├── _http.py                # small ASGI helpers
+│   │   │   │   ├── telemetry.py            # trace id, timing, one log line per tool call
 │   │   │   │   ├── edge_guard.py           # Host 421 · Origin 403 · Accept 406 · body buffer 413/400
 │   │   │   │   ├── auth.py                 # Bearer JWT → Principal · 401 without WWW-Authenticate
 │   │   │   │   ├── version.py              # MCP-Protocol-Version → 400
 │   │   │   │   └── ratelimit.py            # 429 + Retry-After
-│   │   │   ├── tools/
-│   │   │   │   ├── __init__.py             # REGISTRY: dict[str, ToolSpec]
-│   │   │   │   ├── base.py                 # ToolSpec, ToolOutcome, ToolContext, descriptor()
-│   │   │   │   ├── descriptions.py         # exact description strings (DD §6.3)
-│   │   │   │   ├── snapshot.py             # writes tools.snapshot.json (CI diff)
-│   │   │   │   ├── briefing.py             # get_risk_briefing
-│   │   │   │   ├── explain.py              # explain_deal_risk
-│   │   │   │   ├── lookup.py               # lookup_deal
-│   │   │   │   ├── triage.py               # start_deep_triage, get_triage_result
-│   │   │   │   ├── actions.py              # propose_action, confirm_action
-│   │   │   │   ├── rules.py                # set/list/remove_standing_order
-│   │   │   │   ├── updates.py              # log_deal_update
-│   │   │   │   ├── prefs.py                # update_briefing_preferences
-│   │   │   │   └── agent_read.py           # 5 agent-only read tools
-│   │   │   ├── resources.py                # ui:// resources → ui_dist/*.html
-│   │   │   └── ui_dist/                    # (gen) single-file HTML built from ui/
+│   │   │   └── tools/
+│   │   │       ├── __init__.py             # REGISTRY: dict[str, ToolSpec]
+│   │   │       ├── base.py                 # ToolSpec, ToolOutcome, ToolContext, descriptor()
+│   │   │       ├── descriptions.py         # exact description strings (DD §6.3)
+│   │   │       ├── snapshot.py             # writes/checks tools.snapshot.json (CI diff)
+│   │   │       ├── briefing.py · explain.py · lookup.py
+│   │   │       ├── triage.py               # start_deep_triage, get_triage_result
+│   │   │       ├── actions.py              # propose_action, extend_preview, confirm_action, undo_action
+│   │   │       ├── rules.py                # set/list/remove_standing_order
+│   │   │       ├── updates.py              # log_deal_update
+│   │   │       ├── prefs.py                # update_briefing_preferences
+│   │   │       └── agent_read.py           # 5 agent-only read tools
 │   │   ├── ui/                             # MCP Apps source (TypeScript + Preact)
-│   │   │   ├── package.json
-│   │   │   ├── tsconfig.json
-│   │   │   ├── vite.config.ts              # multi-entry + vite-plugin-singlefile
+│   │   │   ├── package.json · tsconfig.json
+│   │   │   ├── vite.config.ts              # one entry per view + vite-plugin-singlefile
 │   │   │   ├── board.html · detail.html · confirm.html
+│   │   │   ├── scripts/check.mjs           # fails the build over 150 KB gzip per view
 │   │   │   └── src/
-│   │   │       ├── bridge.ts               # ext-apps App wrapper: onResult, callTool
-│   │   │       ├── tokens.css              # design tokens light/dark (DD §15.2)
+│   │   │       ├── main.tsx                # one app for three views; taps move between them
+│   │   │       ├── bridge.ts               # ext-apps App wrapper: tool results in, tool calls out
+│   │   │       ├── types.ts                # structuredContent shapes (mirror models/tools.py)
+│   │   │       ├── tokens.css · styles.css # design tokens light/dark (DD §15.2)
 │   │   │       ├── format.ts               # band labels, relative timers
+│   │   │       ├── Band.tsx                # band = word + colour + shape
 │   │   │       ├── Board.tsx               # triage board
-│   │   │       ├── Detail.tsx              # RIGS bars, evidence, plan tab
+│   │   │       ├── Detail.tsx              # health, RIGS bars, reasons, trend, plan
 │   │   │       └── Confirm.tsx             # Approve / Not now, countdown
 │   │   └── schemas/
-│   │       └── tools.snapshot.json         # (gen) tools/list snapshot, diffed in CI
+│   │       └── tools.snapshot.json         # (gen, committed) tools/list snapshot, diffed in CI
 │   │
 │   ├── auth_server/
-│   │   ├── pyproject.toml                  # authlib, argon2-cffi, boto3 (KMS), starlette, jinja2
+│   │   ├── pyproject.toml                  # starlette, uvicorn, pyjwt, argon2-cffi, jinja2
 │   │   ├── run.sh
 │   │   └── auth_server/
-│   │       ├── app.py                      # routes + CSRF + rate limits
+│   │       ├── app.py                      # routes, lifespan, rate limits
+│   │       ├── context.py                  # process-wide state on app.state.wf
 │   │       ├── metadata.py                 # RFC 8414 document
-│   │       ├── authorize.py                # /authorize (PKCE S256 required, resource param)
+│   │       ├── authorize.py                # /authorize with login and consent (PKCE S256, resource param)
+│   │       ├── tickets.py                  # HMAC-signed tickets from login to consent
 │   │       ├── token.py                    # /token: authorization_code, refresh_token, client_credentials
-│   │       ├── revoke.py                   # /revoke
-│   │       ├── jwks.py                     # /jwks.json (KMS public keys by kid)
-│   │       ├── signer.py                   # KmsSigner (aws) · FileSigner (local dev)
-│   │       ├── clients.py                  # pre-registered clients (Alexa+, harness, dispatcher)
-│   │       ├── storage.py                  # auth schema repos (codes, refresh families)
+│   │       ├── revoke.py                   # /revoke (a refresh token revokes its family)
+│   │       ├── jwks.py                     # /jwks.json
+│   │       ├── signer.py                   # KMS ES256 in AWS · PEM file locally
+│   │       ├── clients.py                  # pre-registered clients + provisioning CLI
+│   │       ├── storage.py                  # auth schema repos (connects as wf_auth)
+│   │       ├── seeder.py                   # in-VPC seed/bootstrap Lambda (make seed-remote)
+│   │       ├── legal.py                    # privacy, terms and listing images over HTTPS
+│   │       ├── responses.py                # OAuth error JSON, no-store tokens, hardened HTML
+│   │       ├── static/addon/               # listing icons and carousel (PNG)
 │   │       └── templates/
-│   │           ├── login.html
-│   │           └── consent.html
+│   │           └── login.html · consent.html · error.html · privacy.html · terms.html
 │   │
 │   ├── workers/
 │   │   ├── pyproject.toml
 │   │   └── workers/
+│   │       ├── __main__.py                 # all local workers in one process (Procfile.dev)
+│   │       ├── runtime.py                  # shared plumbing for the Lambdas and their CLI twins
 │   │       ├── dispatcher.py               # SQS handler: triage_job, slack_*, draft_followup
 │   │       ├── watcher.py                  # 15-min recompute + rules + daily snapshot + purges
-│   │       ├── sweeper.py                  # outbox re-enqueue
+│   │       ├── sweeper.py                  # outbox re-enqueue, proposal expiry, timed-out jobs
 │   │       ├── canary.py                   # tools/list + get_risk_briefing with canary user
 │   │       ├── migrator.py                 # one-shot Lambda: applies db/migrations in VPC
-│   │       ├── slack.py                    # Block Kit builders + webhook client (429 aware)
-│   │       ├── drafts.py                   # Haiku-class follow-up drafting (Bedrock Converse)
-│   │       ├── agentcore_client.py         # invoke_agent_runtime + stream collection
+│   │       ├── slack.py                    # webhook client (429 aware)
+│   │       ├── drafts.py                   # Haiku-class follow-up drafts (never sent to the buyer)
+│   │       ├── agentcore_client.py         # invoke the triage agent, collect its output
 │   │       ├── job_tokens.py               # client_credentials against auth-server
 │   │       ├── outbox_publisher.py         # SQS sends for due outbox rows
-│   │       └── memory_events.py            # writes outcome events to AgentCore Memory
+│   │       ├── memory_events.py            # outcome events to AgentCore Memory
+│   │       └── errors.py                   # delivery failure kinds → what the outbox does next
 │   │
-│   ├── agents/
+│   ├── agents/                             # own uv project (ADR-011)
 │   │   ├── Dockerfile                      # arm64 image for AgentCore Runtime (§10.3)
-│   │   ├── pyproject.toml                  # strands-agents, bedrock-agentcore, mcp
+│   │   ├── pyproject.toml                  # strands-agents[gemini], bedrock-agentcore, mcp
 │   │   └── agents/
 │   │       ├── main.py                     # BedrockAgentCoreApp entrypoint
+│   │       ├── handler.py                  # the same job as a plain Lambda (ADR-023)
+│   │       ├── runner.py                   # one job as a stream of events
 │   │       ├── lead.py                     # Triage Lead construction
-│   │       ├── models.py                   # sonnet() / haiku() BedrockModel factories
+│   │       ├── models.py                   # sonnet() / haiku() tiers: Bedrock, else Gemini
+│   │       ├── offline.py                  # deterministic engine without a model (ADR-013)
+│   │       ├── gate.py                     # deterministic output gate (ADR-012)
+│   │       ├── data_tools.py               # the job's agent-scope MCP tools
 │   │       ├── schemas.py                  # re-exports TriageOutput from watchfloor_core
 │   │       ├── envelope.py                 # wrap_untrusted(text, source, id)
 │   │       ├── memory.py                   # recall_preferences tool (AgentCore Memory)
 │   │       ├── specialists/
 │   │       │   ├── __init__.py             # make_specialist_tools(data_tools)
-│   │       │   ├── analyst.py
-│   │       │   ├── context.py
-│   │       │   ├── strategist.py
-│   │       │   └── critic.py
-│   │       ├── prompts/
-│   │       │   └── lead.md · analyst.md · context.md · strategist.md · critic.md
-│   │       └── playbook.yaml               # P01–P12 (DD §10.8)
+│   │       │   └── analyst.py · context.py · strategist.py · critic.py
+│   │       └── prompts/
+│   │           └── lead.md · analyst.md · context.md · strategist.md · critic.md
 │   │
-│   └── harness/                            # Path B + dev tool
-│       ├── api/
-│       │   ├── pyproject.toml              # fastapi, strands-agents, mcp
+│   └── harness/                            # Path B: the simulated Alexa+ (DD §17)
+│       ├── api/                            # own uv project
+│       │   ├── pyproject.toml              # starlette, uvicorn, strands-agents[gemini], httpx, cryptography
 │       │   ├── run.sh
 │       │   └── harness_api/
-│       │       ├── app.py                  # POST /converse, GET /oauth/callback
-│       │       ├── agent.py                # Strands agent + MCPClient (user token)
-│       │       ├── pkce.py                 # public-client PKCE helper
+│       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, the web page
+│       │       ├── agent.py                # one turn: Strands agent over the user's MCP token
+│       │       ├── mcp_http.py             # thin MCP client (stateless, JSON responses)
+│       │       ├── offline.py              # keyword router when no model is configured
+│       │       ├── session.py              # Fernet-sealed cookie sessions
+│       │       ├── pkce.py                 # public-client OAuth 2.1 + PKCE S256
+│       │       ├── config.py               # WF_* from core plus the harness's own
 │       │       └── prompts/alexa_style.md
 │       └── web/
-│           ├── package.json · vite.config.ts · index.html
+│           ├── package.json · tsconfig.json · vite.config.ts · index.html
 │           └── src/
-│               ├── main.ts                 # chat loop, latency drawer
+│               ├── main.ts                 # chat loop: text or voice in, reply, view, trace
+│               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out
+│               ├── captions.ts             # live captions synced to the voice
+│               ├── orb.ts · sound.ts       # voice state and earcons (Web Audio, no files)
 │               ├── apphost.ts              # sandboxed iframe host for ui:// resources
+│               ├── trace.ts                # per-turn trace panel: one span per tool call
+│               ├── icons.ts · styles.css
 │               └── banner.ts               # "Simulated Alexa+ experience" label
-│
-├── addon-package/                          # created by `alexa-ai new mcp`; we edit, never hand-create
-│   ├── addon.json
-│   └── assets/
-│       ├── icons/light/{72,64,88,126,180,241}.png
-│       ├── icons/dark/{72,64,88,126,180,241}.png
-│       ├── carousel/01.png                 # 600×900
-│       └── banner/01.png                   # 1200×600
 │
 ├── db/
 │   ├── migrate.py                          # applies migrations/*.sql in order; schema_migrations table
 │   ├── migrations/
 │   │   ├── 0001_init.sql                   # types, tables, indexes (DD §13.2)
-│   │   ├── 0002_rls.sql                    # ENABLE/FORCE RLS + ws_isolation policies on 15 tables
+│   │   ├── 0002_rls.sql                    # ENABLE/FORCE RLS + ws_isolation policies
 │   │   ├── 0003_auth_schema.sql            # auth.clients, auth.auth_codes, auth.refresh_tokens, auth.credentials
-│   │   └── 0004_roles_grants.sql           # wf_app, wf_auth, wf_readonly grants
+│   │   ├── 0004_roles_grants.sql           # wf_app, wf_auth, wf_readonly grants
+│   │   └── 0005_undo.sql                   # undo window for confirmed actions (ADR-021)
 │   └── seed/
 │       ├── __main__.py                     # python -m db.seed --workspace ws_lumenridge --seed 42
 │       ├── generator.py                    # background accounts/deals/activities (relative time)
 │       ├── scenarios.py                    # Kestrel 71 · Harbor & Pine 66 · Orbital 58 · Northgate 18
+│       ├── model.py                        # in-memory records + the snapshot builder that mirrors repos/deals.py
+│       ├── ops.py                          # demo operations: clock offset, status, outbox retry
 │       ├── hostile_notes.py                # prompt-injection corpus for security evals
 │       └── names.py                        # synthetic names/companies
 │
-├── infra/
-│   ├── pyproject.toml                      # aws-cdk-lib, constructs, cdk-fck-nat
+├── infra/                                  # own uv project (aws-cdk-lib stays out of the dev env)
+│   ├── pyproject.toml                      # aws-cdk-lib, constructs, cdk-fck-nat, pydantic
 │   ├── app.py                              # CDK app entry; env from infra/config/<env>.yaml
 │   ├── cdk.json
+│   ├── bootstrap/github-deploy-role.yaml   # the GitHub Actions deploy role, created once per env
 │   ├── config/
-│   │   ├── dev.yaml
-│   │   └── demo.yaml
-│   ├── constructs/
-│   │   ├── python_lambda.py                # uv-bundled Lambda + Powertools + LWA option
-│   │   └── alarms.py                       # standard alarm factory
-│   └── stacks/
-│       ├── net.py · data.py · auth.py · mcp.py
-│       └── async_.py · agents.py · harness.py · ops.py
+│   │   └── dev.yaml · demo.yaml
+│   ├── wf_infra/
+│   │   ├── config.py                       # per-env settings, validated before any stack is built
+│   │   ├── common.py                       # uv-packaged Python Lambda, presets, custom domains
+│   │   └── stacks/
+│   │       ├── net.py · data.py · auth.py · mcp.py
+│   │       └── async_.py · agents.py · harness.py · ops.py
+│   └── tests/                              # test_config.py · test_synth.py (make test-infra)
 │
 ├── scripts/
 │   ├── dev_keys.py                         # generates local ES256 key pair (gitignored output)
 │   ├── dev_token.py                        # mints a local JWT for curl testing (local/dev only)
-│   ├── demo.py                             # reset · clock · watch-now · status
-│   ├── invoke_migrator.py                  # invokes the migrator Lambda for an env
-│   ├── invoke_seeder.py                    # invokes seeding in an env (demo/dev only)
-│   ├── conformance_remote.py               # runs tests/conformance against a URL
-│   └── latency_probe.py                    # N calls per tool → p50/p95/p99 table
+│   ├── demo.py                             # reset · clock · watch-now · status · outbox-retry
+│   ├── package_lambdas.py                  # Lambda zip directories in infra/build/ (make package)
+│   ├── default_hosts.py                    # writes the hosts AWS assigned into infra/config/<env>.yaml
+│   ├── remote_mcp.py                       # sign in as a real user against a running server
+│   ├── conformance_remote.py               # CF-01..15 against a URL
+│   ├── latency_probe.py                    # N calls per read tool → p50/p95/p99 table
+│   └── addon_assets/                       # listing images and addon.json filler (Path A only)
 │
 └── tests/
-    ├── conftest.py                         # pg container, migrated DB, seeded ws, ASGI client, token factory
+    ├── conftest.py                         # migrated Postgres, seeded ws, ASGI client, token factory
+    ├── mcp_client.py                       # tiny MCP client for the suites
     ├── unit/
-    │   ├── test_rigs.py · test_rigs_properties.py · test_rigs_golden.py
-    │   └── test_speech.py · test_tokens.py · test_rule_descriptions.py
+    │   ├── test_rigs_golden.py · test_rigs_properties.py · rigs_helpers.py
+    │   ├── test_speech_tokens.py · test_deal_lookup.py · test_eval_scoring.py
+    │   └── test_bedrock.py · test_gemini.py · test_workers_unit.py · test_demo_cli.py · test_default_hosts.py
     ├── conformance/
-    │   ├── test_transport.py               # CF-01..CF-10
+    │   ├── test_transport.py               # CF-01, CF-02, CF-05..CF-11
     │   ├── test_edge.py                    # CF-12, CF-13
     │   ├── test_tools_list.py              # CF-03, CF-04 + snapshot
     │   ├── test_prm.py                     # CF-14
-    │   └── test_output_schemas.py          # CF-15
+    │   ├── test_output_schemas.py          # CF-15
+    │   └── test_service_token.py           # Alexa+'s mcp:service token (ADR-024)
     ├── integration/
-    │   ├── test_briefing.py · test_explain.py · test_actions.py
-    │   └── test_rules_watcher.py · test_triage_jobs.py · test_outbox.py · test_rls.py
+    │   ├── test_tool_calls.py · test_confirm_guard.py · test_undo.py · test_workers.py
+    │   └── test_auth_server.py · test_seeder.py · test_migrator.py · test_demo_ops.py
     ├── security/
-    │   └── test_origin_host.py · test_token_replay.py · test_agent_scope.py · test_injection.py
+    │   └── test_token_replay.py · test_agent_scope.py
     ├── evals/
-    │   └── golden_triage.jsonl · run_triage_eval.py · utterances.csv · results/
+    │   └── golden_triage.jsonl · run_triage_eval.py · scoring.py · utterances.csv · results/
     └── load/
         └── locustfile.py
 ```
@@ -1179,7 +1192,7 @@ def build_session_manager(server) -> StreamableHTTPSessionManager:
 
 > ⚠ **Verify (S5):** constructor arguments of `StreamableHTTPSessionManager` in the pinned SDK, and how `Mount("/mcp")` interacts with the trailing-slash redirect. If Starlette redirects `/mcp` → `/mcp/`, route `/mcp` through a thin ASGI dispatcher that checks `scope["path"]` instead. Conformance test CF-01 catches either way.
 
-**Server and registry** (`server.py`, abridged):
+**Server and registry** (`server.py`, abridged and in decorator style; the built server, on `mcp` 2.3, passes the same handlers as `Server(on_list_tools=…, on_call_tool=…, on_list_resources=…, on_read_resource=…)`):
 
 ```python
 from mcp.server.lowlevel import Server
@@ -1194,7 +1207,7 @@ async def list_tools() -> list[types.Tool]:
     p = current_principal()
     return [spec.descriptor() for spec in REGISTRY.values() if spec.scope in p.scopes]
 
-@server.call_tool(validate_input=False)          # we validate (CF-11 → -32602) ⚠ Verify flag name
+@server.call_tool(validate_input=False)          # we validate (CF-11 → -32602); mcp 2.x: Server(on_call_tool=…)
 async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
     p = current_principal()
     spec = REGISTRY.get(name)
@@ -1254,7 +1267,7 @@ class ToolSpec:
             "annotations": self.annotations.model_dump(exclude_none=True),
         }
         if self.ui_resource:
-            payload["_meta"] = {"ui": {"resourceUri": self.ui_resource}}   # ⚠ Verify key (S3)
+            payload["_meta"] = {"ui": {"resourceUri": self.ui_resource}}   # nested form: current in ext-apps 2.0.3 (S3)
         return types.Tool.model_validate(payload)
 
 @dataclass
@@ -1431,7 +1444,7 @@ def haiku(temperature: float = 0.0, max_tokens: int = 1024) -> BedrockModel:
 ```python
 # agents/specialists/__init__.py
 def make_specialist_tools(data_tools: list) -> list:
-    by_name = {t.tool_name: t for t in data_tools}          # ⚠ Verify attribute name (S6)
+    by_name = {t.tool_name: t for t in data_tools}          # Strands' MCP tool attribute (agents/data_tools.py)
 
     analyst = Agent(model=haiku(), system_prompt=load_prompt("analyst"),
                     tools=[by_name[n] for n in ("get_deal_timeline", "get_deal_history", "explain_deal_risk")])
@@ -1477,7 +1490,7 @@ The agent-only tools (`get_deal_timeline`) apply `wrap_untrusted` on the **serve
 
 ```ts
 // ui/src/bridge.ts
-import { App } from "@modelcontextprotocol/ext-apps";       // ⚠ Verify API surface (S3)
+import { App } from "@modelcontextprotocol/ext-apps";       // as in ui/src/bridge.ts (ext-apps 2.0.3)
 
 export type Structured = Record<string, unknown>;
 
@@ -1537,7 +1550,7 @@ export default defineConfig({
 | `WF_ACCESS_TTL_S` / `WF_REFRESH_TTL_DAYS` | auth | `3600` / `30` | |
 | `WF_AGENT_RUNTIME_ARN` | dispatcher | `arn:aws:bedrock-agentcore:…:runtime/wf-triage-…` | |
 | `WF_MEMORY_ID` | dispatcher, agents | `wf-mem-…` | |
-| `WF_SONNET_MODEL_ID` / `WF_HAIKU_MODEL_ID` | agents, dispatcher, harness | inference profile IDs | ⚠ Verify (S6) |
+| `WF_SONNET_MODEL_ID` / `WF_HAIKU_MODEL_ID` | agents, dispatcher, harness | Bedrock model ids for the reasoning and fast tiers | `amazon.nova-pro-v1:0` / `amazon.nova-lite-v1:0` (set only while `models_enabled`) |
 | `WF_SLACK_SECRET_ARN` | dispatcher | `arn:…:secret:wf-slack-…` | Webhook URL |
 | `WF_SLACK_WEBHOOK_URL` | local only | (empty → messages printed to console) | Never set in AWS |
 | `WF_DISPATCHER_CLIENT_SECRET_ARN` | dispatcher | `arn:…:secret:wf-dispatcher-client-…` | client_credentials |
@@ -1641,7 +1654,7 @@ make db-up && make migrate && make seed
 make dev-keys && make dev
 ```
 
-`make bootstrap` runs `uv sync`, `npm ci` in the UI and harness folders, and installs pre-commit hooks. `make dev` starts the auth server on `127.0.0.1:8081` and the MCP server on `127.0.0.1:8080` with auto-reload.
+`make bootstrap` runs `uv sync` for the workspace, the agents and the harness API, then `npm ci` and a build in the harness web and MCP UI folders. `make dev` starts the auth server on `127.0.0.1:8081` and the MCP server on `127.0.0.1:8080` with auto-reload.
 
 ### 8.3 Smoke test with curl
 
@@ -1677,11 +1690,12 @@ A quick tunnel gives a random `https://<name>.trycloudflare.com` URL. Set `WF_RE
 |---|---|
 | Run unit + conformance tests | `make test` |
 | Full suite incl. integration (Docker) | `make test-all` |
-| Lint + types | `make lint` |
+| Lint + format check | `make lint` |
 | Rebuild UI resources | `make ui` |
-| Regenerate the tool schema snapshot (intentional change) | `make snapshot` → then `make addon-deploy` |
+| Regenerate the tool schema snapshot (intentional change) | `make snapshot`, commit it, then re-run the utterance sheet (§15.4) |
 | Reset the demo workspace | `make demo-reset` |
-| Probe latency against a URL | `make latency URL=https://mcp.dev.watchfloor.example/mcp` |
+| Probe latency (p95/p99 of the read tools) | `make latency ENV=local\|dev\|demo` (`N=` calls; any other URL: `scripts/latency_probe.py --url`) |
+| Query plans of the hot paths (local seed) | `make perf-plans` → `docs/perf/` |
 
 ---
 
@@ -1723,7 +1737,7 @@ Assertions run at the end of the seed and fail loudly if the scenario scores dri
 
 ### 9.4 Performance hygiene
 
-- `EXPLAIN (ANALYZE, BUFFERS)` for `ranked_risks`, the rule match and `load_snapshot` is checked into `docs/perf/` at each release. Ranked risks must stay under 5 ms on the seed.
+- `EXPLAIN (ANALYZE, BUFFERS)` for `ranked_risks`, `attention_counts`, `fired_since`, the rule match and `load_snapshots` is checked into `docs/perf/` at each release (`make perf-plans`, `scripts/explain_plans.py`). Ranked risks must stay under 5 ms on the seed; `--check` fails otherwise.
 - `pg_stat_statements` is enabled on RDS through the parameter group. Review the top 10 statements before recording.
 
 ---
@@ -1741,7 +1755,7 @@ Each Lambda is a zip built by the `PythonLambda` CDK construct:
 
 ### 10.2 Lambda Web Adapter services
 
-`mcp-server`, `auth-server` and `harness-api` run Uvicorn behind the Lambda Web Adapter layer. Each sets handler `run.sh`, `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, `AWS_LWA_PORT=8080` and `AWS_LWA_READINESS_CHECK_PATH=/healthz`. The LWA arm64 layer ARN is pinned in `infra/config/*.yaml`. **⚠ Verify** the current layer version.
+`mcp-server`, `auth-server` and `harness-api` run Uvicorn behind the Lambda Web Adapter layer. Each sets handler `run.sh`, `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, `AWS_LWA_PORT=8080` and `AWS_LWA_READINESS_CHECK_PATH=/healthz`. The LWA arm64 layer ARN is pinned in `infra/config/*.yaml` (`LambdaAdapterLayerArm64:25`, the version `dev` runs); check for a newer one before a release.
 
 ```bash
 #!/bin/sh
@@ -1767,7 +1781,7 @@ EXPOSE 8080
 CMD ["uv", "run", "--no-sync", "python", "-m", "agents.main"]
 ```
 
-`BedrockAgentCoreApp` serves the runtime contract (`/invocations`, `/ping`) on port 8080. Build and push with `make agents-image ENV=dev` (buildx `--platform linux/arm64`), then deploy via the `Agents` stack. **⚠ Verify (S6):** CDK resource support for AgentCore Runtime. The fallback is the AgentCore starter toolkit CLI, invoked from a `make agents-deploy` target.
+`BedrockAgentCoreApp` serves the runtime contract (`/invocations`, `/ping`) on port 8080. Build and push with `make agents-image ENV=dev` and `make agents-push` (buildx `--platform linux/arm64`), then deploy via the `Agents` stack, which uses the CloudFormation resources in `aws_cdk.aws_bedrockagentcore` (`CfnRuntime`, `CfnMemory`; S6 resolved, no starter-toolkit fallback needed). Where AgentCore is not available, `agents_host: lambda` runs the same agents as a function (ADR-023).
 
 ### 10.4 UI builds
 
@@ -1825,7 +1839,7 @@ flowchart LR
 ### 11.3 Network stack (excerpt)
 
 ```python
-from cdk_fck_nat import FckNatInstanceProvider       # ⚠ Verify package/API
+from cdk_fck_nat import FckNatInstanceProvider       # as in infra/wf_infra/stacks/net.py
 
 nat = FckNatInstanceProvider(instance_type=ec2.InstanceType("t4g.nano"))
 self.vpc = ec2.Vpc(self, "Vpc",
@@ -1927,87 +1941,108 @@ outbox.grant_send_messages(sweeper)
 
 ## 12. CI/CD pipelines
 
-### 12.1 `ci.yml` (pull requests)
+### 12.1 `ci.yml` (pull requests, and the first job of both deploy workflows)
+
+The file as it is (the deploy workflows call it with `workflow_call`, so nothing deploys untested):
 
 ```yaml
+# Pull-request gate (TD §12.1). Also called by the deploy workflows, so nothing deploys untested.
 name: ci
-on: [pull_request]
+on:
+  pull_request:
+  workflow_call:
 permissions: { contents: read }
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:  # mirrors docker-compose.yml; tests/conftest.py builds a throwaway watchfloor_test on it
+        image: postgres:16
+        env: { POSTGRES_USER: wf_owner, POSTGRES_PASSWORD: devpassword, POSTGRES_DB: watchfloor }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wf_owner -d watchfloor" --health-interval 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
       - run: uv run ruff check . && uv run ruff format --check .
-      - run: uv run pyright packages/core services
-      - run: uv run pytest tests/unit tests/conformance -q
+      - run: uv lock --check
       - name: Tool schema snapshot unchanged
         run: |
-          uv run python -m mcp_server.tools.snapshot --write /tmp/tools.json
-          diff -u services/mcp_server/schemas/tools.snapshot.json /tmp/tools.json || {
-            echo "::error::Tool schemas changed. Run 'make snapshot' and 'make addon-deploy'."; exit 1; }
+          (cd services/mcp_server && uv run python -m mcp_server.tools.snapshot --check) || {
+            echo "::error::Tool schemas changed. Run 'make snapshot', commit it, then re-run the utterance sheet in the harness."; exit 1; }
+      - run: uv run pytest -q   # unit, conformance, integration, security (Postgres above)
+
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen && uv run --frozen pytest -q
+        working-directory: services/agents
+
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: uv sync --frozen && uv run --frozen pytest -q
+        working-directory: services/harness/api
+      - run: npm ci && npm run build
+        working-directory: services/harness/web
+
   ui:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 24 }
+      # build = typecheck + three single-file views + scripts/check.mjs (≤ 150 KB gzip, no network loaders)
       - run: npm ci && npm run build
         working-directory: services/mcp_server/ui
-      - run: "! grep -E 'https?://' services/mcp_server/mcp_server/ui_dist/*.html"
-  synth:
+
+  infra:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm i -g aws-cdk && uv sync --frozen
-      - run: cdk synth -c env=dev --quiet
+        with: { node-version: 24 }
+      # Synthesizes dev and demo with stub Lambda code and asserts the spec'd properties.
+      - run: uv sync --frozen && uv run --frozen pytest -q
         working-directory: infra
 ```
 
-### 12.2 `deploy-dev.yml` (main)
+### 12.2 `deploy-dev.yml` (push to `main`)
 
-```yaml
-name: deploy-dev
-on: { push: { branches: [main] } }
-permissions: { contents: read, id-token: write }
-concurrency: deploy-dev
-jobs:
-  integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen && uv run pytest tests/integration tests/security -q
-  deploy:
-    needs: integration
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with: { role-to-assume: "${{ secrets.AWS_DEPLOY_ROLE_DEV }}", aws-region: us-east-1 }
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm i -g aws-cdk && uv sync --frozen && (cd services/mcp_server/ui && npm ci) && make ui
-      - run: cdk deploy --all -c env=dev --require-approval never
-        working-directory: infra
-      - run: make migrate-remote ENV=dev && make seed-remote ENV=dev
-      - run: uv run python scripts/conformance_remote.py --url "${{ vars.MCP_URL_DEV }}"
-```
+1. `checks`: the whole of `ci.yml`.
+2. `deploy` (GitHub environment `dev`, OIDC role `secrets.AWS_DEPLOY_ROLE_DEV`, variable `AWS_ACCOUNT_ID`):
+   build the views, the harness page and the Lambda zips (`make package`, arm64); push the agents image only
+   when `infra/config/dev.yaml` puts the agents on AgentCore (`EnvConfig.agents_on`, ADR-022/023; on a first
+   deploy it creates the repository with `AGENT_RUNTIME=false` first); `make cdk-deploy`, which prints the hosts
+   AWS assigned for you to commit when there are no custom domains; `make migrate-remote`; `make seed-remote`;
+   `make conformance-remote` (CF-01..15 except CF-04, as the canary user).
 
-### 12.3 `release-demo.yml` (tags)
+### 12.3 `release-demo.yml` (tags `v*.*.*`)
 
-Same as `deploy-dev` against `env=demo`, plus:
-1. `uv run python tests/evals/run_triage_eval.py --env demo --out tests/evals/results/${GITHUB_REF_NAME}.json`, which fails on any pass threshold (DD §22.5).
-2. `uv run python scripts/latency_probe.py --url $MCP_URL_DEMO --n 200`, which fails if p95 > 150 ms.
-3. No Local Inspector step. It is interactive (a browser UI) and installs from Amazon's private toolkit registry, which is closed to our account (friction log entry 4). Run it by hand per §14 if access opens.
-4. A manual approval gate (GitHub environment protection) on the demo environment. Under Path B there is no `alexa-ai deploy`; after the gate, run the utterance sheet in the harness (§15.4).
+Same build and deploy against `env=demo` (GitHub environment `demo`, which carries the required reviewers
+and the freeze rules of §17.5), then:
+1. `make seed-remote ENV=demo SEED_EVENT='{"seed": false}'`: OAuth clients and logins only. A release never
+   resets the demo data.
+2. `make conformance-remote ENV=demo`.
+3. `make evals ENV=demo`, wherever deep triage runs (`EnvConfig.triage_on`: AgentCore or Lambda). It fails
+   on any pass threshold (DD §22.5); the results are kept as a build artifact.
+4. `make latency ENV=demo N=200`, which fails if p95 > 150 ms or p99 > 300 ms.
+5. No Local Inspector step. It is interactive (a browser UI) and installs from Amazon's private toolkit
+   registry, which is closed to our account (friction log entry 4). Run it by hand per §14 if access opens.
+   Under Path B there is no `alexa-ai deploy`; after a release, run the utterance sheet in the harness (§15.4).
 
 ---
 
@@ -2325,7 +2360,7 @@ fields reason
 
 1. Merge to `main` → `deploy-dev` runs automatically. Watch the dashboard for 15 minutes.
 2. `git tag vX.Y.Z && git push --tags` → `release-demo` runs. It requires green evals and the latency probe.
-3. If `tools.snapshot.json` changed: `make addon-deploy`, then re-run the utterance eval in the simulator.
+3. If `tools.snapshot.json` changed: re-run the utterance sheet in the harness (§15.4). The harness reads `tools/list` on every turn, so the deploy is all it needs. (Path A would also need `alexa-ai deploy`, §14.)
 4. Record the release in `docs/friction-log.md` if anything was surprising.
 
 ### 17.2 Roll back the MCP server (instant)
@@ -2380,7 +2415,7 @@ Fix the root cause first (check the dispatcher logs by `trace_id`). Outbox rows 
 
 | Problem | Likely cause | Fix |
 |---|---|---|
-| Alexa+ shows old tool behavior | Tool info refreshes only on deploy | `make addon-deploy` |
+| The harness shows old tool behavior | The MCP Lambda's `live` alias still points at the old version | Redeploy (`make deploy ENV=<env>`). Under Path A, Alexa+ refreshes tool info only on `alexa-ai deploy` (§14) |
 | 401 after successful linking | Token `aud` ≠ `WF_RESOURCE_URI` (trailing slash, http vs https, tunnel URL changed) | Make them byte-identical. Re-link if the issuer or audience changed |
 | 421 from API Gateway URL | `WF_ALLOWED_HOSTS` lacks the execute-api hostname | Add it, or use only the custom domain |
 | 406 from your client | `Accept` missing `text/event-stream` | Send both media types |
@@ -2419,8 +2454,8 @@ Fix the root cause first (check the dispatcher logs by `trace_id`). Outbox rows 
 
 - [ ] Repo public with an Apache-2.0 `LICENSE` visible in About, **or** private and shared with testing@devpost.com and the listed Amazon reviewers (invites expire after 7 days, so send them at submission)
 - [ ] README: what it is, the demo video link, architecture diagram, setup and run (§8), how to test with the judge account, Path A/B statement
-- [ ] Code imports and calls the MCP SDK at runtime (`services/mcp_server/mcp_server/server.py`)
-- [ ] `docs/friction-log.md` has ≥ 8 complete entries · `docs/feature-requests.md` filled in
+- [x] Code imports and calls the MCP SDK at runtime (`services/mcp_server/mcp_server/server.py`)
+- [x] `docs/friction-log.md` has ≥ 8 complete entries · `docs/feature-requests.md` filled in
 - [ ] Product feedback drafted per tool: `alexa-ai`, MCP Toolkit, MCP Python SDK, Strands, AgentCore, Bedrock, Slack (5 questions each, AWS usage described)
 - [ ] Demo video < 3:00 · English · no unlicensed music · uploaded publicly
 - [ ] `demo` environment healthy and frozen through Nov 20, 12:00 PT
@@ -2451,7 +2486,7 @@ IDs are **never spoken** and never shown in UI copy. They appear only in `struct
 
 ### 20.2 Python
 
-- `ruff` (rules: E, F, I, B, UP, SIM, ASYNC, S, TID) · `ruff format` · `pyright --strict` on `watchfloor_core`.
+- `ruff` (rules: E, F, I, B, UP, SIM, ASYNC, S, TID; `datetime.now` banned in favour of `Clock`) · `ruff format` (line length 110).
 - Async everywhere on the request path. No sync I/O inside handlers (`ASYNC` rules).
 - Pydantic models are the single source of truth for tool I/O. JSON Schemas are generated, never hand-edited.
 - SQL lives in `repos/` with numbered parameters (`$1`). No string-formatted SQL (ruff `S608`).
@@ -2466,7 +2501,7 @@ IDs are **never spoken** and never shown in UI copy. They appear only in `struct
 ### 20.4 Git
 
 - Trunk-based: short-lived branches → PR → `main`. Conventional Commits (`feat(mcp): add log_deal_update`).
-- The PR template asks: Did tool schemas change? (snapshot + `alexa-ai deploy`) · Migration added? (forward-only) · Friction-log entry?
+- Before merging, check: did tool schemas change (`make snapshot`, then the utterance sheet)? Migration added (forward-only)? Friction-log entry?
 - Tags `vMAJOR.MINOR.PATCH` deploy to `demo`.
 
 ### 20.5 Documentation
@@ -2478,84 +2513,161 @@ IDs are **never spoken** and never shown in UI copy. They appear only in `struct
 
 ## Appendix A: Root project files
 
+The files exactly as committed. `tests/unit/test_docs_sync.py` fails the build if a copy here (or the
+`ci.yml` in §12.1) drifts from the file.
+
 ### A.1 `Makefile`
 
 ```makefile
 SHELL := /bin/bash
 ENV ?= local
 
-.PHONY: bootstrap dev db-up db-down migrate migrate-remote seed seed-remote dev-keys test test-all lint ui \
-        snapshot addon-deploy latency demo-reset demo-clock demo-watch-now demo-status agents-image deploy
+.PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency perf-plans evals test test-all test-agents agents-sync agents-image lint snapshot snapshot-check \
+        demo-reset demo-clock demo-watch-now demo-status harness-sync harness-web test-harness ui \
+        infra-sync package synth test-infra deploy cdk-deploy default-hosts agents-push migrate-remote seed-remote
 
-bootstrap:            ## install everything
+bootstrap:            ## install Python dependencies (the workspace, then the agents' and harness's own projects)
 	uv sync
-	cd services/mcp_server/ui && npm ci
-	cd services/harness/web && npm ci
-	uv run pre-commit install
+	cd services/agents && uv sync --frozen
+	cd services/harness/api && uv sync --frozen
+	cd services/harness/web && npm ci && npm run build
+	cd services/mcp_server/ui && npm ci && npm run build
 
-db-up:                ## local Postgres 16
+ui:                   ## build the MCP Apps views into mcp_server/ui_dist (single files, ≤ 150 KB gzip each)
+	cd services/mcp_server/ui && npm run build
+
+harness-sync:         ## services/harness/api has its own uv.lock too (ADR-011)
+	cd services/harness/api && uv sync --frozen
+
+harness-web:          ## build the harness page into services/harness/web/dist (served on :8082)
+	cd services/harness/web && npm run build
+
+agents-sync:          ## services/agents has its own uv.lock (strands-agents pins mcp<2.2)
+	cd services/agents && uv sync --frozen
+
+db-up:                ## local Postgres 16 on 127.0.0.1:55432
 	docker compose up -d db
 
 db-down:
 	docker compose down
 
-migrate:
-	uv run python -m db.migrate --env $(ENV)
+migrate:              ## apply db/migrations and enable local role logins
+	uv run python -m db.migrate --dev-passwords
 
-migrate-remote:
-	uv run python scripts/invoke_migrator.py --env $(ENV)
+seed:                 ## demo workspace (Kestrel 71 · Harbor & Pine 66 · Orbital 58), relative to now
+	uv run python -m db.seed --workspace ws_lumenridge --seed 42
 
-seed:
-	uv run python -m db.seed --workspace ws_lumenridge --seed 42 --relative-now
+dev-keys:             ## local ES256 key pair in .secrets/ (gitignored)
+	uv run python scripts/dev_keys.py
 
-seed-remote:
-	uv run python scripts/invoke_seeder.py --env $(ENV)
+auth-bootstrap:       ## OAuth clients + demo logins (needs WF_DEMO_PASSWORD)
+	uv run python -m auth_server.clients
 
-dev-keys:
-	uv run python scripts/dev_keys.py --out .secrets/dev_es256.pem
+dev:                  ## auth :8081 + mcp :8080 with reload, harness :8082, the agent :8083, plus the workers
+	PYTHONUTF8=1 PYTHONIOENCODING=utf-8 uv run honcho start -f Procfile.dev  # a cp1252 console can't print the logs' → and ·
 
-dev:                  ## auth :8081 + mcp :8080 with reload
-	uv run honcho start -f Procfile.dev
+workers-once:         ## one watcher run, one sweep and one outbox pass, then exit
+	uv run python -m workers --once
 
-test:
+canary:               ## sign in as WF_CANARY_EMAIL, list tools, fetch a briefing (needs `make dev` running)
+	uv run python -m workers.canary
+
+conformance-remote:   ## CF-01..15 against a running server as the canary user (ENV=local|dev|demo)
+	uv run python scripts/conformance_remote.py --env $(ENV)
+
+latency:              ## p95/p99 of the read tools, paced under the per-user rate limit (N=200 by default)
+	uv run python scripts/latency_probe.py --env $(ENV) --n $(or $(N),200)
+
+perf-plans:           ## EXPLAIN (ANALYZE, BUFFERS) of the hot-path queries on the local seed → docs/perf/
+	uv run python scripts/explain_plans.py --check
+
+evals:                ## deep-triage evals: 40 driver + 10 injection cases (ENV=local uses the offline engine)
+	uv run python tests/evals/run_triage_eval.py --env $(ENV) $(if $(OUT),--out $(OUT),)
+
+test:                 ## unit + conformance (no database needed except CF-15)
 	uv run pytest tests/unit tests/conformance -q
 
 test-all:
 	uv run pytest -q
+	$(MAKE) test-agents
+	$(MAKE) test-harness
 
-lint:
-	uv run ruff check . && uv run ruff format --check . && uv run pyright packages/core services
+test-agents:          ## the agents' own suite (no Bedrock, no database)
+	cd services/agents && uv run --frozen pytest -q
 
-ui:
-	cd services/mcp_server/ui && npm run build
+test-harness:         ## the harness API's own suite (fake auth server, MCP server and model)
+	cd services/harness/api && uv run --frozen pytest -q
 
-snapshot:
-	uv run python -m mcp_server.tools.snapshot --write services/mcp_server/schemas/tools.snapshot.json
-
-addon-deploy:
-	git diff --quiet services/mcp_server/schemas/tools.snapshot.json || (echo "Commit the snapshot first"; exit 1)
-	alexa-ai deploy
-
-latency:
-	uv run python scripts/latency_probe.py --url $(URL) --n 200
-
-demo-reset:
-	uv run python scripts/demo.py reset --env $(ENV)
-
-demo-clock:
-	uv run python scripts/demo.py clock --env $(ENV) --offset $(OFFSET)
-
-demo-watch-now:
-	uv run python scripts/demo.py watch-now --env $(ENV)
-
-demo-status:
-	uv run python scripts/demo.py status --env $(ENV)
-
-agents-image:
+agents-image:         ## arm64 image for AgentCore Runtime (TD §10.3)
 	docker buildx build --platform linux/arm64 -f services/agents/Dockerfile -t wf-agents:$(ENV) --load .
 
-deploy:
-	cd infra && cdk deploy --all -c env=$(ENV)
+lint:
+	uv run ruff check . && uv run ruff format --check .
+
+# ENV=dev|demo runs these through the seeder and watcher Lambdas with your AWS credentials (scripts/demo.py).
+demo-reset:           ## re-seed the demo workspace relative to now and assert the scenario scores
+	uv run python scripts/demo.py reset --env $(ENV)
+
+demo-clock:           ## OFFSET=+14h for the next-morning scene, OFFSET=0 to undo; runs the watcher once
+	uv run python scripts/demo.py clock --env $(ENV) --offset $(OFFSET)
+
+demo-watch-now:       ## one watcher run: fires standing orders on demand
+	uv run python scripts/demo.py watch-now --env $(ENV)
+
+demo-status:          ## bands, scenario scores, board, pending proposals, running jobs, outbox backlog
+	uv run python scripts/demo.py status --env $(ENV)
+
+# ------------------------------------------------------------------ AWS (TD §10–11; README, Deploy)
+CDK := npx --yes aws-cdk@2
+
+infra-sync:           ## infra/ is its own uv project (aws-cdk-lib stays out of the dev environment)
+	cd infra && uv sync --frozen
+
+package: ui harness-web  ## build the Lambda zip directories in infra/build/ (arm64; package on Linux for deploys)
+	uv run python scripts/package_lambdas.py
+
+synth:                ## synthesize ENV=dev|demo with stub Lambda code (structure check; no build needed)
+	cd infra && $(CDK) synth -c env=$(ENV) -c wf:stubAssets=true --quiet
+
+test-infra:           ## synth both environments and assert the properties the specs pin down
+	cd infra && uv run --frozen pytest -q
+
+deploy:               ## package, then deploy every stack of ENV=dev|demo; AGENT_RUNTIME=false on the very first deploy
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	$(MAKE) package
+	$(MAKE) cdk-deploy
+
+# Without custom domains (certificate_arn: null), the hosts AWS assigned go into the config first; a
+# first deploy is the one that assigns them, so it is followed by a second that uses them.
+CDK_DEPLOY = cd infra && $(CDK) deploy --all -c env=$(ENV) $(if $(filter false,$(AGENT_RUNTIME)),-c wf:agentRuntime=false,) $(CDK_FLAGS)
+cdk-deploy:           ## deploy ENV=dev|demo from infra/build as it is (CI: CDK_FLAGS="--require-approval never")
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	uv run python scripts/default_hosts.py --env $(ENV)
+	$(CDK_DEPLOY)
+	@if ! uv run python scripts/default_hosts.py --env $(ENV) --check; then \
+	  uv run python scripts/default_hosts.py --env $(ENV) && $(CDK_DEPLOY); fi
+
+default-hosts:        ## write the hosts AWS assigned to ENV=dev|demo into its config (no custom domains)
+	uv run python scripts/default_hosts.py --env $(ENV)
+
+agents-push:          ## push the agents image built by agents-image: make agents-push ENV=dev REPO=<RepositoryUri output>
+	@test -n "$(REPO)" || { echo "set REPO to the wf-$(ENV)-agents stack's RepositoryUri output"; exit 2; }
+	aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $${REPO%%/*}
+	docker tag wf-agents:$(ENV) $(REPO):$(ENV) && docker push $(REPO):$(ENV)
+
+migrate-remote:       ## run the migrator Lambda in ENV=dev|demo (migrations + role logins)
+	aws lambda invoke --function-name wf-$(ENV)-migrator --cli-read-timeout 150 /dev/stdout
+
+SEED_EVENT ?= {}
+seed-remote:          ## run the seeder Lambda in ENV=dev|demo: reset the demo workspace + OAuth clients and logins
+	@case "$(ENV)" in dev|demo) ;; *) echo "set ENV=dev or ENV=demo"; exit 2;; esac
+	aws lambda invoke --function-name wf-$(ENV)-seeder --cli-read-timeout 330 --cli-binary-format raw-in-base64-out --payload '$(SEED_EVENT)' /dev/stdout
+
+snapshot:             ## regenerate the tools/list snapshot after changing a tool
+	cd services/mcp_server && uv run python -m mcp_server.tools.snapshot
+
+snapshot-check:
+	cd services/mcp_server && uv run python -m mcp_server.tools.snapshot --check
 ```
 
 ### A.2 `docker-compose.yml`
@@ -2569,7 +2681,8 @@ services:
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: watchfloor
     command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
-    ports: ["127.0.0.1:5432:5432"]
+    # Host port 55432 avoids clashing with a locally installed Postgres on 5432.
+    ports: ["127.0.0.1:55432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wf_owner -d watchfloor"]
@@ -2585,67 +2698,151 @@ volumes:
 [project]
 name = "watchfloor"
 version = "1.0.0"
+description = "Ambient pipeline-risk triage add-on for Alexa+ (MCP 2025-11-25)."
 requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+
+[tool.uv]
+package = false
 
 [tool.uv.workspace]
-members = ["packages/core", "services/mcp_server", "services/auth_server",
-           "services/workers", "services/agents", "services/harness/api", "infra"]
+members = [
+  "packages/core",
+  "services/mcp_server",
+  "services/auth_server",
+  "services/workers",
+]
+# services/agents and services/harness/api are their own uv projects: strands-agents pins mcp<2.2,
+# the MCP server needs mcp>=2.3 (ADR-011).
+exclude = ["services/agents", "services/harness/api"]
+
+[tool.uv.sources]
+watchfloor-core = { workspace = true }
+watchfloor-mcp-server = { workspace = true }
+watchfloor-auth-server = { workspace = true }
+watchfloor-workers = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "hypothesis", "testcontainers[postgres]", "httpx",
-       "locust", "ruff", "pyright", "pre-commit", "honcho"]
+dev = [
+  "watchfloor-core",
+  "watchfloor-mcp-server",
+  "watchfloor-auth-server",
+  "watchfloor-workers",
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "hypothesis>=6.100",
+  "httpx>=0.27",
+  "ruff>=0.6",
+  "honcho>=2.0",
+  "locust>=2.32",
+  "boto3>=1.34",  # scripts reach dev/demo: the canary secret (remote_mcp.py), demo.py's Lambdas
+]
 
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+# docs: verbatim specs, whose code blocks are illustrations. The rest are generated (vendored Lambda
+# dependencies, CDK output, builds); listed explicitly because .gitignore only applies inside a git checkout.
+extend-exclude = ["docs", "infra/build", "infra/cdk.out", "**/node_modules", "**/dist", "**/ui_dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "S", "TID"]
-ignore = ["S101"]                       # asserts allowed in tests
+# TID252: packages use relative imports internally; TID's job here is the banned-api list below.
+ignore = ["S101", "TID252"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S311"]
+"db/seed/**" = ["S311"]
+"packages/core/watchfloor_core/errors.py" = ["S105"]  # TOKEN_* are error codes, not secrets
+
+[tool.ruff.lint.pycodestyle]
+# The formatter wraps code at 110; lint tolerates unbreakable SQL and spoken text up to 120.
+max-line-length = 120
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "datetime.datetime.now".msg = "Use watchfloor_core.clock.Clock"
 
-[tool.pyright]
-pythonVersion = "3.12"
-strict = ["packages/core"]
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+pythonpath = ["."]
 ```
 
 ### A.4 `.env.example`
 
-```dotenv
+```bash
+# Copy to .env for local development (TD §7.1, Appendix A.4). Placeholders only: never commit real secrets.
 WF_ENV=local
-WF_DATABASE_URL=postgresql://wf_app:devpassword@127.0.0.1:5432/watchfloor
+
+# Postgres (docker compose maps the container to host port 55432)
+WF_DATABASE_URL=postgresql://wf_app:devpassword@127.0.0.1:55432/watchfloor
+WF_AUTH_DATABASE_URL=postgresql://wf_auth:devpassword@127.0.0.1:55432/watchfloor
+WF_OWNER_DATABASE_URL=postgresql://wf_owner:devpassword@127.0.0.1:55432/watchfloor
+
+# MCP server (resource) and authorization server
 WF_RESOURCE_URI=http://localhost:8080/mcp
 WF_ISSUER=http://localhost:8081
-WF_JWKS_URL=http://localhost:8081/jwks.json
+# Connection addresses use 127.0.0.1 (on Windows, "localhost" tries IPv6 first: ~2 s per connection).
+# WF_RESOURCE_URI and WF_ISSUER are identifiers inside tokens: keep them as they are.
+WF_JWKS_URL=http://127.0.0.1:8081/jwks.json
 WF_ALLOWED_HOSTS=localhost,127.0.0.1
 WF_ALLOWED_ORIGINS=http://localhost:5173
 WF_PROTOCOL_VERSIONS=2025-11-25
-WF_DEMO_MODE=true
 WF_RATE_LIMIT_USER=60
 WF_RATE_LIMIT_WS=600
+
+# Signing: a local PEM from `make dev-keys`; AWS uses WF_KMS_KEY_ID instead
 WF_DEV_SIGNING_KEY_PATH=.secrets/dev_es256.pem
+WF_KMS_KEY_ID=
 WF_ACCESS_TTL_S=3600
 WF_REFRESH_TTL_DAYS=30
-WF_MCP_URL=http://localhost:8080/mcp
-WF_SONNET_MODEL_ID=<sonnet-5.5-inference-profile-id>
-WF_HAIKU_MODEL_ID=<haiku-class-inference-profile-id>
+# Signs the login → consent ticket; required outside local (any 32+ random bytes)
+WF_SESSION_SECRET=
+
+# `make auth-bootstrap`: demo login password (12+ chars) and optional pinned client secrets
+WF_DEMO_PASSWORD=
+WF_ALEXA_CLIENT_SECRET=
+WF_DISPATCHER_CLIENT_SECRET=
+
+# Demo and workers
+WF_DEMO_MODE=true
+WF_MCP_URL=http://127.0.0.1:8080/mcp
+# Empty locally: follow-up drafts use a labelled template instead of Bedrock
+WF_SONNET_MODEL_ID=
+WF_HAIKU_MODEL_ID=
+# Empty: Slack messages are printed to the console instead of posted
 WF_SLACK_WEBHOOK_URL=
+# Deep triage: AgentCore in AWS (WF_AGENT_RUNTIME_ARN), or the local agent (`make dev` runs it on :8083).
+# With neither, triage jobs fail fast with "no agent runtime configured". Without model ids above,
+# the local agent uses its deterministic offline engine (local and test only).
+WF_AGENT_RUNTIME_ARN=
+WF_AGENT_URL=http://127.0.0.1:8083/invocations
+WF_AGENT_PORT=8083
+WF_MEMORY_ID=
+# Job tokens: the dispatcher's client secret (`make auth-bootstrap` prints it if not pinned above)
+WF_DISPATCHER_CLIENT_ID=wf-dispatcher
+# Harness (`make dev` runs it on :8082). Without WF_HAIKU_MODEL_ID it answers with a labelled keyword router.
+# The session secret is required outside local (32+ random characters); locally a per-process one is used.
+WF_HARNESS_SESSION_SECRET=
+WF_HARNESS_REDIRECT_URI=http://localhost:8082/oauth/callback
+# Where to land after sign-in: / (the built web app on :8082) or http://localhost:5173/ (Vite dev server)
+WF_HARNESS_WEB_URL=/
+# `make canary`: a linked demo login (see `make auth-bootstrap`)
+WF_CANARY_EMAIL=
+WF_CANARY_PASSWORD=
 LOG_LEVEL=DEBUG
-POWERTOOLS_METRICS_NAMESPACE=Watchfloor
 ```
 
 ### A.5 `Procfile.dev`
 
-```
+```text
 auth: uv run uvicorn auth_server.app:app --host 127.0.0.1 --port 8081 --reload
 mcp:  uv run uvicorn mcp_server.app:app --host 127.0.0.1 --port 8080 --reload
-ui:   cd services/mcp_server/ui && npm run build -- --watch
+workers: uv run python -m workers
+agents: uv run --project services/agents --frozen python -m agents.main
+harness: uv run --project services/harness/api --frozen uvicorn harness_api.app:app --host 127.0.0.1 --port 8082 --reload
 ```
 
 ---

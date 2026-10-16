@@ -20,7 +20,7 @@ add-on, and the toolkit is closed to our account.
 | S3 | MCP Apps support in the simulator and on devices | spec side answered (ext-apps 2.0.3: nested `_meta.ui.resourceUri`, `text/html;profile=mcp-app`, `ui/initialize` handshake; views verified in the harness host). Alexa+ host support blocked by entry 4 |
 | S4 | Elicitation or sampling support in the Alexa+ client | blocked by entry 4 |
 | S5 | Round trip from Alexa+ to `us-east-1` Lambda | blocked by entry 4 (the harness's round trip is measured by the latency probe) |
-| S6 | Bedrock profile ids, AgentCore session ids, Strands structured output, Memory namespaces | partly answered: entries 1–3 |
+| S6 | Bedrock profile ids, AgentCore session ids, Strands structured output, Memory namespaces | partly answered: entries 1–3. Model ids answered by entries 8–9 (Nova in-Region ids; every quota 0). AgentCore session and Memory questions blocked by entry 9 |
 | S7 | Locale and timezone passed by Alexa+ | blocked by entry 4; the workspace timezone is used |
 
 ---
@@ -90,3 +90,95 @@ add-on, and the toolkit is closed to our account.
 - **Suggestion:** Publish the CLI and the Local Inspector on public npm, as the MCP Inspector is,
   and keep only deploys gated. Failing that, an access-request form linked from the setup page, and
   a note that `AccessDenied` on this role means the account is not allowlisted.
+
+## 5. EC2 on the Free plan retries an ineligible instance type instead of failing
+
+- **Date:** 2026-10-09 · **Area:** AWS Free plan / EC2 Auto Scaling · **Severity:** minor
+- **Task:** First `dev` deploy of the network stack, with a fck-nat NAT instance
+  ([ADR-009](adr/0009-nat-instance.md)).
+- **Steps:** `cdk deploy` with the NAT Auto Scaling group on `t4g.nano`.
+- **Expected:** The instance launches, or the deploy fails at once with the reason.
+- **Actual:** The group retried the launch for over half an hour with "The specified instance type
+  is not eligible for Free Tier". The Free plan launches only free-tier-eligible types; the arm64
+  ones in us-east-1 are `t4g.micro` and `t4g.small`. The plan also limits RDS backup retention.
+- **Workaround:** `t4g.micro` in every environment, and RDS backup retention of 1 day in `dev`
+  ([ADR-014](adr/0014-free-plan-instance-types.md)).
+- **Suggestion:** Treat an ineligible type as a permanent launch failure, so the group and the stack
+  fail fast, and name the eligible types in the error.
+
+## 6. CloudFront is closed to a new account until AWS Support verifies it
+
+- **Date:** 2026-10-09 · **Area:** Amazon CloudFront · **Severity:** major
+- **Task:** Serve the harness page from S3 behind CloudFront (DESIGN.md §17).
+- **Steps:** The first `dev` deploy of the harness stack.
+- **Expected:** A distribution.
+- **Actual:** "Your account must be verified before you can add new CloudFront resources."
+  Verification is a support case with no stated turnaround.
+- **Workaround:** A `cdn` switch, off in `dev`: the harness API Lambda serves the built page itself
+  on its execute-api host, so the page and the API keep one origin and the session cookie stays
+  first-party ([ADR-015](adr/0015-harness-without-cloudfront.md)). The cost is no edge caching and a
+  cold start on the first request.
+- **Suggestion:** State the verification step in the CloudFront getting-started guide, and show the
+  account's verification status in the console with a way to request it.
+
+## 7. A new account cannot reserve any Lambda concurrency
+
+- **Date:** 2026-10-09 · **Area:** AWS Lambda · **Severity:** minor
+- **Task:** Reserve concurrency for the MCP server (20) and the dispatcher (3), DESIGN.md §18.1.
+- **Steps:** The first `dev` deploy.
+- **Expected:** The reservations apply.
+- **Actual:** "Specified ReservedConcurrentExecutions for function decreases account's
+  UnreservedConcurrentExecution below its minimum value of [10]". A new account's concurrency quota
+  is 10 and Lambda keeps 10 unreserved, so no reservation of any size can succeed.
+- **Workaround:** A `reserve_concurrency` switch, off in `dev`; the functions share the account's
+  10 executions ([ADR-016](adr/0016-no-reserved-concurrency-on-a-new-account.md)). A quota increase
+  was requested on 2026-10-10.
+- **Suggestion:** Say in the error that the account quota itself is the limit, and link the
+  Service Quotas request.
+
+## 8. Claude on Bedrock is out of reach on the Free plan
+
+- **Date:** 2026-10-10 · **Area:** Amazon Bedrock on the AWS Free plan · **Severity:** major
+- **Task:** Run the harness, drafts and triage agents on Claude Sonnet- and Haiku-class models
+  (DESIGN.md §26).
+- **Steps:** Enable the Claude models for a Free plan account.
+- **Expected:** On-demand use paid from the account's credits.
+- **Actual:** Claude on Bedrock is sold through AWS Marketplace, which the Free plan restricts, so
+  `dev` ran with models off.
+- **Workaround:** Amazon Nova: Lite for the fast slot, Pro for reasoning, both in-Region in
+  us-east-1. Nova writes `<thinking>` before tool calls and calls tools best with greedy decoding,
+  so replies are stripped of it and agents run at temperature 0, top-k 1
+  ([ADR-022](adr/0022-nova-on-the-free-plan.md)).
+- **Suggestion:** Mark in the Bedrock model catalog which models a Free plan account can invoke.
+
+## 9. Every Bedrock and AgentCore quota on the account is 0
+
+- **Date:** 2026-10-15 · **Area:** Amazon Bedrock / Bedrock AgentCore service quotas ·
+  **Severity:** blocker
+- **Task:** Run Nova calls and create the AgentCore Memory resource for deep triage.
+- **Steps:** Deploy with `models_enabled: true` and `agents_enabled: true`; check Service Quotas.
+- **Expected:** Default on-demand quotas, as on an established account.
+- **Actual:** `CreateMemory` returned 403 "contact customer support". Service Quotas shows every
+  Bedrock inference quota at 0 (on-demand, cross-Region and global, for every model), and none of
+  the request quotas is adjustable. AgentCore's quotas (Memories, Active Session Workloads, Docker
+  image size) are 0 too. Only AWS Support can raise them.
+- **Workaround:** Every model caller tries Bedrock, then Gemini through Strands' `GeminiModel`, then
+  a deterministic fallback; the triage agents run as a plain Lambda function (`agents_host: lambda`)
+  ([ADR-023](adr/0023-gemini-when-bedrock-cannot-run.md)). The deterministic risk scores never
+  depended on a model (ADR-002).
+- **Suggestion:** Show at sign-up and on the Bedrock console that a new account's quotas start at 0,
+  and make the inference quotas adjustable through Service Quotas like other services.
+
+## 10. Strands retries outlast the API Gateway timeout
+
+- **Date:** 2026-10-15 · **Area:** Strands Agents (Bedrock model provider) · **Severity:** minor
+- **Task:** Hand a harness turn to the offline engine when the model is throttled.
+- **Steps:** A harness turn with Bedrock quotas at 0 (entry 9).
+- **Expected:** The model call fails quickly and the fallback answers.
+- **Actual:** The turn waited out Strands' default backoff (4 s, doubling to 64 s) and hit API
+  Gateway's 30 s integration limit, so the user got a timeout instead of an answer.
+- **Workaround:** `retry_strategy=None` on every agent, two quick standard-mode botocore retries
+  in the harness, and a 25 s cap on a turn ([ADR-022](adr/0022-nova-on-the-free-plan.md), update of
+  2026-10-15).
+- **Suggestion:** A total deadline per agent call, alongside the retry count, so an agent behind an
+  HTTP front door can bound its latency without giving up retries entirely.

@@ -1,0 +1,77 @@
+-- rule_match · commit 079be7d · 136 deals · 1837 activities · 118 scores
+
+-- statement 1 of 1: 0.818 ms
+SELECT d.id
+           FROM deals d
+           JOIN risk_scores rs ON rs.deal_id = d.id
+           JOIN accounts a     ON a.id = d.account_id
+           LEFT JOIN LATERAL (
+             SELECT max(occurred_at) AS last_inbound
+             FROM activities
+             WHERE deal_id = d.id AND direction = 'inbound' AND type <> 'doc_view' AND occurred_at <= $6
+           ) li ON true
+           WHERE d.stage NOT IN ('won', 'lost')
+             AND ($1::bigint       IS NULL OR d.amount_cents >= $1)
+             AND ($2::int          IS NULL OR COALESCE(li.last_inbound, '-infinity')
+                                              < $6::timestamptz - make_interval(days => $2))
+             AND ($3::deal_stage[] IS NULL OR d.stage = ANY ($3))
+             AND ($4::int          IS NULL OR rs.score >= $4)
+             AND ($5::text         IS NULL OR a.segment = $5)
+             AND NOT EXISTS (
+                   SELECT 1 FROM alerts al
+                   WHERE al.rule_id = $7 AND al.deal_id = d.id
+                     AND al.sent_at > $6::timestamptz - interval '24 hours')
+           ORDER BY rs.score DESC, d.id
+
+Sort  (cost=678.33..678.36 rows=10 width=31) (actual time=0.745..0.750 rows=47 loops=1)
+  Sort Key: rs.score DESC, d.id
+  Sort Method: quicksort  Memory: 27kB
+  Buffers: shared hit=301
+  ->  Nested Loop Anti Join  (cost=32.83..678.17 rows=10 width=31) (actual time=0.131..0.718 rows=47 loops=1)
+        Join Filter: (al.deal_id = d.id)
+        Buffers: shared hit=301
+        ->  Nested Loop Left Join  (cost=32.68..669.83 rows=10 width=31) (actual time=0.124..0.698 rows=47 loops=1)
+              Filter: (COALESCE(($1), '-infinity'::timestamp with time zone) < ('2026-10-16 06:00:19.271802+00'::timestamp with time zone - '6 days'::interval))
+              Buffers: shared hit=300
+              ->  Hash Join  (cost=16.27..160.45 rows=31 width=31) (actual time=0.104..0.339 rows=47 loops=1)
+                    Hash Cond: (d.account_id = a.id)
+                    Buffers: shared hit=154
+                    ->  Hash Join  (cost=13.17..157.26 rows=31 width=60) (actual time=0.065..0.286 rows=47 loops=1)
+                          Hash Cond: (rs.deal_id = d.id)
+                          Buffers: shared hit=152
+                          ->  Seq Scan on risk_scores rs  (cost=0.00..143.77 rows=118 width=31) (actual time=0.003..0.196 rows=118 loops=1)
+                                Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                                Buffers: shared hit=142
+                          ->  Hash  (cost=12.72..12.72 rows=36 width=58) (actual time=0.057..0.058 rows=47 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 13kB
+                                Buffers: shared hit=10
+                                ->  Seq Scan on deals d  (cost=0.00..12.72 rows=36 width=58) (actual time=0.009..0.046 rows=47 loops=1)
+                                      Filter: ((amount_cents >= '5000000'::bigint) AND (workspace_id = current_setting('app.workspace_id'::text, true)) AND (stage <> ALL ('{won,lost}'::deal_stage[])))
+                                      Rows Removed by Filter: 89
+                                      Buffers: shared hit=10
+                    ->  Hash  (cost=2.60..2.60 rows=40 width=29) (actual time=0.035..0.035 rows=40 loops=1)
+                          Buckets: 1024  Batches: 1  Memory Usage: 11kB
+                          Buffers: shared hit=2
+                          ->  Seq Scan on accounts a  (cost=0.00..2.60 rows=40 width=29) (actual time=0.013..0.026 rows=40 loops=1)
+                                Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                                Buffers: shared hit=2
+              ->  Result  (cost=16.41..16.42 rows=1 width=8) (actual time=0.007..0.007 rows=1 loops=47)
+                    Buffers: shared hit=146
+                    InitPlan 1 (returns $1)
+                      ->  Limit  (cost=0.28..16.41 rows=1 width=8) (actual time=0.007..0.007 rows=1 loops=47)
+                            Buffers: shared hit=146
+                            ->  Index Scan using activities_deal_time on activities  (cost=0.28..64.79 rows=4 width=8) (actual time=0.006..0.006 rows=1 loops=47)
+                                  Index Cond: ((deal_id = d.id) AND (occurred_at IS NOT NULL) AND (occurred_at <= '2026-10-16 06:00:19.271802+00'::timestamp with time zone))
+                                  Filter: ((workspace_id = current_setting('app.workspace_id'::text, true)) AND (direction = 'inbound'::act_dir) AND (type <> 'doc_view'::act_type))
+                                  Rows Removed by Filter: 1
+                                  Buffers: shared hit=146
+        ->  Materialize  (cost=0.15..8.19 rows=1 width=32) (actual time=0.000..0.000 rows=0 loops=47)
+              Buffers: shared hit=1
+              ->  Index Scan using alerts_dedupe on alerts al  (cost=0.15..8.19 rows=1 width=32) (actual time=0.005..0.006 rows=0 loops=1)
+                    Index Cond: ((rule_id = 'ru_explain'::text) AND (sent_at > ('2026-10-16 06:00:19.271802+00'::timestamp with time zone - '24:00:00'::interval)))
+                    Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                    Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=20
+Planning Time: 0.578 ms
+Execution Time: 0.818 ms

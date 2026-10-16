@@ -336,7 +336,13 @@ window.addEventListener("online", connectivity);
 
 logoutButton.addEventListener("click", async () => {
   stopSpeaking();
-  await logout();
+  try {
+    await logout();
+  } catch (err) {
+    // The session cookie may still be set, so the page must not pretend it signed out.
+    addLine("system", `Couldn't sign out (${(err as Error).message}). Check your connection and try again.`, "error");
+    return;
+  }
   history.length = 0;
   transcript.replaceChildren();
   clearTrace(calls);

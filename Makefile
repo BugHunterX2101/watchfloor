@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 ENV ?= local
 
-.PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency evals test test-all test-agents agents-sync agents-image lint snapshot snapshot-check \
+.PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency perf-plans evals test test-all test-agents agents-sync agents-image lint snapshot snapshot-check \
         demo-reset demo-clock demo-watch-now demo-status harness-sync harness-web test-harness ui \
         infra-sync package synth test-infra deploy cdk-deploy default-hosts agents-push migrate-remote seed-remote
 
@@ -56,6 +56,9 @@ conformance-remote:   ## CF-01..15 against a running server as the canary user (
 
 latency:              ## p95/p99 of the read tools, paced under the per-user rate limit (N=200 by default)
 	uv run python scripts/latency_probe.py --env $(ENV) --n $(or $(N),200)
+
+perf-plans:           ## EXPLAIN (ANALYZE, BUFFERS) of the hot-path queries on the local seed → docs/perf/
+	uv run python scripts/explain_plans.py --check
 
 evals:                ## deep-triage evals: 40 driver + 10 injection cases (ENV=local uses the offline engine)
 	uv run python tests/evals/run_triage_eval.py --env $(ENV) $(if $(OUT),--out $(OUT),)

@@ -1,0 +1,41 @@
+-- attention_counts · commit 079be7d · 136 deals · 1837 activities · 118 scores
+
+-- statement 1 of 1: 0.648 ms
+SELECT count(*) FILTER (WHERE rs.band IN ('at_risk', 'watch')) AS attention,
+                  count(*) FILTER (WHERE rs.band = 'at_risk') AS at_risk,
+                  count(*) FILTER (WHERE rs.band IN ('at_risk', 'watch')
+                                   AND rs.band_since > COALESCE($2::timestamptz, '-infinity')) AS new_count,
+                  max(rs.computed_at) AS computed_at
+           FROM risk_scores rs
+           JOIN deals d    ON d.id = rs.deal_id
+           JOIN accounts a ON a.id = d.account_id
+           WHERE d.stage NOT IN ('won', 'lost') AND ($1::text IS NULL OR a.segment = $1)
+
+Aggregate  (cost=162.71..162.72 rows=1 width=32) (actual time=0.583..0.587 rows=1 loops=1)
+  Buffers: shared hit=154
+  ->  Hash Join  (cost=16.69..161.03 rows=84 width=20) (actual time=0.331..0.556 rows=118 loops=1)
+        Hash Cond: (d.account_id = a.id)
+        Buffers: shared hit=154
+        ->  Hash Join  (cost=13.59..157.68 rows=84 width=49) (actual time=0.283..0.475 rows=118 loops=1)
+              Hash Cond: (rs.deal_id = d.id)
+              Buffers: shared hit=152
+              ->  Seq Scan on risk_scores rs  (cost=0.00..143.77 rows=118 width=49) (actual time=0.003..0.146 rows=118 loops=1)
+                    Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                    Buffers: shared hit=142
+              ->  Hash  (cost=12.38..12.38 rows=97 width=58) (actual time=0.273..0.274 rows=118 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 19kB
+                    Buffers: shared hit=10
+                    ->  Seq Scan on deals d  (cost=0.00..12.38 rows=97 width=58) (actual time=0.011..0.081 rows=118 loops=1)
+                          Filter: ((workspace_id = current_setting('app.workspace_id'::text, true)) AND (stage <> ALL ('{won,lost}'::deal_stage[])))
+                          Rows Removed by Filter: 18
+                          Buffers: shared hit=10
+        ->  Hash  (cost=2.60..2.60 rows=40 width=29) (actual time=0.041..0.042 rows=40 loops=1)
+              Buckets: 1024  Batches: 1  Memory Usage: 11kB
+              Buffers: shared hit=2
+              ->  Seq Scan on accounts a  (cost=0.00..2.60 rows=40 width=29) (actual time=0.016..0.031 rows=40 loops=1)
+                    Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                    Buffers: shared hit=2
+Planning:
+  Buffers: shared hit=20
+Planning Time: 0.509 ms
+Execution Time: 0.648 ms

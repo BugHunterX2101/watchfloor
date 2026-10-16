@@ -1,0 +1,61 @@
+-- ranked_risks · commit 079be7d · 136 deals · 1837 activities · 118 scores
+
+-- statement 1 of 1: 1.773 ms
+SELECT d.id AS deal_id, d.name, a.name AS account, d.amount_cents, d.stage::text AS stage,
+                  u.display_name AS owner, rs.score, rs.band::text AS band,
+                  rs.reasons -> 0 ->> 'text' AS top_reason,
+                  rs.band_since > COALESCE($2::timestamptz, '-infinity') AS new_since_last_briefing
+           FROM risk_scores rs
+           JOIN deals d    ON d.id = rs.deal_id
+           JOIN accounts a ON a.id = d.account_id
+           JOIN users u    ON u.id = d.owner_id
+           WHERE rs.band IN ('at_risk', 'watch')
+             AND d.stage NOT IN ('won', 'lost')
+             AND ($3::text IS NULL OR a.segment = $3)
+           ORDER BY (rs.band = 'at_risk') DESC, rs.score::bigint * d.amount_cents DESC, d.id
+           LIMIT $1
+
+Limit  (cost=166.39..166.43 rows=13 width=211) (actual time=1.125..1.130 rows=7 loops=1)
+  Buffers: shared hit=162
+  ->  Sort  (cost=166.39..166.53 rows=56 width=211) (actual time=1.122..1.126 rows=7 loops=1)
+        Sort Key: ((rs.band = 'at_risk'::risk_band)) DESC, (((rs.score)::bigint * d.amount_cents)) DESC, d.id
+        Sort Method: quicksort  Memory: 26kB
+        Buffers: shared hit=162
+        ->  Nested Loop  (cost=16.83..165.08 rows=56 width=211) (actual time=0.847..1.060 rows=7 loops=1)
+              Buffers: shared hit=162
+              ->  Hash Join  (cost=16.69..161.13 rows=56 width=521) (actual time=0.742..0.893 rows=7 loops=1)
+                    Hash Cond: (d.account_id = a.id)
+                    Buffers: shared hit=154
+                    ->  Hash Join  (cost=13.59..157.88 rows=56 width=533) (actual time=0.509..0.654 rows=7 loops=1)
+                          Hash Cond: (rs.deal_id = d.id)
+                          Buffers: shared hit=152
+                          ->  Seq Scan on risk_scores rs  (cost=0.00..144.06 rows=79 width=426) (actual time=0.013..0.150 rows=7 loops=1)
+                                Filter: ((workspace_id = current_setting('app.workspace_id'::text, true)) AND (band = ANY ('{at_risk,watch}'::risk_band[])))
+                                Rows Removed by Filter: 111
+                                Buffers: shared hit=142
+                          ->  Hash  (cost=12.38..12.38 rows=97 width=136) (actual time=0.397..0.397 rows=118 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 29kB
+                                Buffers: shared hit=10
+                                ->  Seq Scan on deals d  (cost=0.00..12.38 rows=97 width=136) (actual time=0.014..0.097 rows=118 loops=1)
+                                      Filter: ((workspace_id = current_setting('app.workspace_id'::text, true)) AND (stage <> ALL ('{won,lost}'::deal_stage[])))
+                                      Rows Removed by Filter: 18
+                                      Buffers: shared hit=10
+                    ->  Hash  (cost=2.60..2.60 rows=40 width=46) (actual time=0.117..0.118 rows=40 loops=1)
+                          Buckets: 1024  Batches: 1  Memory Usage: 12kB
+                          Buffers: shared hit=2
+                          ->  Seq Scan on accounts a  (cost=0.00..2.60 rows=40 width=46) (actual time=0.028..0.044 rows=40 loops=1)
+                                Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                                Buffers: shared hit=2
+              ->  Memoize  (cost=0.14..0.29 rows=1 width=39) (actual time=0.021..0.021 rows=1 loops=7)
+                    Cache Key: d.owner_id
+                    Cache Mode: logical
+                    Hits: 3  Misses: 4  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                    Buffers: shared hit=8
+                    ->  Index Scan using users_pkey on users u  (cost=0.13..0.28 rows=1 width=39) (actual time=0.025..0.025 rows=1 loops=4)
+                          Index Cond: (id = d.owner_id)
+                          Filter: (workspace_id = current_setting('app.workspace_id'::text, true))
+                          Buffers: shared hit=8
+Planning:
+  Buffers: shared hit=24
+Planning Time: 1.599 ms
+Execution Time: 1.773 ms

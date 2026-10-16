@@ -7,12 +7,17 @@
 | Document | Design Document (DD), v1.0 |
 | Status | Ready for build review |
 | Date | Thu, Oct 8, 2026 |
-| Implements | Watchfloor PRD v1.0 (`Watchfloor PRD.md` / `Watchfloor-PRD.html`) |
+| Implements | Watchfloor PRD v1.0 ([PRD.md](PRD.md)) |
 | Hackathon | Build, Ship, Shape: Amazon Developer Hackathon 2026, Alexa+ track + AWS Builder mini challenge |
 | Hard deadline | Fri, Oct 23, 2026, 12:00 PT (Sat, Oct 24, 00:30 IST). Internal submit target: Thu, Oct 22, 17:00 PT |
 | Protocol baseline | MCP **2025-11-25**, Streamable HTTP, stateless mode |
 | Primary language | Python 3.12 (services), TypeScript (MCP App UI, harness UI) |
 | Cloud | AWS `us-east-1` |
+
+> **Design-time document (Oct 8, 2026).** The decisions here are the baseline; where the build departs from
+> them, the ADRs in [adr/](adr/) and the [implementation notes](implementation-notes.md) say how and why,
+> and [TECHNICAL.md](TECHNICAL.md) describes the repository as it is (its §5 tree is checked against the files
+> by `tests/unit/test_docs_sync.py`).
 
 **Conventions.** **MUST**, **SHOULD** and **MAY** follow RFC 2119. Items marked **⚠ Verify** are assumptions about third-party behavior. Each must be confirmed by a spike (see §27) before the related code is final. All data shown is synthetic. Times are ISO 8601. Money is stored as integer cents.
 
@@ -205,6 +210,11 @@ sequenceDiagram
 ## 4. Repository and runtime layout
 
 Monorepo, Apache-2.0 license (visible in GitHub "About"), Python 3.12, `uv` for dependency management.
+
+The layout as planned. The repository as built (packages under `services/mcp_server/mcp_server/`,
+`services/workers/workers/` and `services/agents/agents/`, the harness's own `api/` and `web/`, the add-on
+listing assets under `scripts/addon_assets/` with no `addon-package/` until Path A) is the tree in
+[TECHNICAL.md §5](TECHNICAL.md#5-repository-file-structure).
 
 ```
 watchfloor/
@@ -1979,7 +1989,7 @@ P2 items → `log_deal_update` (Slice 4) → MCP Apps (fall back to text-only) �
 
 ## 30. References
 
-- Watchfloor PRD v1.0 (`Watchfloor PRD.md`, `Watchfloor-PRD.html`), Oct 8, 2026
+- Watchfloor PRD v1.0 ([PRD.md](PRD.md)), Oct 8, 2026
 - Hackathon official rules: https://amazonappdev2026.devpost.com/rules
 - Alexa+ MCP Toolkit overview: https://developer.amazon.com/en-US/docs/alexaplus/add-ons/mcp-toolkit-overview.html
 - Alexa+ MCP add-on quickstart (auth checklist, 500 ms requirement, `addon.json`): https://developer.amazon.com/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html
