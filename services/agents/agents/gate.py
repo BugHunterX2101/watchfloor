@@ -9,8 +9,8 @@ Lead (or the offline engine) and before anything leaves the container:
    play allows, it contains a link or discount language, it names a person
    (assignee or new owner) this job never saw, or its params don't pass
    ``propose_action``'s own validation.
-3. The voice summary loses links and ids and is trimmed, sentence by sentence,
-   to 45 words and 320 characters.
+3. The voice summary loses links, ids, e-mail addresses and phone numbers and
+   is trimmed, sentence by sentence, to 45 words and 320 characters.
 
 The dispatcher validates ``TriageOutput`` again on its side.
 """
@@ -31,6 +31,13 @@ MAX_WORDS = 45
 MAX_CHARS = 320
 URL = re.compile(r"(https?://|www\.)\S*", re.IGNORECASE)
 IDS = re.compile(r"\b(?:ws|us|ac|ct|dl|act|hist|pr|tk|job|rule|al|aud)_[0-9A-Za-z]+\b")
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# A phone number: +44 20 7946 0958, (415) 555-0134, 415.555.0134. Separators are required, so
+# amounts ($84,000), dates (2026-10-21) and day counts never match.
+PHONE = re.compile(
+    r"(?<![\w$])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)\s?|\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}(?![\w-])"
+)
+LOOSE_PUNCT = re.compile(r"\s+([.,;:!?])")
 DISCOUNT = re.compile(
     r"\b(discount\w*|rebate\w*|waive\w*|free (month|year|seat)s?|price (cut|reduction|match)\w*)\b"
     r"|\d+\s*(%|percent)\s*off\b",
@@ -60,7 +67,9 @@ def _clamp(x: float) -> float:
 
 
 def speakable(text: str, *, fallback: str) -> str:
-    text = _squash(IDS.sub("", URL.sub("", text)).replace("()", ""))
+    """Plain speech: no links, ids, e-mail addresses or phone numbers, within the word and length caps."""
+    text = PHONE.sub("", EMAIL.sub("", IDS.sub("", URL.sub("", text))))
+    text = LOOSE_PUNCT.sub(r"\1", _squash(text.replace("()", "")))
     kept: list[str] = []
     for sentence in SENTENCE.split(text):
         candidate = " ".join([*kept, sentence])

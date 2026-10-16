@@ -1175,6 +1175,10 @@
       "outputSchema": {
         "additionalProperties": false,
         "properties": {
+          "checked": {
+            "description": "Whether the review's critic approved it; absent for the rule-based review.",
+            "type": "boolean"
+          },
           "deal_id": {
             "type": "string"
           },
@@ -1210,6 +1214,14 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "engine": {
+            "description": "Who reviewed: strands is the full multi-agent review, offline the quick rule-based one.",
+            "enum": [
+              "strands",
+              "offline"
+            ],
+            "type": "string"
           },
           "finished_at": {
             "type": "string"

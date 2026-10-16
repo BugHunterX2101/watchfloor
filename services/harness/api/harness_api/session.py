@@ -2,10 +2,12 @@
 
 The harness is a public OAuth client with no server-side store (it runs on
 Lambda), so the tokens ride in an HttpOnly, SameSite=Lax cookie that only this
-API can read. Two cookies:
+API can read. Three cookies:
 
 - ``wf_h``: the session, ``{"at": access, "rt": refresh, "exp": epoch seconds}``;
-- ``wf_h_pkce``: one sign-in attempt, ``{"v": verifier, "s": state}``, valid 10 minutes.
+- ``wf_h_pkce``: one sign-in attempt, ``{"v": verifier, "s": state}``, valid 10 minutes;
+- ``wf_h_pending``: what waits for the next turn, ``{"t": token, "s": summary, "k": "preview" |
+  "confirmed", "u": epoch seconds}`` (``agent.Pending``), valid 15 minutes at most.
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ SESSION_COOKIE = "wf_h"
 PKCE_COOKIE = "wf_h_pkce"
 PKCE_TTL_S = 600
 SESSION_TTL_S = 30 * 86400  # the refresh token's lifetime; the access token is refreshed inside it
+# The preview waiting for the user's yes (or the action just confirmed), between turns (agent.Pending).
+PENDING_COOKIE = "wf_h_pending"
+PENDING_TTL_S = 15 * 60  # a preview's longest life, extensions included (actions.MAX_PREVIEW)
 
 
 @dataclass

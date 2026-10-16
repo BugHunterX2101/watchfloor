@@ -53,7 +53,10 @@ mini challenge names the Strands SDK among the AWS services that qualify.
   async stack, outside the VPC: it reaches only the MCP server and the model. Its handler runs the
   same event stream as the AgentCore entrypoint and returns the events; the dispatcher invokes it
   synchronously, once, and reads the terminal event as it reads the runtime's stream.
-- The agents run on Bedrock while `models_enabled` is on, else on the Gemini model for both tiers.
+- The agents run on Bedrock while `models_enabled` is on, else on Gemini: the reasoning tier on
+  `WF_GEMINI_MODEL_ID`, the fast tier (harness turns, drafts, Analyst, Context) on
+  `WF_GEMINI_HAIKU_MODEL_ID` when it is set (`gemini_haiku_model` in the env config), else on the
+  same model. Check each model's free-tier limits in AI Studio before splitting them.
   Strands' retry back-off is off for every agent, so a throttled model fails at once: a specialist
   returns an error the Lead works around, and a Lead whose model fails hands the review to the
   offline engine. The result then says `"engine": "offline"`, and the gate and evidence check run

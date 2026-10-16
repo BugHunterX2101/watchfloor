@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import time
 from pathlib import Path
 
@@ -10,8 +12,10 @@ import pytest
 from conftest import (
     BOARD_HTML,
     BRIEFING,
+    DONE,
     EXPLAIN,
     HARBOR,
+    PREVIEW,
     FakeAuth,
     FakeMcp,
     ScriptedModel,
@@ -272,6 +276,148 @@ async def test_views_call_allowlisted_tools_with_the_users_token(
     r = await client.post("/api/tool", json={"name": "set_standing_order", "arguments": {}})
     assert r.status_code == 403 and r.json()["error"] == "not_allowed"
     assert mcp.names() == ["explain_deal_risk"]  # the refused call never reached MCP
+
+
+class StepsModel(ScriptedModel):
+    """Calls each (tool, arguments) in turn, one per model call, then speaks the last result's summary.
+
+    ``fail_after`` raises instead of answering once the steps are done, like a model throttled mid-turn.
+    """
+
+    def __init__(self, *steps: tuple[str, dict[str, object]], fail_after: bool = False) -> None:
+        super().__init__(steps[0][0])
+        self.steps, self.fail_after = list(steps), fail_after
+        self.prompts: list[str] = []
+
+    async def stream(self, messages, *a, **k):  # type: ignore[override]
+        self.prompts.append(a[1] if len(a) > 1 else k.get("system_prompt") or "")
+        done = sum(
+            1 for m in messages if m["role"] == "user" and any("toolResult" in b for b in m["content"])
+        )
+        if done < len(self.steps):
+            tool, args = self.steps[done]
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockStart": {"start": {"toolUse": {"toolUseId": f"t{done}", "name": tool}}}}
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(args)}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        if self.fail_after:
+            raise RuntimeError("ThrottlingException")
+        last = messages[-1]["content"][0]["toolResult"]
+        text = last["content"][0]["text"]
+        with contextlib.suppress(ValueError, KeyError, TypeError):  # a refusal is plain text
+            text = json.loads(text)["summary"]
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockDelta": {"delta": {"text": text}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+def _model_app(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, models: list[ScriptedModel]
+) -> httpx.AsyncClient:
+    """A signed-in-able client whose turns use ``models`` in order, one per turn."""
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="test.haiku"),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+        model_factory=lambda cfg: models.pop(0),
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test")
+
+
+PROPOSE = ("propose_action", {"deal_id": HARBOR})
+
+
+async def test_a_spoken_yes_confirms_the_preview_of_the_turn_before(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A1: the token rides in the encrypted cookie, and only the next turn may confirm with it."""
+    first = StepsModel(PROPOSE, ("confirm_action", {"confirmation_token": "tok_1"}))
+    wrong = StepsModel(("confirm_action", {"confirmation_token": "tok_other"}))
+    yes = StepsModel(("confirm_action", {"confirmation_token": "tok_1"}))
+    undo = StepsModel(("undo_action", {"confirmation_token": "tok_1"}))
+    async with _model_app(tmp_path, auth, mcp, [first, wrong, yes, undo]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Have Maya call the CFO by Friday."})
+        assert mcp.names() == ["propose_action"], "the same-turn confirmation never reached the server"
+        assert "hasn't answered this preview" in r.json()["reply"]
+        sealed = r.cookies.get("wf_h_pending")
+        assert sealed and "tok_1" not in sealed  # encrypted, not readable by the page
+
+        r = await c.post("/converse", json={"message": "Yes."})
+        assert mcp.names() == ["propose_action"] and "isn't the preview" in r.json()["reply"]
+
+        r = await c.post("/converse", json={"message": "Yes, go ahead."})
+        assert 'confirmation_token "tok_1"' in yes.prompts[0] and PREVIEW in yes.prompts[0]
+        assert (
+            mcp.calls[-1] == ("confirm_action", {"confirmation_token": "tok_1"}) and r.json()["reply"] == DONE
+        )
+
+        r = await c.post("/converse", json={"message": "Actually, undo that."})
+        assert 'undo_action with confirmation_token "tok_1"' in undo.prompts[0]
+        assert mcp.names()[-1] == "undo_action"
+        assert "wf_h_pending" not in c.cookies  # nothing waits any more
+
+
+async def test_the_offline_engine_confirms_a_preview_made_in_a_view(
+    client: httpx.AsyncClient, mcp: FakeMcp
+) -> None:
+    await sign_in(client)
+    r = await client.post("/api/tool", json={"name": "propose_action", "arguments": {"deal_id": HARBOR}})
+    assert r.status_code == 200 and r.cookies.get("wf_h_pending")
+
+    r = await client.post("/converse", json={"message": "yes, but make it Monday"})
+    assert mcp.names()[-1] != "confirm_action"  # not a plain yes: the router does something else
+
+    r = await client.post("/converse", json={"message": "Yes, please."})
+    assert r.json()["engine"] == "offline" and r.json()["reply"] == DONE
+    assert mcp.calls[-1] == ("confirm_action", {"confirmation_token": "tok_1"})
+    r = await client.post("/converse", json={"message": "Undo that."})
+    assert mcp.calls[-1] == ("undo_action", {"confirmation_token": "tok_1"})
+
+    await client.post("/api/logout")
+    assert "wf_h_pending" not in client.cookies
+
+
+async def test_a_model_that_failed_after_a_change_is_not_replayed(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A4: no second model or offline router after a write; a read-only failure still falls back."""
+    wrote = StepsModel(("set_standing_order", {"min_score": 65}), fail_after=True)
+    read = StepsModel(("explain_deal_risk", {"deal_id": HARBOR}), fail_after=True)
+    async with _model_app(tmp_path, auth, mcp, [wrote, read]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        body = r.json()
+        assert mcp.names() == ["set_standing_order"]
+        assert (
+            body["engine"] == "strands" and body["reply"].startswith("Saved.") and "stopped" in body["reply"]
+        )
+
+        r = await c.post("/converse", json={"message": "What needs my attention today?"})
+        assert r.json()["engine"] == "offline" and mcp.names()[-1] == "get_risk_briefing"
+
+
+async def test_every_turn_logs_its_model_usage(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with _model_app(
+        tmp_path, auth, mcp, [ScriptedModel("explain_deal_risk", {"deal_id": HARBOR})]
+    ) as c:
+        await sign_in(c)
+        with caplog.at_level("INFO", logger="watchfloor.usage"):
+            await c.post("/converse", json={"message": "Why is Harbor at risk?"})
+    [line] = [r.getMessage() for r in caplog.records if r.name == "watchfloor.usage"]
+    assert line.startswith("llm_usage scope=harness engine=strands model=model calls=2 input_tokens=0")
+
+
+def test_the_fast_tier_gemini_model_runs_the_harness(tmp_path: Path) -> None:
+    cfg = make_config(
+        tmp_path, env="dev", models_enabled=False, gemini_haiku_model_id="gemini-fast", **GEMINI
+    )
+    assert gemini_model(cfg).get_config()["model_id"] == "gemini-fast"
 
 
 def test_history_becomes_alternating_strands_messages() -> None:

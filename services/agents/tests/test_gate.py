@@ -117,6 +117,19 @@ def test_voice_summary_is_made_speakable() -> None:
     assert speakable(nova, fallback="x" * 12) == "Harbor and Pine went quiet after the proposal."
 
 
+def test_contact_details_are_never_spoken() -> None:
+    said = speakable(
+        "Call Dana at (415) 555-0134 or +44 20 7946 0958, or write to dana.okafor@harbor-pine.example. "
+        "The $84,000 renewal slipped to 2026-10-21 after 12 days of silence.",
+        fallback="x" * 12,
+    )
+    assert said == (
+        "Call Dana at or, or write to. The $84,000 renewal slipped to 2026-10-21 after 12 days of silence."
+    )
+    for kept in ("415.555 is not a phone", "Health 34, down 12 points since 10.2"):
+        assert speakable(kept, fallback="x" * 12) == kept
+
+
 def test_gate_output_is_the_dispatcher_contract(job: JobData) -> None:
     out = finalize(_draft(voice_summary="", recommended_actions=[_task()]), job)
     assert out.voice_summary == "Harbor & Pine is At Risk, health 34."

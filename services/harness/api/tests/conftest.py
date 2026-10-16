@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -15,6 +16,7 @@ from harness_api.app import create_app
 from harness_api.config import HarnessConfig
 from starlette.applications import Starlette
 from strands.models.model import Model
+from watchfloor_core.clock import Clock
 from watchfloor_core.settings import Settings
 
 ISSUER = "http://auth.test"
@@ -52,7 +54,40 @@ TOOLS = [
         "description": "List standing orders.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "set_standing_order",
+        "description": "Keep watching for something.",
+        "inputSchema": {"type": "object", "properties": {"min_score": {"type": "integer"}}},
+        "annotations": {"destructiveHint": False},
+    },
+    {
+        "name": "propose_action",
+        "description": "Preview a change.",
+        "inputSchema": {"type": "object", "properties": {"deal_id": {"type": "string"}}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "confirm_action",
+        "description": "Carry out a previewed change.",
+        "inputSchema": {"type": "object", "properties": {"confirmation_token": {"type": "string"}}},
+        "annotations": {"destructiveHint": True, "idempotentHint": True},
+    },
+    {
+        "name": "undo_action",
+        "description": "Reverse a change just confirmed.",
+        "inputSchema": {"type": "object", "properties": {"confirmation_token": {"type": "string"}}},
+        "annotations": {"destructiveHint": True, "idempotentHint": True},
+    },
 ]
+for _read in ("get_risk_briefing", "lookup_deal", "explain_deal_risk", "list_standing_orders"):
+    next(t for t in TOOLS if t["name"] == _read)["annotations"] = {"readOnlyHint": True}
+PREVIEW = "I'll create a task for Maya to call the CFO by Friday. Should I go ahead?"
+DONE = "Done. Maya has a task to call the CFO by Friday."
+
+
+def _in(seconds: int) -> str:
+    """An ISO time with its offset, as the server's ``local_iso`` writes it."""
+    return (Clock().now() + timedelta(seconds=seconds)).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -125,6 +160,14 @@ class FakeMcp:
             return {"summary": EXPLAIN}
         if name == "start_deep_triage":
             return {"summary": "I've started a deep review of Harbor & Pine.", "job_id": "job_01X"}
+        if name == "propose_action":
+            return {"summary": PREVIEW, "confirmation_token": "tok_1", "expires_at": _in(300)}
+        if name == "confirm_action":
+            return {"summary": DONE, "status": "executed", "undo_until": _in(30)}
+        if name == "undo_action":
+            return {"summary": "Undone. The task is gone.", "status": "undone"}
+        if name == "set_standing_order":
+            return {"summary": "Saved. I'll watch for deals under health 35.", "rule_id": "rule_1"}
         return {"summary": "You have one standing order."}
 
     def names(self) -> list[str]:

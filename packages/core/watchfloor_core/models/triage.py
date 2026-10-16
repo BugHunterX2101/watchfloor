@@ -12,6 +12,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ActionType = Literal["create_task", "reassign_owner", "notify_channel", "draft_followup"]
+Engine = Literal["strands", "offline"]
+SpecialistStatus = Literal["ok", "issues", "failed", "timed_out"]
+UNCHECKED_CONFIDENCE = 0.5  # the most a review may claim when its critic didn't approve it
 _URL = re.compile(r"(https?://|www\.)", re.IGNORECASE)
 _PLAY = re.compile(r"^P(0[1-9]|1[0-2])$")
 
@@ -65,6 +68,16 @@ class TriageOutput(BaseModel):
     risk_drivers: Annotated[list[Driver], Field(min_length=1, max_length=5)]
     recommended_actions: Annotated[list[RecommendedAction], Field(max_length=3)]
     confidence: Annotated[float, Field(ge=0, le=1)]
+    # Set by the agents' runner, never by a model (the Lead fills LeadDraft). Results stored before
+    # they were recorded have none of them.
+    # Who answered: the multi-agent review ("strands"), or the rule-based one ("offline", ADR-023).
+    engine: Engine | None = None
+    # Whether the critic approved the final draft; None when no critic runs (the offline engine).
+    checked: bool | None = None
+    # How each specialist the Lead called last finished; "issues" is a critic that found problems.
+    specialists: dict[Annotated[str, Field(max_length=40)], SpecialistStatus] = Field(
+        default_factory=dict, max_length=8
+    )
 
     @field_validator("voice_summary")
     @classmethod

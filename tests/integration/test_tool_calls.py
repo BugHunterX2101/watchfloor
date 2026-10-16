@@ -78,6 +78,17 @@ async def test_every_call_is_audited_with_its_trace_id(seeded: str, mcp: Mcp) ->
     assert len(row["args_hash"]) == 32, "arguments are stored only as a SHA-256"
 
 
+async def test_the_same_standing_order_twice_is_one_order(seeded: str, mcp: Mcp) -> None:
+    """A repeated request (or a replayed turn) must not double every alert."""
+    before = len((await mcp.ok("list_standing_orders", {}))["rules"])
+    first = await mcp.ok("set_standing_order", {"min_amount_usd": 60000, "quiet_days": 6})
+    again = await mcp.ok("set_standing_order", {"quiet_days": 6, "min_amount_usd": 60000})
+    assert again["rule_id"] == first["rule_id"] and again["summary"].startswith("You already have")
+    assert len((await mcp.ok("list_standing_orders", {}))["rules"]) == before + 1
+    other = await mcp.ok("set_standing_order", {"min_amount_usd": 60000, "quiet_days": 7})
+    assert other["rule_id"] != first["rule_id"]
+
+
 async def test_log_update_applies_now_and_proposes_forecast_changes(seeded: str, mcp: Mcp) -> None:
     update = await mcp.ok(
         "log_deal_update",

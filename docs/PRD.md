@@ -523,7 +523,7 @@ Recommended actions are never executed by agents. Each one maps directly to a `p
 
 | Criterion (equal weight) | What judges should see | Proof in the submission |
 | --- | --- | --- |
-| **Tech Implementation** | Conformant MCP 2025-11-25, Alexa+-compatible OAuth, under 500 ms measured, Strands on AgentCore with Bedrock | Latency dashboard shown in the video; Local Inspector report in the repo; conformance tests in CI |
+| **Tech Implementation** | Conformant MCP 2025-11-25, Alexa+-compatible OAuth, under 500 ms measured, Strands on AgentCore with Bedrock | Latency dashboard shown in the video; conformance report and latency probe; conformance tests in CI |
 | **Design** | Voice-first flows, confirm-before-act, never-empty responses, a coherent Echo Show board | Five journeys in the video; screenshots in the README |
 | **Potential Impact** | A specific persona, measurable pain, a pilot path through a HubSpot connector, distribution through the Alexa+ add-on store | Impact section of the description; hypotheses H1 to H4 with a validation plan |
 | **Quality of the Idea** | Hits the named creative patterns: cross-service agentic workflow, cross-session state, MCP Apps, media cards | Standing-order and deep-triage moments in the video |

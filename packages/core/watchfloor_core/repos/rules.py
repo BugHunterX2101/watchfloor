@@ -33,6 +33,16 @@ async def create(
     return rid
 
 
+async def find_active(conn: asyncpg.Connection, user_id: str, rule: dict[str, Any]) -> asyncpg.Record | None:
+    """The user's active standing order with exactly this rule (jsonb equality ignores key order)."""
+    return await conn.fetchrow(
+        """SELECT id, description FROM standing_orders
+           WHERE user_id = $1 AND active AND rule = $2 ORDER BY created_at LIMIT 1""",
+        user_id,
+        rule,
+    )
+
+
 async def count_active(conn: asyncpg.Connection, user_id: str) -> int:
     return await conn.fetchval("SELECT count(*) FROM standing_orders WHERE user_id = $1 AND active", user_id)
 

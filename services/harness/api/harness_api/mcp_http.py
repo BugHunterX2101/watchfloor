@@ -58,6 +58,7 @@ class McpHttp:
     transport: httpx.AsyncBaseTransport | None = None
     calls: list[ToolCall] = field(default_factory=list)
     _ui: dict[str, str] = field(default_factory=dict)
+    _read_only: set[str] = field(default_factory=set)
     _rid: int = 0
     # A shared client from the app (kept alive across requests), or one of our own for this turn.
     # Building an httpx client costs hundreds of milliseconds on Windows (SSL context), so the app shares one.
@@ -113,7 +114,13 @@ class McpHttp:
             uri = ((t.get("_meta") or {}).get("ui") or {}).get("resourceUri")
             if uri:
                 self._ui[t["name"]] = uri
+            if (t.get("annotations") or {}).get("readOnlyHint") is True:
+                self._read_only.add(t["name"])
         return tools
+
+    def writes(self, tool: str) -> bool:
+        """Whether a call can change something: any tool not listed as ``readOnlyHint: true``."""
+        return tool not in self._read_only
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolCall:
         t0 = time.perf_counter()

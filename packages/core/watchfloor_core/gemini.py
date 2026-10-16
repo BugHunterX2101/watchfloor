@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Literal
 
 from .settings import Settings
 
@@ -21,6 +22,11 @@ _cache: dict[str, tuple[float, str]] = {}
 def configured(s: Settings) -> bool:
     """A Gemini model id and somewhere to read its key from."""
     return bool(s.gemini_model_id and (s.gemini_api_key or s.gemini_secret))
+
+
+def model_id(s: Settings, tier: Literal["sonnet", "haiku"]) -> str | None:
+    """The tier's model: ``WF_GEMINI_HAIKU_MODEL_ID`` for the fast tier when set, else ``WF_GEMINI_MODEL_ID``."""
+    return (s.gemini_haiku_model_id if tier == "haiku" else None) or s.gemini_model_id
 
 
 def api_key(s: Settings) -> str | None:

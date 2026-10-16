@@ -90,7 +90,7 @@ local cost is on sign-in and job-token minting.
 | Golden triage set with labeled drivers (DD §22.5) | Built from the seed at the frozen demo instant (`--write-golden`): the 40 highest-scoring deals, labeled with the RIGS factors behind their top three evidenced reasons, plus the 10 hostile deals; keyed by name and amount | RIGS generated the data, so its reasons are the ground truth; seeded ids carry the seed time, names don't. Live labels that differ are reported as drift |
 | 10 hostile deals (DD §22.5) vs "two hostile notes" in the seed description (DD §10.6) | `HOSTILE_DEALS = 10`; the first two keep their original random draws and the other eight use their own streams | Adding them changed no other seeded row; a deal the notes would lift out of Healthy is skipped |
 | Groundedness ≥ 98% | Evidence ids are enforced at store time; whether each claim is *supported* is a manual spot-check of a fixed 10-claim sample in the results file | Needs a reader (or a judge model, not built) |
-| Cost per job | Reported as "not measured" | Token usage isn't recorded per job yet |
+| Cost per job | Each job logs one `llm_usage` line (model calls, input and output tokens); the eval report points there | Token counts stay in the logs, not in the stored result; see "Update (2026-10-16)" below for the Logs Insights query |
 | (not in spec) | Every eval job posts its plan to Slack and writes a memory record | An incoming webhook can't be redirected; documented in the runner and README |
 | Latency probe at n = 200 | Calls are paced at 55/min, interleaved across tools; a 429 is waited out and not counted | The per-user limit is 60/min; a 200-call run per tool takes about 18 minutes |
 | `conformance_remote.py` | CF-01..15 except CF-04 (needs an agent token, covered by the unit suite); the Host-header 421 check runs locally only | Behind API Gateway the Host header is the custom domain by construction |
@@ -112,3 +112,29 @@ local cost is on sign-in and job-token minting.
 | (not in spec) | `demo.py` fills unset `WF_*` variables from `.env` | `make demo-clock` must run its watcher with the same `WF_DEMO_MODE` as `make dev` |
 | `outbox-retry` re-arms one row (TD §17.3) | `--id N` (repeatable) or `--all-dead`; only rows with status `dead` | Never resends a row that already went out |
 | `demo-status` prints state (DD §24) | Also checks the four scenario scores; exits 1 on drift | Catches a wrong clock offset before recording (DD §23) |
+
+## Update (2026-10-16): fixes from the agent architecture audit
+
+Rules enforced in code rather than in prompts, and what each review and turn now records.
+
+| Area | Built | Why |
+|---|---|---|
+| Spoken confirmation (harness) | A preview's `confirmation_token` and summary ride to the next turn in a third cookie, `wf_h_pending`: Fernet-sealed with the session's key, HttpOnly, at most 15 minutes. That turn's prompt names the waiting preview and its token; after a confirm, the token is kept for the 30 s undo window. A preview made in a view (`/api/tool`) is carried too. The offline router confirms on a plain "yes" and undoes on "undo" | Only `{role, text}` travels between turns, so "yes" could never reach the token |
+| Confirmation gate (harness) | `mcp_tool` refuses, before the server, a `confirm_action` whose token came from a preview in the same turn, or that isn't the waiting preview's token | The prompt said "only after the user says yes"; nothing enforced it |
+| Model chain (harness) | A model that fails after a successful call to a tool not marked `readOnlyHint` ends the turn with that call's summary and "I stopped rather than make the change twice"; no next model, no offline router | A second model replayed the turn and repeated the change |
+| `set_standing_order` | An identical active rule (same conditions and channel; jsonb equality) returns the existing order: "You already have that standing order" | A repeated request doubled every alert |
+| Who answered (agents → result) | The output carries `engine` (`strands` or `offline`); the dispatcher also copies the event's `engine` into an output without one. `get_triage_result` returns `engine` and `checked`, and says "This was the quick, rule-based review, not the full one." when the offline engine answered; the Slack plan is headed "Quick review" | `final_output` kept only `output`, so the label was lost and a fallback read as a full review |
+| Critic and specialists (agents) | Each specialist run is recorded (`ok`, `failed`, `timed_out`; the critic `issues` unless it answered `{"ok": true}`) and stored as `specialists`. A model review whose last critic run didn't approve it is `checked: false`, its confidence and its actions' confidences are capped at 0.5, and it says "This review wasn't double-checked, so treat it as a first pass." | A skipped or failed critic was invisible |
+| Memory records | "… Watchfloor recommended P01, P04." The Context prompt treats such a record as an earlier recommendation, not a preference | It read as the user's choice. Memory stays off until the confirm path, the sweeper and undo write what the user did (confirmed, expired, undone); none of them writes memory yet |
+| Spoken summary | `speakable` also strips e-mail addresses and phone numbers (separators required, so amounts, dates and day counts stay) | Contact details read aloud |
+| Usage | One `llm_usage` line per harness turn and per triage job: `scope`, `engine`, `model`, `calls` (Strands `cycle_count`), `input_tokens`, `output_tokens` (`accumulated_usage`), and for jobs `job` and `outcome`. Tokens a failed or timed-out model spent are included | Cost per job was unmeasured. No metric filter is deployed (a custom metric can cost beyond the free tier); query it instead |
+| Eval guard | Deployed runs count only `engine: strands` results; others are listed as `other_engine` and count as not completed (a hostile deal as unfinished). `--max-jobs` (kinds alternate), `--pace` (15 s between starts when deployed), and deployed runs between 2026-10-22 and 2026-11-20 are skipped unless `--during-judging` | A fallback run could pass on the rule-based engine, and an eval run spends the quota the judges need |
+| Gemini tiers | `WF_GEMINI_HAIKU_MODEL_ID` (`gemini_haiku_model`) runs the fast tier: harness, drafts, Analyst, Context. Unset, everything stays on `WF_GEMINI_MODEL_ID`; the shipped configs leave it unset | Lets the busiest tier move to a model with its own free-tier quota; check the limits in AI Studio first |
+
+Usage, summed in CloudWatch Logs Insights over the harness and triage log groups:
+
+```
+filter @message like /llm_usage/
+| parse @message "scope=* engine=* model=* calls=* input_tokens=* output_tokens=*" as scope, engine, model, calls, inp, out
+| stats count(*) as units, sum(calls) as model_calls, sum(inp) as input_tokens, sum(out) as output_tokens by scope, engine
+```

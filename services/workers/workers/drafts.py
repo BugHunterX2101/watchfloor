@@ -147,8 +147,9 @@ def drafter_from_settings(s: Settings) -> Drafter:
     chain: list[tuple[str, Drafter]] = []
     if s.models_enabled and s.haiku_model_id:
         chain.append(("bedrock", functools.partial(bedrock_draft, model_id=s.haiku_model_id)))
-    if gemini.configured(s) and s.gemini_model_id:
-        model_id = s.gemini_model_id
+    fast = gemini.model_id(s, "haiku")  # drafts are the fast tier (WF_GEMINI_HAIKU_MODEL_ID, if set)
+    if gemini.configured(s) and fast:
+        model_id: str = fast
 
         async def on_gemini(req: DraftRequest) -> str:
             try:

@@ -15,6 +15,11 @@ The golden set (``golden_triage.jsonl``) is built from the seed itself, at the f
 Deals are keyed by name and amount, because seeded ids carry the seed time. A label that no longer matches the
 live ``explain_deal_risk`` is reported as drift; it means the golden set needs rebuilding.
 
+Cost guard: only results the model review produced count on dev and demo (``--engine``; a job the
+quick, rule-based review answered is listed, not scored). Review starts are paced (``--pace``, 15 s
+apart when deployed), ``--max-jobs`` caps a run, and a deployed run inside the judging window is
+skipped unless ``--during-judging`` says otherwise.
+
 Side effects: every finished job posts its plan to the environment's Slack webhook (an incoming
 webhook can't be redirected) and adds a memory record for the signed-in user. Nothing else is
 written. A deal reviewed within the last few minutes returns that review (``deduplicated``); such
@@ -30,7 +35,8 @@ import random
 import sys
 import time
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +45,7 @@ ROOT = HERE.parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
 
 from remote_mcp import Remote, connect, default_url  # noqa: E402
+from watchfloor_core.clock import Clock  # noqa: E402
 
 from tests.evals.scoring import Case, score  # noqa: E402
 
@@ -50,6 +57,9 @@ HOSTILE_CASES = 10
 POLL_S = 3.0
 JOB_TIMEOUT_S = 150.0
 TERMINAL = {"done", "failed", "timed_out"}
+# The demo freeze (release-demo.yml, TD §17.5): judges are using the stack and its model quota.
+JUDGING = (date(2026, 10, 22), date(2026, 11, 20))
+DEPLOYED_PACE_S = 15.0  # deliberately slow: the model's free-tier quota is shared with the harness
 
 
 def labels(reasons: list[Any]) -> list[str]:
@@ -149,7 +159,34 @@ async def _deal_id(m: Remote, row: dict[str, Any]) -> str:
     return matches[0]
 
 
-async def run_case(m: Remote, row: dict[str, Any], slots: asyncio.Semaphore) -> Case:
+class Pacer:
+    """At least ``every_s`` between review starts, so the run never bursts the model's quota."""
+
+    def __init__(self, every_s: float) -> None:
+        self.every_s, self.next_at, self.lock = every_s, 0.0, asyncio.Lock()
+
+    async def wait(self) -> None:
+        async with self.lock:
+            delay = self.next_at - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self.next_at = time.monotonic() + self.every_s
+
+
+def in_judging_window(today: date) -> bool:
+    return JUDGING[0] <= today <= JUDGING[1]
+
+
+def capped(rows: list[dict[str, Any]], max_jobs: int | None) -> list[dict[str, Any]]:
+    """At most ``max_jobs`` cases, alternating kinds, so a small run still has hostile deals."""
+    if max_jobs is None:
+        return rows
+    kinds = [[r for r in rows if r["kind"] == k] for k in ("drivers", "injection")]
+    mixed = [r for pair in zip_longest(*kinds) for r in pair if r is not None]
+    return mixed[:max_jobs]
+
+
+async def run_case(m: Remote, row: dict[str, Any], slots: asyncio.Semaphore, pacer: Pacer) -> Case:
     case = Case(kind=row["kind"], deal=row["deal"], deal_id=None, labels=row.get("labels", []))
     try:
         case.deal_id = await _deal_id(m, row)
@@ -163,6 +200,7 @@ async def run_case(m: Remote, row: dict[str, Any], slots: asyncio.Semaphore) -> 
     async with slots:  # the server runs at most 3 reviews per workspace
         t0 = time.monotonic()
         while True:
+            await pacer.wait()
             try:
                 started = await _structured(m, "start_deep_triage", {"deal_id": case.deal_id})
                 break
@@ -190,11 +228,18 @@ async def run_case(m: Remote, row: dict[str, Any], slots: asyncio.Semaphore) -> 
 
 
 async def run(
-    url: str, *, token: str | None, env: str | None, rows: list[dict[str, Any]], concurrency: int
+    url: str,
+    *,
+    token: str | None,
+    env: str | None,
+    rows: list[dict[str, Any]],
+    concurrency: int,
+    pace_s: float = 0.0,
 ) -> list[Case]:
     slots = asyncio.Semaphore(concurrency)
+    pacer = Pacer(pace_s)
     async with connect(url, token=token, env=env, min_interval=60 / 55) as m:
-        tasks = [asyncio.create_task(run_case(m, row, slots)) for row in rows]
+        tasks = [asyncio.create_task(run_case(m, row, slots, pacer)) for row in rows]
         cases = []
         for finished in asyncio.as_completed(tasks):
             case = await finished
@@ -213,6 +258,8 @@ def _print(report: dict[str, Any]) -> None:
         print(f"{mark}  {name:<19} {m['value']!s:>7}  (threshold {m['threshold']}; {m['detail']})")
     print(f"      groundedness       {report['groundedness']['supported']}")
     print(f"      cost               {report['cost']}")
+    if report["other_engine"]:
+        print(f"      not {report['engine']} (not counted): {'; '.join(report['other_engine'][:5])}")
     if report["label_drift"]:
         print(f"      label drift on {len(report['label_drift'])} deals: rebuild with --write-golden")
 
@@ -228,6 +275,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--kind", choices=["all", "drivers", "injection"], default="all")
     ap.add_argument("--limit", type=int, help="at most this many cases of each kind (a smoke run)")
     ap.add_argument("--concurrency", type=int, default=3, help="reviews in flight (the server caps at 3)")
+    ap.add_argument("--max-jobs", type=int, help="start at most this many reviews in all (kinds alternate)")
+    ap.add_argument(
+        "--pace", type=float, help="seconds between review starts (default: 0 locally, 15 deployed)"
+    )
+    ap.add_argument(
+        "--engine",
+        choices=["strands", "any"],
+        help="results that count (default: any locally, where the offline engine runs; else strands)",
+    )
+    ap.add_argument(
+        "--during-judging",
+        action="store_true",
+        help="run against dev or demo even inside the judging window (it spends the judges' model quota)",
+    )
     ap.add_argument("--out", type=Path, help="results JSON (default: tests/evals/results/<env>-<time>.json)")
     ap.add_argument("--write-golden", action="store_true", help="rebuild golden_triage.jsonl from the seed")
     opts = ap.parse_args(argv)
@@ -238,6 +299,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {len(rows)} cases to {GOLDEN.relative_to(ROOT)}")
         return 0
 
+    deployed = opts.env != "local"
+    if deployed and in_judging_window(Clock().now().date()) and not opts.during_judging:
+        # Skipped, not failed: a hotfix release during the freeze still deploys (release-demo.yml).
+        print(
+            f"::notice::deep-triage evals skipped: {JUDGING[0]}..{JUDGING[1]} is the judging window, and "
+            "every case spends the model quota the judges' reviews need. --during-judging overrides it."
+        )
+        return 0
     rows = [r for r in load_golden() if opts.kind in ("all", r["kind"])]
     if opts.limit:
         rows = [
@@ -245,10 +314,15 @@ def main(argv: list[str] | None = None) -> int:
             for kind in ("drivers", "injection")
             for r in [x for x in rows if x["kind"] == kind][: opts.limit]
         ]
+    rows = capped(rows, opts.max_jobs)
+    engine = opts.engine or ("strands" if deployed else "any")
+    pace = opts.pace if opts.pace is not None else (DEPLOYED_PACE_S if deployed else 0.0)
     url = opts.url or default_url(opts.env)
-    print(f"{len(rows)} cases against {url}", file=sys.stderr)
-    cases = asyncio.run(run(url, token=opts.token, env=opts.env, rows=rows, concurrency=opts.concurrency))
-    report = score(cases)
+    print(f"{len(rows)} cases against {url}, one start every {pace:g} s, counting {engine}", file=sys.stderr)
+    cases = asyncio.run(
+        run(url, token=opts.token, env=opts.env, rows=rows, concurrency=opts.concurrency, pace_s=pace)
+    )
+    report = score(cases, engine=None if engine == "any" else engine)
     _print(report)
 
     out = opts.out or RESULTS / f"{opts.env}-{time.strftime('%Y%m%d-%H%M%S')}.json"

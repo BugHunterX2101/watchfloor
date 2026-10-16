@@ -6,6 +6,11 @@ its step limit and timeout, and returns its text. A specialist that times out
 or fails returns an ``{"error": ...}`` JSON string instead of raising, so the
 Lead can still finish with what it has. Repeat calls are budgeted: the analyst
 and context answers are cached, the strategist and critic get one revision.
+
+Each run is recorded on the job: its tokens, and how it finished (``ok``,
+``failed``, ``timed_out``, or for the critic ``issues`` unless it approved the
+draft). The runner stores that record with the result and marks a review the
+critic didn't approve as unchecked.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from strands import Agent, tool
 from watchfloor_core.bedrock import strip_reasoning
 from watchfloor_core.settings import Settings
 
+from ..data_tools import JobData
 from . import analyst, context, critic, strategist
 
 log = logging.getLogger("watchfloor.agents.specialists")
@@ -43,24 +49,50 @@ BUDGETS = {
 CACHED = {"signal_analyst", "account_context"}
 
 
-async def run_specialist(name: str, build: Callable[[], Agent], prompt: str, budget: Budget) -> str:
+def critic_verdict(text: str) -> str:
+    """``ok`` only when the critic answered ``{"ok": true, ...}``; anything else is ``issues``."""
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        verdict = json.loads(text[start : end + 1]) if 0 <= start < end else None
+    except ValueError:
+        verdict = None
+    return "ok" if isinstance(verdict, dict) and verdict.get("ok") is True else "issues"
+
+
+async def run_specialist(
+    name: str, build: Callable[[], Agent], prompt: str, budget: Budget, *, job: JobData | None = None
+) -> str:
+    """Run one specialist. With ``job``, record its tokens and how it finished (DD §10.5)."""
     cancel = threading.Event()
+    agent: Agent | None = None
+    status = "ok"
     try:
         agent = build()
         result = await asyncio.wait_for(
             agent.invoke_async(prompt, limits={"turns": budget.turns}, cancel_signal=cancel),
             budget.timeout_s,
         )
+        text = strip_reasoning(str(result))
+        if name == "critic_review":
+            status = critic_verdict(text)
+        return text
     except TimeoutError:
         cancel.set()
+        status = "timed_out"
         return json.dumps({"error": f"{name} ran out of time; continue without it"})
     except Exception as exc:  # one specialist failing must not end the review
         log.warning("%s failed: %s", name, type(exc).__name__, exc_info=True)
+        status = "failed"
         return json.dumps({"error": f"{name} failed; continue without it"})
-    return strip_reasoning(str(result))
+    finally:
+        if job is not None:
+            job.specialists[name] = status
+            job.usage.add(getattr(agent, "event_loop_metrics", None))
 
 
-def make_specialist_tools(data_tools: dict[str, Any], *, recall: Any, settings: Settings) -> list[Any]:
+def make_specialist_tools(
+    data_tools: dict[str, Any], *, recall: Any, settings: Settings, job: JobData | None = None
+) -> list[Any]:
     calls: dict[str, int] = {}
     answers: dict[str, str] = {}
 
@@ -71,7 +103,7 @@ def make_specialist_tools(data_tools: dict[str, Any], *, recall: Any, settings: 
                 return answers[name]
             return json.dumps({"error": f"{name} budget spent; finalize with what you have"})
         calls[name] = calls.get(name, 0) + 1
-        answers[name] = await run_specialist(name, build, prompt, budget)
+        answers[name] = await run_specialist(name, build, prompt, budget, job=job)
         return answers[name]
 
     @tool

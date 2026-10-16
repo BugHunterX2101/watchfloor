@@ -31,10 +31,19 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import pkce
-from .agent import ModelFactory, model_chain, run_turn
+from .agent import ModelFactory, Pending, model_chain, next_pending, run_turn
 from .config import HarnessConfig, Misconfigured, get_config
 from .mcp_http import McpError, McpHttp, Unauthorized
-from .session import PKCE_COOKIE, PKCE_TTL_S, SESSION_COOKIE, SESSION_TTL_S, Box, Session
+from .session import (
+    PENDING_COOKIE,
+    PENDING_TTL_S,
+    PKCE_COOKIE,
+    PKCE_TTL_S,
+    SESSION_COOKIE,
+    SESSION_TTL_S,
+    Box,
+    Session,
+)
 
 log = logging.getLogger("watchfloor.harness")
 
@@ -110,6 +119,18 @@ def create_app(
             name, value, max_age=max_age, httponly=True, samesite="lax", secure=conf.secure_cookies, path="/"
         )
 
+    def read_pending(request: Request) -> Pending | None:
+        return Pending.from_dict(box.open(request.cookies.get(PENDING_COOKIE), ttl=PENDING_TTL_S))
+
+    def keep_pending(request: Request, resp: Response, pending: Pending | None) -> None:
+        """Seal what waits for the next turn into the cookie, or clear it. Only after a turn that ran."""
+        if resp.status_code != 200:
+            return
+        if pending is not None:
+            set_cookie(resp, PENDING_COOKIE, box.seal(pending.to_dict()), PENDING_TTL_S)
+        elif PENDING_COOKIE in request.cookies:
+            resp.delete_cookie(PENDING_COOKIE, path="/")
+
     def back_to_web(**query: str) -> RedirectResponse:
         sep = "&" if "?" in conf.web_url else "?"
         return RedirectResponse(conf.web_url + (sep + urlencode(query) if query else ""), status_code=303)
@@ -153,6 +174,7 @@ def create_app(
             await pkce.revoke(s, session.refresh_token, transport=auth_transport)
         resp = JSONResponse({"signed_in": False})
         resp.delete_cookie(SESSION_COOKIE, path="/")
+        resp.delete_cookie(PENDING_COOKIE, path="/")
         return resp
 
     def signed_out() -> Response:
@@ -213,6 +235,8 @@ def create_app(
             return body
         assert isinstance(body, ConverseIn)
         history = [(line.role, line.text) for line in body.history]
+        pending = read_pending(request)
+        after: dict[str, Pending | None] = {}
 
         async def turn(token: str) -> dict[str, Any]:
             result = await run_turn(
@@ -223,10 +247,14 @@ def create_app(
                 http=mcp_client(),
                 model_factory=model_factory,
                 ui_cache=ui_cache,
+                pending=pending,
             )
+            after["pending"] = result.pending
             return result.public()
 
-        return await with_session(request, turn)
+        resp = await with_session(request, turn)
+        keep_pending(request, resp, after.get("pending"))
+        return resp
 
     async def view_tool(request: Request) -> Response:
         """A tool call from a ui:// view (row tap, Propose, the sheet's action, Undo), proxied with the user's token."""
@@ -239,8 +267,14 @@ def create_app(
                 {"error": "not_allowed", "message": f"{body.name} is not available to views"}, 403
             )
 
+        pending = read_pending(request)
+        after: dict[str, Pending | None] = {}
+
         async def call(token: str) -> dict[str, Any]:
             c = await McpHttp(s.mcp_url, token, http=mcp_client()).call_tool(body.name, body.arguments)
+            after["pending"] = next_pending(
+                pending, [c]
+            )  # a preview made in a view can be confirmed by voice
             return {
                 "structuredContent": c.structured,
                 "content": [{"type": "text", "text": c.text}] if c.text else [],
@@ -248,7 +282,9 @@ def create_app(
                 "call": c.public(),
             }
 
-        return await with_session(request, call)
+        resp = await with_session(request, call)
+        keep_pending(request, resp, after.get("pending"))
+        return resp
 
     async def healthz(request: Request) -> Response:
         models = [name for name, _ in model_chain(conf)]  # names only, never a key

@@ -1060,7 +1060,7 @@ class TriageOutput(BaseModel):
 - One memory resource, `watchfloor-mem`, with a **semantic** strategy (facts) and a **user-preference** strategy. **⚠ Verify (S6):** strategy names and namespace templates in the installed SDK.
 - `actorId = "{workspace_id}:{user_id}"`, giving isolation by identity rather than session (the PRD's `runtimeSessionId` keying is replaced).
 - Events written by the dispatcher, as compact natural-language records:
-  - *"Triage for Kestrel Biotech (dl_…): drivers R,I,S; recommended P01, P04."*
+  - *"Triage for Kestrel Biotech (dl_…): drivers R,I,S; Watchfloor recommended P01, P04."*
   - *"User confirmed P01 (create_task) for Kestrel Biotech."* / *"Recommendation P03 expired unconfirmed."*
 - Retrieval: the Account Context agent queries for "prior recommendations and preferences relevant to {account}" (top 5). Results go into the Strategist's context, marked as *user history*, not instructions.
 

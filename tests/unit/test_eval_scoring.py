@@ -40,6 +40,7 @@ TASK = {
 def _done(kind: str, deal: str, *, factors: str, labels: str = "", seconds: float = 12.0) -> Case:
     result = {
         "status": "done",
+        "engine": "strands",
         "voice_summary": "Kestrel has gone quiet for sixteen days. Book a call with their CFO this week.",
         "drivers": [{"factor": f, "claim": f"claim {f}", "evidence_ids": [f"act_{f}"]} for f in factors],
         "recommended_actions": [TASK],
@@ -69,7 +70,54 @@ def test_a_clean_run_passes_every_threshold() -> None:
     assert m["injection_findings"]["value"] == 0
     assert m["latency_p95_s"]["value"] == 12.0
     assert len(report["groundedness"]["judge_sample"]) == 10
-    assert "not measured" in report["cost"]
+    assert "llm_usage" in report["cost"] and report["other_engine"] == []
+
+
+def test_only_the_model_review_counts_on_deployed_runs() -> None:
+    """C2: a job the quick, rule-based review answered says nothing about the models."""
+    model = _done("drivers", "a", factors="R", labels="R")
+    quick = _done("drivers", "b", factors="R", labels="R")
+    quick.result["engine"] = "offline"
+    legacy = _done("drivers", "c", factors="R", labels="R")
+    del legacy.result["engine"]  # stored before the engine was recorded
+    hostile = _done("injection", "h", factors="I")
+    hostile.result["engine"] = "offline"
+
+    report = score([model, quick, legacy, hostile])
+    m = report["metrics"]
+    assert m["completion"]["value"] == 0.25 and "3 answered by another engine" in m["completion"]["detail"]
+    assert m["driver_recall"]["value"] == pytest.approx(1 / 3, abs=1e-4)
+    assert m["injection_findings"]["ok"] is False and "unfinished: h" in m["injection_findings"]["detail"]
+    assert report["other_engine"] == ["b: offline", "c: not recorded", "h: offline"]
+
+    anything = score(
+        [model, quick, legacy, hostile], engine=None
+    )  # a local run: the offline engine is the point
+    assert anything["metrics"]["completion"]["value"] == 1.0 and anything["engine"] == "any"
+
+
+def test_eval_runs_are_capped_paced_and_kept_out_of_judging() -> None:
+    import asyncio
+    import time
+    from datetime import date
+
+    from tests.evals import run_triage_eval as ev
+
+    rows = [{"kind": "drivers", "deal": f"d{i}"} for i in range(5)] + [
+        {"kind": "injection", "deal": f"h{i}"} for i in range(2)
+    ]
+    assert [r["deal"] for r in ev.capped(rows, 5)] == ["d0", "h0", "d1", "h1", "d2"]
+    assert ev.capped(rows, None) == rows
+    assert ev.in_judging_window(date(2026, 10, 22)) and ev.in_judging_window(date(2026, 11, 20))
+    assert not ev.in_judging_window(date(2026, 10, 21)) and not ev.in_judging_window(date(2026, 11, 21))
+
+    async def three_starts() -> float:
+        pacer, t0 = ev.Pacer(0.05), time.monotonic()
+        for _ in range(3):
+            await pacer.wait()
+        return time.monotonic() - t0
+
+    assert asyncio.run(three_starts()) >= 0.1
 
 
 def test_recall_counts_failed_jobs_as_missed() -> None:

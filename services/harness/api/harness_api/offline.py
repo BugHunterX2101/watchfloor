@@ -3,16 +3,29 @@
 It is not a language model and never pretends to be: the API labels every turn
 it answers with ``"engine": "offline"``. It exists so the harness, the OAuth flow
 and the real MCP tools can be exercised end to end on a laptop. Replies are the
-tools' own ``summary`` fields, which are written to be spoken (DD §6.3).
+tools' own ``summary`` fields, which are written to be spoken (DD §6.3). It never
+proposes a change, but a "yes" confirms a preview made in an earlier turn, and
+"undo" reverses the action just confirmed.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from .mcp_http import McpHttp
 
+if TYPE_CHECKING:
+    from .agent import Pending
+
+# The whole message is a plain yes ("Yes, go ahead."), so "yes, but change the title" is not one.
+YES = re.compile(
+    r"\s*(?:yes|yeah|yep|sure|ok|okay|go ahead|do it|confirm)"
+    r"(?:[\s,.!]+(?:yes|please|go ahead|do it|thanks|thank you))*[\s,.!]*",
+    re.IGNORECASE,
+)
+UNDO = re.compile(r"\b(undo|take (it|that) back|reverse (it|that))\b", re.IGNORECASE)
 STANDING = re.compile(r"standing orders?|my (rules|alerts)|what am i watching", re.IGNORECASE)
 RESULT = re.compile(r"\b(results?|finished|came back|outcome)\b", re.IGNORECASE)
 TRIAGE = re.compile(r"\b(deep|triage|review|dig into|look into)\b", re.IGNORECASE)
@@ -42,7 +55,14 @@ def recent_deal(history: Sequence[tuple[str, str]]) -> str:
     return ""
 
 
-async def offline_turn(mcp: McpHttp, message: str, history: Sequence[tuple[str, str]] = ()) -> str:
+async def offline_turn(
+    mcp: McpHttp, message: str, history: Sequence[tuple[str, str]] = (), pending: Pending | None = None
+) -> str:
+    """``pending``: the preview waiting for a yes, or the action just confirmed (agent.Pending)."""
+    if pending and pending.state == "preview" and YES.fullmatch(message):
+        return (await mcp.call_tool("confirm_action", {"confirmation_token": pending.token})).summary
+    if pending and pending.state == "confirmed" and UNDO.search(message):
+        return (await mcp.call_tool("undo_action", {"confirmation_token": pending.token})).summary
     if STANDING.search(message):
         return (await mcp.call_tool("list_standing_orders", {})).summary
     if not (TRIAGE.search(message) or EXPLAIN.search(message) or RESULT.search(message)):

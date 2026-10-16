@@ -26,7 +26,7 @@ def build_lead(job: JobData, settings: Settings, recall: Any) -> Agent:
     return Agent(
         model=sonnet(settings=settings),
         system_prompt=load_prompt("lead"),
-        tools=make_specialist_tools(make_data_tools(job), recall=recall, settings=settings),
+        tools=make_specialist_tools(make_data_tools(job), recall=recall, settings=settings, job=job),
         callback_handler=None,
         name="triage_lead",
         retry_strategy=None,  # fail at once on a throttle (ADR-023)
@@ -45,9 +45,12 @@ def lead_prompt(job: JobData) -> str:
 
 async def run_lead(job: JobData, settings: Settings, recall: Any) -> LeadDraft:
     lead = build_lead(job, settings, recall)
-    result = await lead.invoke_async(
-        lead_prompt(job), structured_output_model=LeadDraft, limits={"turns": LEAD_TURNS}
-    )
+    try:
+        result = await lead.invoke_async(
+            lead_prompt(job), structured_output_model=LeadDraft, limits={"turns": LEAD_TURNS}
+        )
+    finally:  # a failed or cancelled Lead still spent tokens
+        job.usage.add(lead.event_loop_metrics)
     draft = result.structured_output
     if not isinstance(draft, LeadDraft):
         raise Rejected("the lead returned no structured triage")

@@ -55,16 +55,25 @@ def conditions_from(args: m.SetRuleIn) -> dict[str, Any]:
 
 
 async def create_rule(ctx: ServiceContext, args: m.SetRuleIn) -> m.SetRuleOut:
+    channel = args.channel or (await prefs.get(ctx.conn, ctx.user_id, ctx.ws))["alert_channel"]
+    conditions = conditions_from(args)
+    rule = {"version": 1, "conditions": conditions, "channel": channel}
+    # The same order twice (a repeated request, a replayed turn) is one standing order, not two alerts.
+    same = await rules.find_active(ctx.conn, ctx.user_id, rule)
+    if same is not None:
+        return m.SetRuleOut(
+            summary=f"You already have that standing order: {same['description']} Nothing changed.",
+            rule_id=same["id"],
+            description=same["description"],
+            channel=channel,
+        )
     if await rules.count_active(ctx.conn, ctx.user_id) >= MAX_ACTIVE_RULES:
         raise WatchfloorError(
             ErrorCode.RULE_LIMIT_REACHED,
             f"You already have {MAX_ACTIVE_RULES} standing orders, the maximum.",
             recovery="Remove one first; ask me what I'm watching for to hear them.",
         )
-    channel = args.channel or (await prefs.get(ctx.conn, ctx.user_id, ctx.ws))["alert_channel"]
-    conditions = conditions_from(args)
     description = describe_rule(conditions)
-    rule = {"version": 1, "conditions": conditions, "channel": channel}
     rid = await rules.create(
         ctx.conn, workspace_id=ctx.ws, user_id=ctx.user_id, rule=rule, description=description, at=ctx.now
     )

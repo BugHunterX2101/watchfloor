@@ -229,10 +229,15 @@ async def _fail_job(ws: str, job_id: str, error: str, *, timed_out: bool = False
 
 
 def memory_text(account: str, deal_id: str, out: TriageOutput) -> str:
-    """E.g. "Triage for Kestrel Biotech (dl_…): drivers R,I,S; recommended P01, P04." (DD §11)."""
+    """E.g. "Triage for Kestrel Biotech (dl_…): drivers R,I,S; Watchfloor recommended P01, P04." (DD §11).
+
+    The record says whose idea the plays were: a recommendation is not something the user chose.
+    What the user did with it (confirmed, let expire, undid) is not recorded yet, which is why
+    memory stays off until it is (implementation-notes).
+    """
     drivers = ",".join(dict.fromkeys(d.factor for d in out.risk_drivers))
     plays = ", ".join(a.play_id for a in out.recommended_actions) or "no actions"
-    return f"Triage for {account} ({deal_id}): drivers {drivers}; recommended {plays}."
+    return f"Triage for {account} ({deal_id}): drivers {drivers}; Watchfloor recommended {plays}."
 
 
 HANDLERS: dict[str, Handler] = {

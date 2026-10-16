@@ -388,6 +388,16 @@ class TriageResultOut(_Out):
     drivers: list[DriverOut] = []
     recommended_actions: list[RecommendedActionOut] = []
     finished_at: str | None = None
+    engine: Annotated[
+        Literal["strands", "offline"] | None,
+        Field(
+            description="Who reviewed: strands is the full multi-agent review, offline the quick rule-based one."
+        ),
+    ] = None
+    checked: Annotated[
+        bool | None,
+        Field(description="Whether the review's critic approved it; absent for the rule-based review."),
+    ] = None
 
 
 class ProposalOut(_Out):

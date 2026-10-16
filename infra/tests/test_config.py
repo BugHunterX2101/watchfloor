@@ -48,6 +48,17 @@ def test_a_hosted_zone_needs_custom_domains() -> None:
         _free(hosted_zone_id="Z123", hosted_zone_name="example.com")
 
 
+def test_the_fast_tier_gemini_model_is_passed_only_when_set() -> None:
+    from wf_infra.common import base_env
+
+    one = base_env(_free(gemini_enabled=True), "harness")
+    assert one["WF_GEMINI_MODEL_ID"] == "gemini-flash-lite-latest" and "WF_GEMINI_HAIKU_MODEL_ID" not in one
+    two = base_env(_free(gemini_enabled=True, gemini_haiku_model="gemini-fast"), "harness")
+    assert two["WF_GEMINI_HAIKU_MODEL_ID"] == "gemini-fast"
+    off = base_env(_free(gemini_enabled=False, gemini_haiku_model="gemini-fast"), "harness")
+    assert "WF_GEMINI_HAIKU_MODEL_ID" not in off
+
+
 @pytest.mark.parametrize("env", ["dev", "demo"])
 def test_the_shipped_configs_are_valid(env: str) -> None:
     data = yaml.safe_load((CONFIG_DIR / f"{env}.yaml").read_text(encoding="utf-8"))

@@ -76,6 +76,8 @@ def base_env(cfg: EnvConfig, service: str) -> dict[str, str]:
     }
     if cfg.gemini_enabled:  # the model's name only; the key is read where gemini_access grants it
         env["WF_GEMINI_MODEL_ID"] = cfg.gemini_model
+        if cfg.gemini_haiku_model:
+            env["WF_GEMINI_HAIKU_MODEL_ID"] = cfg.gemini_haiku_model
     return env
 
 

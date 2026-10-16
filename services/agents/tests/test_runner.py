@@ -160,6 +160,64 @@ async def test_gemini_alone_runs_the_agents(payload: dict[str, Any], mcp: FakeMC
     assert seen == ["gemini-test"]
 
 
+async def test_the_output_records_who_answered_and_what_checked_it(
+    payload: dict[str, Any], model_settings: Settings, offline_settings: Settings, mcp: FakeMCP
+) -> None:
+    def lead_with(critic: str | None) -> Any:
+        async def lead(job: JobData, s: Settings, recall: Any) -> LeadDraft:
+            await asyncio.to_thread(job.read, "get_deal_timeline")
+            job.specialists.update({"signal_analyst": "ok", "account_context": "failed"})
+            if critic:
+                job.specialists["critic_review"] = critic
+            return _draft()
+
+        return lead
+
+    approved = (await _events(payload, model_settings, mcp, lead=lead_with("ok")))[-1]["output"]
+    assert approved["engine"] == "strands" and approved["checked"] is True
+    assert approved["confidence"] == 0.8
+    assert approved["specialists"] == {
+        "signal_analyst": "ok",
+        "account_context": "failed",
+        "critic_review": "ok",
+    }
+
+    for critic in (
+        "issues",
+        "timed_out",
+        None,
+    ):  # unresolved issues, a critic that never answered, none at all
+        out = TriageOutput.model_validate(
+            (await _events(payload, model_settings, mcp, lead=lead_with(critic)))[-1]["output"]
+        )
+        assert out.checked is False and out.confidence == 0.5, critic
+
+    offline = (await _events(payload, offline_settings, mcp))[-1]["output"]
+    assert offline["engine"] == "offline" and offline["checked"] is None and offline["specialists"] == {}
+
+
+async def test_every_job_logs_its_model_usage(
+    payload: dict[str, Any], model_settings: Settings, mcp: FakeMCP, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Metrics:
+        cycle_count = 3
+        accumulated_usage = {"inputTokens": 1200, "outputTokens": 90, "totalTokens": 1290}
+
+    async def lead(job: JobData, s: Settings, recall: Any) -> LeadDraft:
+        await asyncio.to_thread(job.read, "get_deal_timeline")
+        job.usage.add(Metrics())
+        job.usage.add(Metrics())
+        return _draft()
+
+    with caplog.at_level("INFO", logger="watchfloor.usage"):
+        await _events(payload, model_settings, mcp, lead=lead)
+    [line] = [r.getMessage() for r in caplog.records if r.name == "watchfloor.usage"]
+    assert line == (
+        "llm_usage scope=triage engine=strands model=test.sonnet,test.haiku calls=6 input_tokens=2400"
+        f" output_tokens=180 job={payload['job_id']} outcome=result"
+    )
+
+
 def test_the_lambda_handler_returns_the_whole_stream(
     payload: dict[str, Any], offline_settings: Settings, mcp: FakeMCP, monkeypatch: pytest.MonkeyPatch
 ) -> None:

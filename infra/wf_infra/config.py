@@ -66,6 +66,9 @@ class EnvConfig(BaseModel):
     # wf-<env>/models/gemini, stored by hand; until it is there, turns and drafts fall back as before.
     gemini_enabled: bool = False
     gemini_model: str = "gemini-flash-lite-latest"
+    # The fast tier's own Gemini model (harness turns, drafts, Analyst, Context); unset, gemini_model.
+    # Check each model's free-tier limits in AI Studio before choosing one.
+    gemini_haiku_model: str | None = None
     # false while AWS Support has not verified the account for CloudFront (a new account's
     # distributions are refused until then): the harness Lambda serves its page on its API's host.
     cdn: bool = True

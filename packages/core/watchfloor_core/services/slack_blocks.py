@@ -108,7 +108,11 @@ def triage_plan(
     band: str,
     voice_summary: str,
     actions: list[dict[str, Any]],
+    quick: bool = False,
+    caveat: str | None = None,
 ) -> dict[str, Any]:
+    """``quick``: the rule-based engine answered (ADR-023); ``caveat`` says how far to trust it."""
+    kind = "Quick review" if quick else "Deep review"
     steps = (
         "\n".join(
             f"{n}. {escape(a['rationale'])} _(play {a['play_id']}, confidence {round(100 * a['confidence'])}%)_"
@@ -117,11 +121,12 @@ def triage_plan(
         or "No actions recommended."
     )
     return {
-        "text": f"Deep review: {account}",
+        "text": f"{kind}: {account}",
         "blocks": [
-            _header(f"Deep review · {account} (health {health(score)}, {band_label(band)})"),
+            _header(f"{kind} · {account} (health {health(score)}, {band_label(band)})"),
             _section(escape(voice_summary)),
             _section(f"*Recommended next steps*\n{steps}"),
+            *([_context(escape(caveat))] if caveat else []),
             _context("Ask Alexa to act on a step. Nothing happens without your confirmation."),
         ],
     }

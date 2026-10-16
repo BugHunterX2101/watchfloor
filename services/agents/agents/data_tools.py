@@ -27,6 +27,7 @@ from datetime import timedelta
 from typing import Any
 
 from strands import tool
+from watchfloor_core.usage import Tally
 
 Caller = Callable[[str, dict[str, Any]], dict[str, Any]]
 TOOL_TIMEOUT = timedelta(seconds=15)
@@ -46,6 +47,10 @@ class JobData:
     activities: list[dict[str, Any]] = field(default_factory=list)
     evidence: set[str] = field(default_factory=set)
     people: set[str] = field(default_factory=set)
+    # What the models did for this job: calls and tokens (usage), and how each specialist the Lead
+    # called last finished (specialists: name → ok | issues | failed | timed_out).
+    usage: Tally = field(default_factory=Tally)
+    specialists: dict[str, str] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def read(self, name: str, **args: Any) -> dict[str, Any]:

@@ -193,8 +193,36 @@ def test_memory_event_text() -> None:
     out = TriageOutput.model_validate(OUTPUT)
     assert (
         memory_text("Harbor & Pine", "dl_1", out)
-        == "Triage for Harbor & Pine (dl_1): drivers R; recommended P01."
+        == "Triage for Harbor & Pine (dl_1): drivers R; Watchfloor recommended P01."
     )
+
+
+def test_a_review_says_when_it_is_quick_or_unchecked() -> None:
+    from watchfloor_core.services import slack_blocks, triage
+
+    full = TriageOutput.model_validate({**OUTPUT, "engine": "strands", "checked": True})
+    quick = TriageOutput.model_validate({**OUTPUT, "engine": "offline"})
+    unchecked = TriageOutput.model_validate({**OUTPUT, "engine": "strands", "checked": False})
+    legacy = TriageOutput.model_validate(OUTPUT)  # stored before engine and checked were recorded
+    assert triage.caveat(full) is None and triage.caveat(legacy) is None
+    assert triage.caveat(quick) == triage.QUICK_REVIEW
+    assert triage.caveat(unchecked) == triage.UNCHECKED_REVIEW
+
+    plan = slack_blocks.triage_plan(
+        account="Harbor & Pine",
+        score=72,
+        band="at_risk",
+        voice_summary="Quiet.",
+        actions=[],
+        quick=True,
+        caveat=triage.QUICK_REVIEW,
+    )
+    assert plan["text"] == "Quick review: Harbor & Pine"
+    assert triage.QUICK_REVIEW in json.dumps(plan)
+    usual = slack_blocks.triage_plan(
+        account="A", score=72, band="at_risk", voice_summary="Quiet.", actions=[]
+    )
+    assert usual["text"] == "Deep review: A" and len(usual["blocks"]) == 4
 
 
 # ---------------------------------------------------------------- drafts
@@ -341,7 +369,13 @@ def test_the_agents_function_returns_its_stream_as_events() -> None:
     """ADR-023: the agents' Lambda returns {"events": [...]}, read like the runtime's SSE stream."""
     progress = {"type": "progress", "step": "started"}
     result = {"type": "result", "engine": "offline", "output": OUTPUT}
-    assert lambda_output(json.dumps({"events": [progress, result]}).encode()) == OUTPUT
+    # An output without its own engine (an older agents image) takes the event's.
+    assert lambda_output(json.dumps({"events": [progress, result]}).encode()) == {
+        **OUTPUT,
+        "engine": "offline",
+    }
+    labelled = {**result, "output": {**OUTPUT, "engine": "strands"}}
+    assert lambda_output(json.dumps({"events": [labelled]}).encode())["engine"] == "strands"
     timed_out = {"type": "error", "code": "timed_out", "error": "no result within 90 seconds"}
     with pytest.raises(AgentTimeout):
         lambda_output(json.dumps({"events": [progress, timed_out]}).encode())

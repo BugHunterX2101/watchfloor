@@ -103,6 +103,57 @@ async def test_specialists_are_budgeted(
     assert built == ["analyst", "strategist", "critic", "critic"]
 
 
+def test_only_an_explicit_approval_counts_as_checked() -> None:
+    assert specialists.critic_verdict('{"ok": true, "issues": []}') == "ok"
+    assert specialists.critic_verdict('```json\n{"ok": true}\n```') == "ok"
+    for reply in ('{"ok": false, "issues": ["x"]}', '{"ok": "true"}', "Looks fine to me.", "{not json}", ""):
+        assert specialists.critic_verdict(reply) == "issues", reply
+
+
+async def test_each_specialist_run_is_recorded_on_the_job(job: JobData) -> None:
+    class Metered(FakeAgent):
+        class event_loop_metrics:  # noqa: N801 - mimics the Strands attribute
+            cycle_count = 2
+            accumulated_usage = {"inputTokens": 500, "outputTokens": 40, "totalTokens": 540}
+
+    def broken() -> Any:
+        raise RuntimeError("no model")
+
+    budget = specialists.Budget(turns=1, timeout_s=0.05, calls=1)
+    await specialists.run_specialist("critic_review", lambda: Metered('{"ok": false}'), "p", budget, job=job)
+    await specialists.run_specialist("signal_analyst", lambda: Metered("{}"), "p", budget, job=job)
+    await specialists.run_specialist("account_context", broken, "p", budget, job=job)
+    await specialists.run_specialist("playbook_strategist", lambda: FakeAgent(delay=5), "p", budget, job=job)
+    assert job.specialists == {
+        "critic_review": "issues",
+        "signal_analyst": "ok",
+        "account_context": "failed",
+        "playbook_strategist": "timed_out",
+    }
+    assert (job.usage.calls, job.usage.input_tokens, job.usage.output_tokens) == (4, 1000, 80)
+
+    await specialists.run_specialist("critic_review", lambda: Metered('{"ok": true}'), "p", budget, job=job)
+    assert job.specialists["critic_review"] == "ok"  # the last critic run decides
+
+
+def test_the_fast_tier_can_run_on_its_own_gemini_model() -> None:
+    from agents.models import model_names, tier_model_id
+
+    one = Settings(env="dev", models_enabled=False, gemini_model_id="gemini-a", gemini_api_key="k")
+    two = Settings(
+        env="dev",
+        models_enabled=False,
+        gemini_model_id="gemini-a",
+        gemini_haiku_model_id="gemini-b",
+        gemini_api_key="k",
+    )
+    assert (tier_model_id(one, "sonnet"), tier_model_id(one, "haiku"), model_names(one)) == ("gemini-a",) * 3
+    assert (tier_model_id(two, "sonnet"), tier_model_id(two, "haiku")) == ("gemini-a", "gemini-b")
+    assert model_names(two) == "gemini-a,gemini-b"
+    assert haiku(settings=two).get_config()["model_id"] == "gemini-b"
+    assert sonnet(settings=two).get_config()["model_id"] == "gemini-a"
+
+
 def test_recall_wraps_memories_as_untrusted() -> None:
     seen: list[tuple[str, str, str]] = []
 

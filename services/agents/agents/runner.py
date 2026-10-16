@@ -11,7 +11,10 @@ Contract with ``workers.agentcore_client.final_output``:
   failed) or ``agent_failed``.
 
 A model that fails the Lead (throttled, unreachable, no key) hands the job to
-the offline engine, whose result says ``"engine": "offline"`` (ADR-023).
+the offline engine, whose result says ``"engine": "offline"`` (ADR-023). The
+output itself carries the same ``engine``, plus ``checked`` (the critic approved
+the final draft) and ``specialists`` (how each one finished), so the dispatcher
+stores them with the result. Every job also logs one ``llm_usage`` line.
 
 The work runs in its own task and reports through a queue, so the 90 s
 deadline cancels the work, never the code consuming the stream.
@@ -27,12 +30,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from watchfloor_core import gemini
+from watchfloor_core.models.triage import UNCHECKED_CONFIDENCE
 from watchfloor_core.settings import Settings, get_settings
+from watchfloor_core.usage import Tally
 
 from .data_tools import Caller, JobData, ToolFailed, mcp_connect
 from .gate import Rejected, finalize
 from .memory import actor_id, make_recall
-from .models import Misconfigured
+from .models import Misconfigured, model_names
 from .offline import offline_triage
 from .schemas import LeadDraft, TriageOutput
 
@@ -74,8 +79,27 @@ async def _default_lead(job: JobData, s: Settings, recall: Any) -> LeadDraft:
     return await run_lead(job, s, recall)
 
 
+def _record(out: TriageOutput, engine: Engine, job: JobData) -> TriageOutput:
+    """Who answered and what checked it, stored with the result (DD §10.5).
+
+    A model review whose critic didn't approve the final draft (skipped, failed, or its issues
+    left standing) is marked unchecked and claims at most UNCHECKED_CONFIDENCE, actions included.
+    """
+    if engine == "offline":
+        return out.model_copy(update={"engine": "offline", "checked": None, "specialists": {}})
+    checked = job.specialists.get("critic_review") == "ok"
+    update: dict[str, Any] = {"engine": "strands", "checked": checked, "specialists": dict(job.specialists)}
+    if not checked:
+        update["confidence"] = min(out.confidence, UNCHECKED_CONFIDENCE)
+        update["recommended_actions"] = [
+            a.model_copy(update={"confidence": min(a.confidence, UNCHECKED_CONFIDENCE)})
+            for a in out.recommended_actions
+        ]
+    return out.model_copy(update=update)
+
+
 async def _triage(
-    job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit
+    job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit, usage: Tally
 ) -> tuple[Engine, TriageOutput]:
     try:
         session = connect(s.mcp_url, job_in.mcp_token)
@@ -84,7 +108,7 @@ async def _triage(
         log.warning("MCP session failed", exc_info=True)
         raise ToolFailed(f"could not open the MCP session ({type(exc).__name__})") from None
     try:
-        job = JobData(deal_id=job_in.deal_id, call=call)
+        job = JobData(deal_id=job_in.deal_id, call=call, usage=usage)
         await asyncio.to_thread(job.read, "explain_deal_risk")
         await asyncio.to_thread(job.read, "get_playbook")
         emit({"type": "progress", "step": "analyzing", "engine": engine})
@@ -103,7 +127,7 @@ async def _triage(
                 engine = "offline"
                 draft = await asyncio.to_thread(offline_triage, job)
         emit({"type": "progress", "step": "checking"})
-        return engine, finalize(draft, job)
+        return engine, _record(finalize(draft, job), engine, job)
     finally:
         await asyncio.to_thread(session.__exit__, None, None, None)
 
@@ -112,26 +136,43 @@ async def _work(
     job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit, timeout_s: float
 ) -> None:
     deadline = asyncio.timeout(timeout_s)
+    usage = Tally()
+    used, outcome = engine, "cancelled"  # unless set below: the caller went away
     try:
         async with deadline:
-            used, out = await _triage(job_in, s, engine, connect, lead, emit)
+            used, out = await _triage(job_in, s, engine, connect, lead, emit, usage)
         emit({"type": "result", "engine": used, "output": out.model_dump(mode="json")})
+        outcome = "result"
     except TimeoutError:
         if deadline.expired():
+            outcome = "timed_out"
             emit(_error("timed_out", f"no result within {timeout_s:.0f} seconds"))
         else:
             log.exception("triage %s failed", job_in.job_id)
+            outcome = "agent_failed"
             emit(_error("agent_failed", "a call timed out"))
     except Rejected as exc:
+        outcome = "rejected"
         emit(_error("rejected", str(exc)))
     except ToolFailed as exc:
+        outcome = "data_unavailable"
         emit(_error("data_unavailable", str(exc)))
     except Misconfigured as exc:
+        outcome = "misconfigured"
         emit(_error("misconfigured", str(exc)))
     except Exception as exc:
         log.exception("triage %s failed", job_in.job_id)
+        outcome = "agent_failed"
         emit(_error("agent_failed", type(exc).__name__))
     finally:
+        # One line per job, model calls a fallback spent included (watchfloor_core.usage).
+        usage.log(
+            scope="triage",
+            engine=used,
+            model=model_names(s) if engine == "strands" else "none",
+            job=job_in.job_id,
+            outcome=outcome,
+        )
         emit(None)
 
 

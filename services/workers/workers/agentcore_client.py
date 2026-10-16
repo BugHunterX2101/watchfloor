@@ -54,6 +54,8 @@ def final_output(content_type: str, body: bytes) -> Any:
                 continue
             if isinstance(event, dict) and "output" in event:
                 found = event["output"]
+                if isinstance(found, dict) and event.get("engine") and "engine" not in found:
+                    found = {**found, "engine": event["engine"]}  # an agents image older than the field
             elif isinstance(event, dict) and "error" in event:
                 # ours: {"type": "error", "code", "error"}; the runtime's: {"error", "error_type"}
                 error = event

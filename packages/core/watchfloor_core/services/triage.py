@@ -21,6 +21,17 @@ DEDUPE_WINDOW = timedelta(minutes=10)
 MAX_ACTIVE_JOBS = 3
 ETA_SECONDS = 20
 HARD_TIMEOUT = timedelta(seconds=90)
+# Said after the summary, and shown on the Slack plan, when the review isn't the full checked one.
+QUICK_REVIEW = "This was the quick, rule-based review, not the full one."
+UNCHECKED_REVIEW = "This review wasn't double-checked, so treat it as a first pass."
+
+
+def caveat(out: TriageOutput) -> str | None:
+    if out.engine == "offline":
+        return QUICK_REVIEW
+    if out.checked is False:
+        return UNCHECKED_REVIEW
+    return None
 
 
 async def start(ctx: ServiceContext, args: m.StartTriageIn) -> m.StartTriageOut:
@@ -112,12 +123,15 @@ async def get_result(ctx: ServiceContext, args: m.GetTriageIn) -> m.TriageResult
         )
 
     out = TriageOutput.model_validate(job["result"])
+    note = caveat(out)
     return m.TriageResultOut(
-        summary=out.voice_summary,
+        summary=f"{out.voice_summary} {note}" if note else out.voice_summary,
         voice_summary=out.voice_summary,
         drivers=[m.DriverOut(**d.model_dump()) for d in out.risk_drivers],
         recommended_actions=[m.RecommendedActionOut(**a.model_dump()) for a in out.recommended_actions],
         finished_at=ctx.local_iso(job["finished_at"]) if job["finished_at"] else None,
+        engine=out.engine,
+        checked=out.checked,
         **base,
     )
 
@@ -160,6 +174,8 @@ async def complete_job(
         band=rs["band"] if rs else "healthy",
         voice_summary=out.voice_summary,
         actions=[a.model_dump() for a in out.recommended_actions],
+        quick=out.engine == "offline",
+        caveat=caveat(out),
     )
     oid = await outbox.enqueue(
         conn,
