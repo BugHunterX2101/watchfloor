@@ -19,6 +19,23 @@ from .settings import get_settings
 
 _pool: asyncpg.Pool | None = None
 
+# How long a request may wait for a free connection. A full pool means the database is slow or
+# the service is overloaded; waiting longer only stacks callers up behind the gateway's own timeout,
+# so past this the caller gets a retryable "unavailable" (TimeoutError) instead.
+ACQUIRE_TIMEOUT_S = 2.0
+
+# What a database that is down, failing over, overloaded or out of connections raises. Callers map
+# these to a retryable "unavailable"; anything else is a bug and stays an internal error.
+DB_UNAVAILABLE: tuple[type[BaseException], ...] = (
+    OSError,
+    TimeoutError,
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    asyncpg.QueryCanceledError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.CannotConnectNowError,
+)
+
 
 def _dumps(value: Any) -> str:
     return orjson.dumps(value).decode()
@@ -85,7 +102,7 @@ async def ws_tx(workspace_id: str, *, statement_timeout: str = "2s") -> AsyncIte
     """Transaction with RLS scoped to one workspace. Fails closed if unset."""
     if not workspace_id:
         raise ValueError("workspace_id is required")
-    async with pool().acquire() as conn, conn.transaction():
+    async with pool().acquire(timeout=ACQUIRE_TIMEOUT_S) as conn, conn.transaction():
         # One round trip for both transaction-local settings.
         await conn.execute(
             "SELECT set_config('app.workspace_id', $1, true), set_config('statement_timeout', $2, true)",
@@ -107,6 +124,6 @@ async def ping() -> bool:
 @asynccontextmanager
 async def system_tx() -> AsyncIterator[asyncpg.Connection]:
     """Transaction without a workspace: only non-tenant tables (workspaces, rate_limits) are visible."""
-    async with pool().acquire() as conn, conn.transaction():
+    async with pool().acquire(timeout=ACQUIRE_TIMEOUT_S) as conn, conn.transaction():
         await conn.execute("SET LOCAL statement_timeout = '2s'")
         yield conn

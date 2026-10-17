@@ -216,9 +216,9 @@ callers we have already authenticated.
 
 ```mermaid
 flowchart TD
-  S(["POST /mcp"]) --> H{"Host allowed?"}
+  S(["POST /mcp"]) --> H{"Exactly one Host,<br/>well-formed and allowed?"}
   H -- no --> R421["421 Misdirected Request"]
-  H -- yes --> O{"Origin present and not allowed?"}
+  H -- yes --> O{"Origin present and not allowed,<br/>or sent twice?"}
   O -- yes --> R403["403 Forbidden"]
   O -- no --> AC{"Accept lists application/json<br/>and text/event-stream?"}
   AC -- no --> R406["406 Not Acceptable"]
@@ -573,7 +573,9 @@ flowchart TD
 Eighteen tables in `public` and five in `auth`, every business table scoped by workspace with
 row-level security forced on, under separate `wf_app`, `wf_auth` and `wf_readonly` roles that cannot
 bypass it ([TECHNICAL.md §9.2](docs/TECHNICAL.md); rules and preferences live here too,
-[ADR-005](docs/adr/0005-postgres-rules-and-prefs.md)). The compact view:
+[ADR-005](docs/adr/0005-postgres-rules-and-prefs.md)). The app role is also cut back to what it needs:
+it cannot rewrite `workspaces` or `schema_migrations`, and the audit log is append-only, with deletes
+allowed only past the 7-day retention policy (migration `0006_least_privilege.sql`). The compact view:
 
 ```mermaid
 erDiagram
@@ -846,7 +848,7 @@ watchfloor/
 │           └── test/                              # logic · voice · handsfree · companion (node --test)
 ├── db/
 │   ├── migrate.py
-│   ├── migrations/              # 0001_init · 0002_rls · 0003_auth_schema · 0004_roles_grants · 0005_undo
+│   ├── migrations/              # 0001_init · 0002_rls · 0003_auth_schema · 0004_roles_grants · 0005_undo · 0006_least_privilege
 │   └── seed/                    # the deterministic Lumenridge workspace, scenarios and hostile notes
 ├── infra/                       # AWS CDK (Python); its own uv project
 │   ├── app.py · cdk.json · pyproject.toml
@@ -856,16 +858,16 @@ watchfloor/
 │   │   ├── config.py · common.py
 │   │   └── stacks/              # net · data · auth · mcp · agents · async_ · harness · ops
 │   └── tests/                   # config validation and synth assertions
-├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · explain_plans · package_lambdas · remote_mcp · default_hosts
+├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill
 ├── tests/
 │   ├── unit/                    # RIGS golden and property tests, tokens, envelopes, rate limits, docs sync …
 │   ├── conformance/             # protocol: transport · edge · tools/list · output schemas · PRM · service token
-│   ├── integration/             # against real Postgres: tools, auth server, confirm guard, undo, workers, migrator, seeder
-│   ├── security/                # agent scope · token replay
+│   ├── integration/             # against real Postgres: tools, auth server, confirm guard, undo, workers, migrator, seeder, DB and delivery faults, restore drill
+│   ├── security/                # agent scope · token replay · tenant isolation · races · DB privileges · edge guard · log hygiene
 │   ├── evals/                   # golden triage set, utterance sheet, scoring
 │   └── load/                    # Locust profile
 ├── docs/
-│   ├── PRD.md · DESIGN.md · TECHNICAL.md · DEPLOYMENT.md
+│   ├── PRD.md · DESIGN.md · TECHNICAL.md · DEPLOYMENT.md · SECURITY.md
 │   ├── adr/                     # 29 architecture decision records
 │   ├── implementation-notes.md · friction-log.md · feature-requests.md
 │   ├── brand/                   # logo, lockups, social card, colour tokens
@@ -972,12 +974,12 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 
 | Suite | Count | Covers |
 |---|---:|---|
-| Root (`pytest`) | 300 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security, docs sync; plus integration tests against a real Postgres |
-| Harness API | 113 | OAuth flow, a full turn, pending changes, the unheard guard, dismissal, page-action validation, hardening, views |
+| Root (`pytest`) | 416 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
+| Harness API | 117 | OAuth flow, a full turn, pending changes, the unheard guard, dismissal, page-action validation, hardening, views |
 | Harness web | 98 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, the board watcher, pure logic |
 | Triage agents | 36 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
-| Infrastructure | 36 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms, an agent role with no database access) |
-| **Total** | **583** | |
+| Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
+| **Total** | **705** | |
 
 ```bash
 make test          # unit + protocol conformance
@@ -1044,6 +1046,16 @@ Honest limits of the voice experience:
 - Reading the board in the background marks the briefing as seen; this is disclosed in
   [ADR-029](docs/adr/0029-voice-companion.md).
 
+Honest limits of the security work ([docs/SECURITY.md](docs/SECURITY.md) has the full register):
+
+- **Not verified:** a staging deploy and migrations there, an RDS snapshot or point-in-time restore
+  (the restore drill proves its dump, restore and compare logic against local Postgres only), load
+  percentiles, a RIGS backtest (there is no historical CRM data, so no accuracy figure is claimed), an
+  independent review, and a container image scan.
+- **Model providers:** the Gemini API's unpaid tier may use submitted content to improve Google's
+  services and let humans read it, so only the synthetic seed workspace may go to it. Real CRM data
+  needs the paid tier or Bedrock.
+
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along the
 way are in the [friction log](docs/friction-log.md) and [feature requests](docs/feature-requests.md).
@@ -1058,6 +1070,7 @@ way are in the [friction log](docs/friction-log.md) and [feature requests](docs/
 | [Design](docs/DESIGN.md) | Contracts, algorithms, trade-offs |
 | [Technical](docs/TECHNICAL.md) | Every file, diagram, command, runbook and checklist |
 | [Deployment](docs/DEPLOYMENT.md) | Bootstrap, first deploy, secrets, domains, demo operations on AWS |
+| [Security](docs/SECURITY.md) | What was found and fixed, each with its test; what is accepted; what is not verified |
 | [ADRs](docs/adr) | The 29 decisions and their alternatives |
 | [Implementation notes](docs/implementation-notes.md) | Where the build departs from the specs |
 | [Friction log](docs/friction-log.md) · [Feature requests](docs/feature-requests.md) | What the platforms made hard, and what we'd ask for |

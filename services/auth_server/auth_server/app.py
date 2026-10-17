@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from watchfloor_core.clock import Clock
+from watchfloor_core.db import DB_UNAVAILABLE
 from watchfloor_core.settings import get_settings
 
 from . import __version__
@@ -50,6 +51,16 @@ async def healthz(request: Request) -> JSONResponse:
     return JSONResponse(
         {"ok": ok, "db": "ok" if ok else "down", "version": __version__}, status_code=200 if ok else 503
     )
+
+
+async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """A database that is down or full is the caller's cue to retry (RFC 6749 §4.1.2.1), not a 500."""
+    log.warning("database unavailable on %s: %s", request.url.path, type(exc).__name__)
+    body = {
+        "error": "temporarily_unavailable",
+        "error_description": "The authorization server can't reach its data. Try again shortly.",
+    }
+    return JSONResponse(body, status_code=503, headers={"Retry-After": "5", "Cache-Control": "no-store"})
 
 
 def _tickets(secret: str | None, env: str) -> Tickets:
@@ -111,6 +122,7 @@ def create_app(
             Mount("/static/addon", StaticFiles(directory=ADDON_ASSETS), name="addon"),  # listing images
         ],
         lifespan=lifespan,
+        exception_handlers=dict.fromkeys(DB_UNAVAILABLE, _database_unavailable),
     )
     app.state.wf = state
     return app

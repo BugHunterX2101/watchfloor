@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Literal
 
 import asyncpg
-from watchfloor_core.db import dsn_from_secret
+from watchfloor_core.db import ACQUIRE_TIMEOUT_S, dsn_from_secret
 from watchfloor_core.settings import Settings
 
 CodeStatus = Literal["ok", "missing", "used", "expired"]
@@ -68,7 +68,7 @@ class AuthStore:
 
     @asynccontextmanager
     async def _tx(self) -> AsyncIterator[asyncpg.Connection]:
-        async with self._pool.acquire() as conn, conn.transaction():
+        async with self._pool.acquire(timeout=ACQUIRE_TIMEOUT_S) as conn, conn.transaction():
             await conn.execute("SET LOCAL statement_timeout = '2s'")
             yield conn
 

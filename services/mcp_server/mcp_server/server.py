@@ -23,12 +23,18 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 from watchfloor_core import queue
-from watchfloor_core.db import ws_tx
+from watchfloor_core.db import DB_UNAVAILABLE, ws_tx
 from watchfloor_core.errors import ErrorCode, WatchfloorError
 from watchfloor_core.principal import Principal
 from watchfloor_core.repos import misc
 from watchfloor_core.services.actions import POST_HOLD
-from watchfloor_core.services.context import ServiceContext, UnknownWorkspace, clock, make_context
+from watchfloor_core.services.context import (
+    ServiceContext,
+    UnknownUser,
+    UnknownWorkspace,
+    clock,
+    make_context,
+)
 from watchfloor_core.tokens import args_hash
 
 from . import __version__, resources
@@ -44,16 +50,6 @@ INSTRUCTIONS = (
 )
 
 RESOURCE_NOT_FOUND = -32002
-
-DB_UNAVAILABLE: tuple[type[BaseException], ...] = (
-    OSError,
-    TimeoutError,
-    asyncpg.PostgresConnectionError,
-    asyncpg.InterfaceError,
-    asyncpg.QueryCanceledError,
-    asyncpg.TooManyConnectionsError,
-    asyncpg.CannotConnectNowError,
-)
 
 
 def _unavailable() -> WatchfloorError:
@@ -114,6 +110,13 @@ async def _run(
         # A valid signature for a workspace that no longer exists: nothing to read, nothing to audit.
         log.warning("token names unknown workspace %s", principal.workspace_id)
         raise MCPError(code=types.INVALID_REQUEST, message="Unknown workspace") from None
+    except UnknownUser:
+        # A valid signature for someone this workspace does not have: no data, and no audit row to
+        # attribute to a user who is not there.
+        log.warning(
+            "token names a user %s that workspace %s does not have", principal.user_id, principal.workspace_id
+        )
+        raise MCPError(code=types.INVALID_REQUEST, message="Unknown user") from None
     except DB_UNAVAILABLE as exc:
         log.warning("database unavailable during %s: %s", spec.name, type(exc).__name__)
         outcome = ToolOutcome.error(_unavailable())

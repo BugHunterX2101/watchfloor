@@ -81,6 +81,44 @@ async def test_hsts_only_where_the_site_is_https(tmp_path: Path, auth: FakeAuth,
         assert (await c.get("/healthz")).headers["strict-transport-security"] == "max-age=31536000"
 
 
+@pytest.mark.parametrize(
+    ("redirect", "secure"),
+    [("https://harness.example/oauth/callback", True), ("http://localhost:8082/oauth/callback", False)],
+)
+async def test_cookies_are_secure_httponly_and_lax_wherever_the_site_is_https(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, redirect: str, secure: bool
+) -> None:
+    app = app_module.create_app(
+        make_config(tmp_path, harness_redirect_uri=redirect),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+    )
+    async for c in _client(app):
+        r = await c.get("/oauth/login", follow_redirects=False)
+    cookies = [v.lower() for v in r.headers.get_list("set-cookie")]
+    assert cookies, "starting sign-in must set its state cookie"
+    for cookie in cookies:
+        assert "httponly" in cookie and "samesite=lax" in cookie, cookie
+        assert ("secure" in cookie.split("; ")) is secure, cookie
+
+
+@pytest.mark.parametrize("env", ["dev", "demo"])
+def test_outside_local_a_plain_http_redirect_is_refused_at_start_up(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    """The redirect's scheme decides Secure cookies and HSTS, so a wrong one must stop the container."""
+    from harness_api.config import Misconfigured, load
+    from watchfloor_core.settings import Settings
+
+    monkeypatch.setenv("WF_HARNESS_SESSION_SECRET", "s" * 40)
+    plain = Settings(env=env, harness_redirect_uri="http://harness.example/oauth/callback")
+    with pytest.raises(Misconfigured, match="https"):
+        load(plain)
+    assert load(
+        plain.model_copy(update={"harness_redirect_uri": "https://harness.example/cb"})
+    ).secure_cookies
+
+
 async def test_a_flood_of_turns_is_refused_with_how_long_to_wait(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
 ) -> None:

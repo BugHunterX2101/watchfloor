@@ -55,6 +55,9 @@ def load(core: Settings | None = None) -> HarnessConfig:
         if s.env not in ("local", "test"):
             raise Misconfigured("WF_HARNESS_SESSION_SECRET (32+ characters) is required outside local")
         secret = secrets.token_urlsafe(32)
+    if s.env not in ("local", "test") and not s.harness_redirect_uri.startswith("https://"):
+        # The scheme decides whether the session cookie is Secure and HSTS is sent: fail closed, not open.
+        raise Misconfigured("WF_HARNESS_REDIRECT_URI must be an https:// URL outside local")
     return HarnessConfig(
         core=s,
         session_secret=secret,

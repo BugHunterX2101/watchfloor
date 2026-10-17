@@ -18,6 +18,10 @@ from watchfloor_core.services.context import set_clock
 from tests.conftest import FROZEN_NOW, HARBOR, KESTREL
 from tests.mcp_client import Mcp
 
+# Every test here writes through the tools, so each needs the seeded DB (and skips without it) even
+# when it takes only ``mcp``: the pool is opened by ``seeded``, not by the client.
+pytestmark = pytest.mark.usefixtures("seeded")
+
 DANIEL = "us_01J9DANIEL00000000000000"  # Kestrel's seeded owner
 MARCUS = "us_01J9MARCUS00000000000000"
 OWNER_HISTORY = "SELECT count(*) FROM deal_history WHERE deal_id = $1 AND field = 'owner_id'"

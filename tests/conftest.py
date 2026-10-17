@@ -195,6 +195,25 @@ async def seeded(app: Any) -> AsyncIterator[str]:
 
 
 @pytest.fixture
+async def other_workspace(seeded: str) -> str:
+    """A second, empty tenant with one user, written as the owner role."""
+    conn = await asyncpg.connect(OWNER_URL)
+    try:
+        await conn.execute(
+            "INSERT INTO workspaces (id, name) VALUES ('ws_other', 'Other Co') ON CONFLICT DO NOTHING"
+        )
+        await conn.execute("SELECT set_config('app.workspace_id', 'ws_other', false)")
+        await conn.execute(
+            """INSERT INTO users (id, workspace_id, display_name, email, role)
+               VALUES ('us_OUTSIDER', 'ws_other', 'Olive Outsider', 'olive@other.example', 'owner')
+               ON CONFLICT DO NOTHING"""
+        )
+    finally:
+        await conn.close()
+    return "ws_other"
+
+
+@pytest.fixture
 def sqs_stub() -> Iterator[list[int]]:
     """Records post-commit outbox hand-offs instead of calling SQS."""
     sent: list[int] = []

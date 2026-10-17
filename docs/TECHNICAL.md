@@ -1155,10 +1155,12 @@ class EdgeGuard:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         h = Headers(scope=scope)
-        if h.get("host", "").split(":")[0].lower() not in self.hosts:
+        hosts = h.getlist("host")                         # exactly one, and a well-formed host[:port]:
+        name = host_name(hosts[0]) if len(hosts) == 1 else None   # no userinfo, no list, port <= 65535
+        if name is None or name not in self.hosts:
             return await respond(send, 421)
-        origin = h.get("origin")
-        if origin is not None and origin not in self.origins:
+        origins = h.getlist("origin")                     # absent is fine (native clients); two is not
+        if origins and (len(origins) > 1 or origin_key(origins[0]) not in self.origins):
             return await respond_jsonrpc_error(send, 403, -32600, "Origin not allowed")
         if scope["path"] == "/mcp" and scope["method"] == "POST":
             accept = h.get("accept", "")

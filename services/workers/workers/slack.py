@@ -23,6 +23,9 @@ from .errors import GiveUp, RetryLater
 from .runtime import secret_field
 
 log = logging.getLogger("watchfloor.slack")
+# httpx logs "HTTP Request: POST <url>" at INFO for every call, and a Slack webhook's URL is its credential:
+# left alone, each post would write the secret to the logs. Warnings and errors still come through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 TIMEOUT_S = 10.0
 DEFAULT_RETRY_AFTER = timedelta(seconds=30)
 

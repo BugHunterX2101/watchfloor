@@ -49,7 +49,7 @@ def build(app: cdk.App) -> dict[str, cdk.Stack]:
     asyncs = AsyncStack(app, f"{p}-async", cfg=cfg, net=net, data=data, auth=auth, agents=agents, env=aws_env)
     # On Lambda the harness is outside the VPC; on ECS (ADR-025) it runs in it, behind the VPC link.
     harness = HarnessStack(app, f"{p}-harness", cfg=cfg, net=net if cfg.ecs else None, env=aws_env)
-    ops = OpsStack(app, f"{p}-ops", cfg=cfg, auth=auth, mcp=mcp, asyncs=asyncs, env=aws_env)
+    ops = OpsStack(app, f"{p}-ops", cfg=cfg, data=data, auth=auth, mcp=mcp, asyncs=asyncs, env=aws_env)
     # Mcp reaches Auth (JWKS) and the Async queues through fixed URLs, so it has no stack dependency on
     # them. A send before the queues exist only logs; the sweeper republishes the outbox row (ADR-008).
     cdk.Tags.of(app).add("project", "watchfloor")

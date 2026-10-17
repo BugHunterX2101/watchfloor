@@ -11,6 +11,11 @@ async def get(conn: asyncpg.Connection, user_id: str) -> asyncpg.Record | None:
     )
 
 
+async def exists(conn: asyncpg.Connection, user_id: str) -> bool:
+    """Is this user in the workspace the transaction is scoped to? (RLS hides every other tenant's users.)"""
+    return bool(await conn.fetchval("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", user_id))
+
+
 async def all_names(conn: asyncpg.Connection) -> list[asyncpg.Record]:
     return await conn.fetch("SELECT id, display_name, slack_user_id FROM users ORDER BY display_name")
 

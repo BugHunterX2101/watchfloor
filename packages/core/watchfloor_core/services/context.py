@@ -11,7 +11,7 @@ import asyncpg
 from ..clock import Clock
 from ..errors import ErrorCode, WatchfloorError
 from ..principal import Principal
-from ..repos import jobs, workspaces
+from ..repos import jobs, users, workspaces
 from ..settings import get_settings
 
 _clock: Clock | None = None
@@ -39,6 +39,10 @@ class WorkspaceTime:
 
 class UnknownWorkspace(LookupError):
     """A credential names a workspace that does not exist (deleted, or never provisioned)."""
+
+
+class UnknownUser(LookupError):
+    """A credential names a user the workspace does not have (never a member, or removed since)."""
 
 
 async def workspace_time(conn: asyncpg.Connection, workspace_id: str) -> WorkspaceTime:
@@ -80,6 +84,9 @@ async def make_context(
     if principal.job_id is not None:
         principal = await _bind_job(conn, principal)
     t = await workspace_time(conn, principal.workspace_id)
+    # A signature proves who issued the token, not that this user still belongs to this workspace.
+    if not await users.exists(conn, principal.user_id):
+        raise UnknownUser(principal.user_id)
     return ServiceContext(
         conn=conn, principal=principal, now=t.now, today=t.today, tz=t.tz, trace_id=trace_id
     )

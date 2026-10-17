@@ -272,6 +272,58 @@ def test_alarms_cover_the_td_list(dev: dict[str, Template]) -> None:
     assert "AWS::Budgets::Budget" not in str(_synth("demo")["ops"].to_json())
 
 
+def test_alarms_cover_database_saturation_queue_age_and_authentication(dev: dict[str, Template]) -> None:
+    """The plan's operability list: a saturated database, a stuck consumer and sign-in trouble all page someone."""
+    alarms = {
+        r["Properties"]["AlarmName"]: r["Properties"]
+        for r in dev["ops"].find_resources("AWS::CloudWatch::Alarm").values()
+    }
+    for name in (
+        "db-cpu",
+        "db-connections",
+        "db-storage",
+        "jobs-queue-age",
+        "outbox-queue-age",
+        "mcp-4xx",
+        "auth-4xx",
+    ):
+        assert f"wf-dev-{name}" in alarms, name
+
+    cpu = alarms["wf-dev-db-cpu"]
+    assert (cpu["Namespace"], cpu["MetricName"], cpu["Threshold"]) == ("AWS/RDS", "CPUUtilization", 80)
+    assert cpu["EvaluationPeriods"] == 3, "a spike is not saturation"
+    connections = alarms["wf-dev-db-connections"]
+    assert (
+        connections["MetricName"] == "DatabaseConnections" and connections["Threshold"] == 64
+    )  # t4g.micro: 87 allowed
+    storage = alarms["wf-dev-db-storage"]
+    assert storage["ComparisonOperator"] == "LessThanThreshold" and storage["Threshold"] == int(
+        0.2 * 20 * 1024**3
+    )
+    for name, limit in (("jobs", 300), ("outbox", 900)):
+        age = alarms[f"wf-dev-{name}-queue-age"]
+        assert (age["Namespace"], age["MetricName"], age["Threshold"]) == (
+            "AWS/SQS",
+            "ApproximateAgeOfOldestMessage",
+            limit,
+        )
+        assert age["Dimensions"][0]["Value"].startswith(f"wf-dev-{name}")
+    assert alarms["wf-dev-auth-4xx"]["Threshold"] == 50 and alarms["wf-dev-mcp-4xx"]["Threshold"] == 100
+
+
+def test_the_connection_alarm_level_follows_the_instance_size() -> None:
+    from wf_infra.stacks.ops import db_connection_alarm_level
+
+    assert [
+        db_connection_alarm_level(c) for c in ("t4g.micro", "t4g.small", "db.r6g.large", "m7g.2xlarge")
+    ] == [
+        64,
+        128,
+        512,
+        2048,
+    ]
+
+
 def test_missing_assets_fail_loudly() -> None:
     application = cdk.App(context={"env": "dev", "account": "123456789012"})
     with pytest.raises(RuntimeError, match="make package"):
@@ -335,6 +387,10 @@ def test_models_without_agents_run_nova_and_skip_agentcore() -> None:
         },
     )
     assert "bedrock-throttles-reasoning" not in json.dumps(on["ops"].to_json())
+    on["ops"].has_resource_properties(  # provider errors, not only throttles, ring after two bad windows
+        "AWS::CloudWatch::Alarm",
+        {"AlarmName": "wf-dev-bedrock-errors-fast", "Threshold": 3, "EvaluationPeriods": 2},
+    )
 
 
 def test_gemini_runs_where_bedrock_cannot() -> None:

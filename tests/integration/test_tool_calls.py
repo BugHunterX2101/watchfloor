@@ -105,25 +105,6 @@ async def test_log_update_applies_now_and_proposes_forecast_changes(seeded: str,
     assert pending["requires_confirmation"] is True and pending["confirmation_token"].startswith("wf1.")
 
 
-@pytest.fixture
-async def other_workspace(seeded: str) -> str:
-    """A second, empty tenant with one user, written as the owner role."""
-    conn = await asyncpg.connect(OWNER_URL)
-    try:
-        await conn.execute(
-            "INSERT INTO workspaces (id, name) VALUES ('ws_other', 'Other Co') ON CONFLICT DO NOTHING"
-        )
-        await conn.execute("SELECT set_config('app.workspace_id', 'ws_other', false)")
-        await conn.execute(
-            """INSERT INTO users (id, workspace_id, display_name, email, role)
-               VALUES ('us_OUTSIDER', 'ws_other', 'Olive Outsider', 'olive@other.example', 'owner')
-               ON CONFLICT DO NOTHING"""
-        )
-    finally:
-        await conn.close()
-    return "ws_other"
-
-
 async def test_other_workspace_sees_nothing(
     other_workspace: str, client: httpx.AsyncClient, token_factory: TokenFactory
 ) -> None:

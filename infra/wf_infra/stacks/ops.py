@@ -23,10 +23,19 @@ from ..common import NAMESPACE, PythonLambda
 from ..config import EnvConfig
 from .async_ import AsyncStack
 from .auth import AuthStack
+from .data import DataStack
 from .mcp import McpStack
 
 HOT_TOOLS = ("get_risk_briefing", "explain_deal_risk")
 FIVE_MIN = Duration.minutes(5)
+GIB = 1024**3
+INSTANCE_GIB = {"micro": 1, "small": 2, "medium": 4, "large": 8, "xlarge": 16, "2xlarge": 32}
+
+
+def db_connection_alarm_level(instance_class: str) -> int:
+    """80% of what an RDS Postgres of this size allows: about 80 connections per GiB of memory
+    (a t4g.micro allows 87), so the alarm rings while there is still room to act."""
+    return int(0.8 * 80 * INSTANCE_GIB.get(instance_class.rsplit(".", 1)[-1], 1))
 
 
 def _metric(name: str, stat: str = "Sum", period: Duration = FIVE_MIN, **dims: str) -> cw.Metric:
@@ -42,6 +51,7 @@ class OpsStack(Stack):
         construct_id: str,
         *,
         cfg: EnvConfig,
+        data: DataStack,
         auth: AuthStack,
         mcp: McpStack,
         asyncs: AsyncStack,
@@ -163,6 +173,27 @@ class OpsStack(Stack):
                     statistic="Sum",
                 )
                 alarm(f"Throttles{slot.title()}", f"bedrock-throttles-{slot}", throttles, 0, 1)
+                # Anything else the provider refuses or fails on (access, validation, 5xx): a few in
+                # ten minutes is a model gone wrong, and the offline engine is answering instead.
+                errors = cw.MathExpression(
+                    expression="FILL(client, 0) + FILL(server, 0)",
+                    using_metrics={
+                        key: cw.Metric(
+                            namespace="AWS/Bedrock",
+                            metric_name=name,
+                            dimensions_map={"ModelId": model_id},
+                            period=FIVE_MIN,
+                            statistic="Sum",
+                        )
+                        for key, name in (
+                            ("client", "InvocationClientErrors"),
+                            ("server", "InvocationServerErrors"),
+                        )
+                    },
+                    period=FIVE_MIN,
+                    label="model errors",
+                )
+                alarm(f"Errors{slot.title()}", f"bedrock-errors-{slot}", errors, 3, 2)
         alarm("OutboxDead", "outbox-dead", _metric("OutboxDead", "Maximum", service="sweeper"), 0, 1)
         hour = Duration.hours(1)
         triage_fail = cw.MathExpression(
@@ -179,6 +210,67 @@ class OpsStack(Stack):
             label="triage failure %",
         )
         alarm("TriageFail", "triage-fail", triage_fail, 10, 1)
+
+        # Database saturation: a small burstable instance runs out of CPU, connections or disk before
+        # anything else in the system does, and until now nothing said so.
+        def rds(name: str, stat: str = "Average") -> cw.Metric:
+            return cw.Metric(
+                namespace="AWS/RDS",
+                metric_name=name,
+                dimensions_map={"DBInstanceIdentifier": data.db.instance_identifier},
+                statistic=stat,
+                period=FIVE_MIN,
+            )
+
+        alarm("DbCpu", "db-cpu", rds("CPUUtilization"), 80, 3)
+        alarm(
+            "DbConnections",
+            "db-connections",
+            rds("DatabaseConnections", "Maximum"),
+            db_connection_alarm_level(cfg.db_instance_class),
+            2,
+        )
+        low_disk = max(2 * GIB, int(0.2 * cfg.db_storage_gb * GIB))  # a fifth of the volume, at least 2 GiB
+        alarm(
+            "DbStorage",
+            "db-storage",
+            rds("FreeStorageSpace", "Minimum"),
+            low_disk,
+            1,
+            op=cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+        )
+
+        # Queue age: a consumer that has stopped leaves its queue growing old long before a dead-letter
+        # queue fills. Triage jobs take about 90 s, so five minutes is stuck; the outbox gets 15.
+        ages = {
+            name: cw.Metric(
+                namespace="AWS/SQS",
+                metric_name="ApproximateAgeOfOldestMessage",
+                dimensions_map={"QueueName": cfg.queue_name(name)},
+                statistic="Maximum",
+                period=FIVE_MIN,
+            )
+            for name in ("jobs", "outbox")
+        }
+        alarm("JobsAge", "jobs-queue-age", ages["jobs"], 300, 2)
+        alarm("OutboxAge", "outbox-queue-age", ages["outbox"], 900, 2)
+
+        # Authentication trouble: refused bearer tokens and failed sign-ins are 4xx at the gateway
+        # (throttled callers too), so a burst of them is a client gone wrong or someone guessing.
+        alarm(
+            "McpClientErrors",
+            "mcp-4xx",
+            mcp.api.metric_client_error(period=FIVE_MIN, statistic="Sum"),
+            100,
+            2,
+        )
+        alarm(
+            "AuthClientErrors",
+            "auth-4xx",
+            auth.api.metric_client_error(period=FIVE_MIN, statistic="Sum"),
+            50,
+            2,
+        )
 
         dash = cw.Dashboard(self, "Dashboard", dashboard_name=p)
         dash.add_widgets(
@@ -205,6 +297,15 @@ class OpsStack(Stack):
                 right=[_metric("WatcherDurationMs", "Maximum", service="watcher")],
                 width=12,
             ),
+        )
+        dash.add_widgets(
+            cw.GraphWidget(
+                title="Database: CPU % and connections",
+                left=[rds("CPUUtilization")],
+                right=[rds("DatabaseConnections", "Maximum")],
+                width=12,
+            ),
+            cw.GraphWidget(title="Queues: age of the oldest message (s)", left=list(ages.values()), width=12),
         )
         dash.add_widgets(
             cw.GraphWidget(
