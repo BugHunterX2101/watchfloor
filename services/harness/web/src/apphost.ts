@@ -13,7 +13,7 @@
 // width-based type scale shows what that device would render.
 
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { callTool, type Call } from "./api";
+import { callTool, SignedOut, type Call } from "./api";
 
 export type Device = "fit" | "compact" | "standard" | "large";
 
@@ -25,6 +25,7 @@ let box: HTMLElement | null = null;
 let device: Device = "fit";
 let contentHeight = 0;
 let themeChoice: "auto" | "light" | "dark" = "auto";
+let renderToken = 0;
 const observer = new ResizeObserver(() => layout());
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -95,7 +96,11 @@ export async function renderView(
   view: { uri: string; html: string; data: string },
   onCall: (call: Call) => void,
 ): Promise<void> {
+  // Two views can be requested close together (a second turn, or a sign-out): only the newest one
+  // is allowed to finish connecting, so a late handshake never leaves an orphaned frame behind.
+  const mine = ++renderToken;
   await clear();
+  if (mine !== renderToken) return;
   let data: Record<string, unknown> = {};
   try {
     data = JSON.parse(view.data) as Record<string, unknown>;
@@ -128,7 +133,14 @@ export async function renderView(
     void bridge.sendToolResult({ content: [], structuredContent: data });
   };
   bridge.oncalltool = async (params) => {
-    const result = await callTool(params.name, (params.arguments ?? {}) as Record<string, unknown>);
+    let result;
+    try {
+      result = await callTool(params.name, (params.arguments ?? {}) as Record<string, unknown>);
+    } catch (err) {
+      // The session ended while a view was open: the page must say so, not just the view.
+      if (err instanceof SignedOut) window.dispatchEvent(new Event("wf:signedout"));
+      throw err;
+    }
     onCall(result.call);
     return {
       content: result.content,
@@ -142,6 +154,10 @@ export async function renderView(
     layout();
   };
   await bridge.connect(new PostMessageTransport(target, target));
+  if (mine !== renderToken) {
+    await bridge.close().catch(() => undefined); // a newer view took over while this one connected
+    return;
+  }
   current = bridge;
 }
 
@@ -154,6 +170,7 @@ async function clear(): Promise<void> {
 }
 
 export async function clearView(container: HTMLElement): Promise<void> {
+  renderToken += 1; // anything still connecting is now stale
   await clear();
   container.style.height = "";
   container.replaceChildren();

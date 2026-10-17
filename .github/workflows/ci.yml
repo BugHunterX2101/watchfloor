@@ -47,7 +47,7 @@ jobs:
         with: { node-version: 24 }
       - run: uv sync --frozen && uv run --frozen pytest -q
         working-directory: services/harness/api
-      - run: npm ci && npm run build
+      - run: npm ci && npm run build && npm test
         working-directory: services/harness/web
 
   ui:

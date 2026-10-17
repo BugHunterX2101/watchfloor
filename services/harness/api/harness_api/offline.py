@@ -27,6 +27,12 @@ YES = re.compile(
 )
 UNDO = re.compile(r"\b(undo|take (it|that) back|reverse (it|that))\b", re.IGNORECASE)
 STANDING = re.compile(r"standing orders?|my (rules|alerts)|what am i watching", re.IGNORECASE)
+# "Where do I start?": the briefing's first deal, which the server ranks by band and deal value.
+PRIORITY = re.compile(
+    r"\b(what should i (do|tackle|handle|look at) first|where (do|should) i start|most urgent|"
+    r"biggest (risk|problem)|top (deal|risk|priority)|first priority)\b",
+    re.IGNORECASE,
+)
 RESULT = re.compile(r"\b(results?|finished|came back|outcome)\b", re.IGNORECASE)
 TRIAGE = re.compile(r"\b(deep|triage|review|dig into|look into)\b", re.IGNORECASE)
 EXPLAIN = re.compile(r"\b(why|explain|what'?s wrong|how is|how's|tell me about)\b", re.IGNORECASE)
@@ -65,6 +71,8 @@ async def offline_turn(
         return (await mcp.call_tool("undo_action", {"confirmation_token": pending.token})).summary
     if STANDING.search(message):
         return (await mcp.call_tool("list_standing_orders", {})).summary
+    if PRIORITY.search(message):
+        return (await mcp.call_tool("get_risk_briefing", {"limit": 1})).summary
     if not (TRIAGE.search(message) or EXPLAIN.search(message) or RESULT.search(message)):
         return (await mcp.call_tool("get_risk_briefing", {})).summary
 

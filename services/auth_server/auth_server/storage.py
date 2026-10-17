@@ -111,6 +111,20 @@ class AuthStore:
                 subject,
             )
 
+    async def purge_expired(self) -> int:
+        """Delete what nothing can use any more: rate counters older than ten minutes, and authorization
+        codes and refresh tokens a day past their expiry (the day keeps "expired" apart from "unknown").
+        The watcher runs as ``wf_app``, which cannot see this schema, so the auth server tidies up itself."""
+        removed = 0
+        async with self._tx() as conn:
+            for sql in (
+                "DELETE FROM auth.rate_limits WHERE window_start < now() - interval '10 minutes'",
+                "DELETE FROM auth.auth_codes WHERE expires_at < now() - interval '1 day'",
+                "DELETE FROM auth.refresh_tokens WHERE expires_at < now() - interval '1 day'",
+            ):
+                removed += int((await conn.execute(sql)).rsplit(" ", 1)[-1])
+        return removed
+
     # -- authorization codes (60 s, single use)
     async def save_code(
         self,

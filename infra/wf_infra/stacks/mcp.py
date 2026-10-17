@@ -30,6 +30,7 @@ from ..common import (
     default_host_output,
     domain_mapping,
     service_integration,
+    throttle,
 )
 from ..config import EnvConfig
 from .data import DataStack
@@ -140,10 +141,6 @@ class McpStack(Stack):
         )
         self.api.add_routes(path="/.well-known/{proxy+}", methods=[apigwv2.HttpMethod.GET], integration=integ)
         self.api.add_routes(path="/healthz", methods=[apigwv2.HttpMethod.GET], integration=integ)
-        stage = self.api.default_stage.node.default_child  # escape hatch: stage throttling (DD §18.1)
-        assert isinstance(stage, apigwv2.CfnStage)
-        stage.default_route_settings = apigwv2.CfnStage.RouteSettingsProperty(
-            throttling_burst_limit=50, throttling_rate_limit=25
-        )
+        throttle(self.api, rate=25, burst=50)
         CfnOutput(self, "ResourceUri", value=cfg.resource_uri)
         default_host_output(self, cfg, self.api)

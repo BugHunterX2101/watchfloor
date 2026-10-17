@@ -101,8 +101,12 @@ class McpHttp:
             body = r.json()
         except ValueError:
             raise McpError(f"{method}: response is not JSON") from None
+        if not isinstance(body, dict):
+            raise McpError(f"{method}: response is not a JSON-RPC object")
         if "error" in body:
-            raise McpError(f"{method}: {body['error'].get('message', 'error')}")
+            err = body["error"]
+            message = err.get("message") if isinstance(err, dict) else None
+            raise McpError(f"{method}: {message if isinstance(message, str) else 'error'}")
         result = body.get("result")
         if not isinstance(result, dict):
             raise McpError(f"{method}: no result")

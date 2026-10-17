@@ -44,7 +44,7 @@ def risk_alert(
     bullets = "\n".join(f"• {escape(r)}" for r in reasons[:3]) or "• No specific reasons recorded."
     ctx = f"Standing order: _{escape(rule_description)}_ · Watchfloor" if rule_description else "Watchfloor"
     return {
-        "text": f"{account} is {label} (health {health(score)})",
+        "text": f"{escape(account)} is {label} (health {health(score)})",
         "blocks": [
             _header(f"{label} · {account} (health {health(score)})"),
             {
@@ -68,7 +68,7 @@ def task_created(
     who = mention or escape(assignee)
     due = f" · due {due_display}" if due_display else ""
     return {
-        "text": f"Task for {assignee}: {title}",
+        "text": f"Task for {escape(assignee)}: {escape(title)}",
         "blocks": [
             _section(f"*Task for {who}:* {escape(title)}\n{escape(account)}{due}"),
             _context(f"Requested by {escape(requester)} by voice · confirmed in Watchfloor"),
@@ -80,7 +80,7 @@ def owner_reassigned(
     *, account: str, deal_name: str, old_owner: str, new_owner: str, requester: str
 ) -> dict[str, Any]:
     return {
-        "text": f"{account}: owner changed to {new_owner}",
+        "text": f"{escape(account)}: owner changed to {escape(new_owner)}",
         "blocks": [
             _section(
                 f"*{escape(account)} · {escape(deal_name)}*\n"
@@ -93,7 +93,7 @@ def owner_reassigned(
 
 def team_note(*, account: str, score: int, band: str, message: str, requester: str) -> dict[str, Any]:
     return {
-        "text": f"{account}: {message}",
+        "text": f"{escape(account)}: {escape(message)}",
         "blocks": [
             _section(f"*{escape(account)}* · {band_label(band)} (health {health(score)})\n{escape(message)}"),
             _context(f"From {escape(requester)} via Watchfloor"),
@@ -121,7 +121,7 @@ def triage_plan(
         or "No actions recommended."
     )
     return {
-        "text": f"{kind}: {account}",
+        "text": f"{kind}: {escape(account)}",
         "blocks": [
             _header(f"{kind} · {account} (health {health(score)}, {band_label(band)})"),
             _section(escape(voice_summary)),
@@ -134,7 +134,7 @@ def triage_plan(
 
 def draft_message(*, account: str, draft: str, requester: str) -> dict[str, Any]:
     return {
-        "text": f"DRAFT follow-up for {account}",
+        "text": f"DRAFT follow-up for {escape(account)}",
         "blocks": [
             _header(f"DRAFT · Follow-up for {account}"),
             _section(f"```{escape(draft)[:2800]}```"),

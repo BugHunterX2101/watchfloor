@@ -6,8 +6,10 @@ API can read. Three cookies:
 
 - ``wf_h``: the session, ``{"at": access, "rt": refresh, "exp": epoch seconds}``;
 - ``wf_h_pkce``: one sign-in attempt, ``{"v": verifier, "s": state}``, valid 10 minutes;
-- ``wf_h_pending``: what waits for the next turn, ``{"t": token, "s": summary, "k": "preview" |
-  "confirmed", "u": epoch seconds}`` (``agent.Pending``), valid 15 minutes at most.
+- ``wf_h_pending``: what waits for the next turn (``agent.Pending``), valid 15 minutes at most:
+  a preview or the action just confirmed, ``{"t": token, "s": summary, "k": "preview" | "confirmed",
+  "u": epoch seconds}``, or a held write the user must say yes to, ``{"k": "ask", "n": tool, "a": args,
+  "t": a fingerprint of the arguments, "u": ...}``, which is dropped after 180 seconds or one turn.
 """
 
 from __future__ import annotations

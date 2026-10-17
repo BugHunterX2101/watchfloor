@@ -2,95 +2,161 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <title>Watchfloor · Simulated Alexa+</title>
-    <meta name="description" content="Simulated Alexa+ experience for Watchfloor: ask about pipeline risk by voice or text." />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.35' cy='.3'%3E%3Cstop offset='0' stop-color='%23b8fff1'/%3E%3Cstop offset='.55' stop-color='%2333d1bb'/%3E%3Cstop offset='1' stop-color='%23176b8f'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23g)'/%3E%3C/svg%3E" />
+    <meta name="description" content="Simulated Alexa+ experience for Watchfloor: ask about pipeline risk by voice or text, then explore the board, your standing orders and the live tool activity." />
+    <link rel="icon" type="image/svg+xml" href="/logo-mark.svg" />
   </head>
   <body data-voice="idle">
-    <a class="skip" href="#message">Skip to the message box</a>
-    <div class="atmosphere" aria-hidden="true"></div>
+    <a class="skip" href="#main">Skip to the content</a>
+    <div class="atmosphere" aria-hidden="true"><canvas id="scene"></canvas></div>
 
-    <header id="banner"></header>
-
-    <main class="shell">
-      <section class="stage" aria-labelledby="stage-title">
-        <div class="stage-head">
-          <div class="brand">
-            <span class="brand-mark" aria-hidden="true"></span>
-            <div>
-              <p class="eyebrow">Watchfloor</p>
-              <h1 id="stage-title" class="stage-title">Pipeline watch</h1>
-            </div>
-          </div>
-          <div class="device" role="radiogroup" aria-label="Preview the view at an Echo Show size">
-            <button type="button" role="radio" aria-checked="true" data-device="fit">Fit</button>
-            <button type="button" role="radio" aria-checked="false" data-device="compact" title="Echo Show 5 · 960 wide">Compact</button>
-            <button type="button" role="radio" aria-checked="false" data-device="standard" title="Echo Show 8 · 1280 wide">Standard</button>
-            <button type="button" role="radio" aria-checked="false" data-device="large" title="Echo Show 15 · 1920 wide">Large</button>
-          </div>
+    <header class="chrome">
+      <div id="banner"></div>
+      <div class="topbar">
+        <a class="brand" href="#/" aria-label="Watchfloor, back to Watch">
+          <svg class="logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="wf-ring" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+                <stop offset="0" style="stop-color: var(--signal)" />
+                <stop offset=".55" style="stop-color: var(--signal-2)" />
+                <stop offset="1" style="stop-color: var(--signal-3)" />
+              </linearGradient>
+              <radialGradient id="wf-orb" cx=".35" cy=".3" r=".8">
+                <stop offset="0" stop-color="#d6fff7" />
+                <stop offset=".45" stop-color="#33d1bb" />
+                <stop offset="1" stop-color="#176b8f" />
+              </radialGradient>
+            </defs>
+            <!-- A health ring, open at one end, with the sentinel dot in the gap; the orb is the assistant. -->
+            <g class="logo-spin">
+              <circle cx="32" cy="32" r="26" fill="none" stroke="url(#wf-ring)" stroke-width="5" stroke-linecap="round" stroke-dasharray="127.4 36" transform="rotate(-90 32 32)" />
+              <circle class="logo-dot" cx="15.46" cy="11.94" r="3.2" />
+            </g>
+            <circle cx="32" cy="32" r="15" fill="url(#wf-orb)" />
+            <ellipse cx="27" cy="26.5" rx="5" ry="3.2" fill="#fff" opacity=".55" transform="rotate(-25 27 26.5)" />
+          </svg>
+          <span class="brand-text">
+            <span class="brand-name">Watch<span>floor</span></span>
+            <span class="brand-tag">Pipeline risk watch</span>
+          </span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          <a href="#/" data-route="watch"><span class="nav-ico" data-icon="watch" aria-hidden="true"></span><span class="nav-label">Watch</span><span class="nav-badge" hidden></span></a>
+          <a href="#/pipeline" data-route="pipeline"><span class="nav-ico" data-icon="pipeline" aria-hidden="true"></span><span class="nav-label">Pipeline</span><span class="nav-badge" hidden></span></a>
+          <a href="#/orders" data-route="orders"><span class="nav-ico" data-icon="orders" aria-hidden="true"></span><span class="nav-label">Orders</span><span class="nav-badge" hidden></span></a>
+          <a href="#/activity" data-route="activity"><span class="nav-ico" data-icon="activity" aria-hidden="true"></span><span class="nav-label">Activity</span><span class="nav-badge" hidden></span></a>
+          <a href="#/guide" data-route="guide"><span class="nav-ico" data-icon="guide" aria-hidden="true"></span><span class="nav-label">Guide</span><span class="nav-badge" hidden></span></a>
+        </nav>
+        <div class="topbar-tools">
+          <button id="handsfree" type="button" class="icon-btn" aria-pressed="false" aria-label="Start hands-free listening" aria-keyshortcuts="h" title="Hands-free (h)"></button>
+          <button id="open-settings" type="button" class="icon-btn" aria-label="Settings" title="Settings (,)"></button>
           <div class="theme" role="radiogroup" aria-label="Color theme">
             <button type="button" role="radio" aria-checked="true" data-theme-choice="auto" aria-label="Follow the system theme" title="System"></button>
             <button type="button" role="radio" aria-checked="false" data-theme-choice="light" aria-label="Light theme" title="Light"></button>
             <button type="button" role="radio" aria-checked="false" data-theme-choice="dark" aria-label="Dark theme" title="Dark"></button>
           </div>
         </div>
+      </div>
+    </header>
 
-        <div class="screen" aria-label="Watchfloor view">
-          <div id="view" class="frame"></div>
-          <div id="idle" class="idle">
-            <div class="orb orb-hero" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
-            <p class="idle-title">Ask about your pipeline.</p>
-            <p class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
+    <main id="main" tabindex="-1">
+      <!-- Watch: the conversation, the view and the trace. -->
+      <div class="shell" data-page="watch">
+        <section class="stage" aria-labelledby="stage-title">
+          <div class="stage-head">
+            <div>
+              <p class="eyebrow">Watch</p>
+              <h1 id="stage-title" class="stage-title" data-page-title>Pipeline watch</h1>
+            </div>
+            <div class="device" role="radiogroup" aria-label="Preview the view at an Echo Show size">
+              <button type="button" role="radio" aria-checked="true" data-device="fit">Fit</button>
+              <button type="button" role="radio" aria-checked="false" data-device="compact" title="Echo Show 5 · 960 wide">Compact</button>
+              <button type="button" role="radio" aria-checked="false" data-device="standard" title="Echo Show 8 · 1280 wide">Standard</button>
+              <button type="button" role="radio" aria-checked="false" data-device="large" title="Echo Show 15 · 1920 wide">Large</button>
+            </div>
           </div>
-          <!-- What the microphone is hearing, shown on the screen as Echo devices do (the message box
-               carries the same text for assistive technology). -->
-          <p id="hearing" class="hearing" aria-hidden="true"></p>
-        </div>
-      </section>
 
-      <section class="rail" aria-label="Conversation">
-        <div class="presence">
-          <div class="orb orb-small" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
-          <div>
-            <p id="voice-state" class="voice-state" aria-live="polite">Ready</p>
-            <p id="engine" class="engine"></p>
+          <div class="screen" aria-label="Watchfloor view" data-orb="3d">
+            <div id="view" class="frame"></div>
+            <div id="idle" class="idle">
+              <div class="orb3d-wrap" id="orb3d-wrap"><canvas id="orb3d" aria-hidden="true"></canvas></div>
+              <div class="orb orb-hero" id="orb-fallback" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
+              <p id="greet" class="idle-greet"></p>
+              <p class="idle-title">Ask about your pipeline.</p>
+              <p class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
+              <div id="idle-pins" class="chip-row center" hidden></div>
+            </div>
+            <!-- What the microphone is hearing, shown on the screen as Echo devices do (the message box
+                 carries the same text for assistive technology). -->
+            <p id="hearing" class="hearing" aria-hidden="true"></p>
           </div>
-        </div>
+        </section>
 
-        <div id="signin" class="signin" hidden>
-          <h2 class="signin-title">Link your Watchfloor account</h2>
-          <p>The same account-linking flow Alexa+ uses: OAuth with PKCE, against the real sign-in server.</p>
-          <a class="btn btn-primary" href="/oauth/login">Sign in</a>
-        </div>
+        <section class="rail" aria-label="Conversation">
+          <div class="presence">
+            <div class="orb orb-small" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
+            <div>
+              <p id="voice-state" class="voice-state" aria-live="polite">Ready</p>
+              <p id="engine" class="engine"></p>
+            </div>
+          </div>
 
-        <ol id="transcript" class="transcript" aria-live="polite" aria-relevant="additions"></ol>
+          <div id="signin" class="signin" hidden>
+            <h2 class="signin-title">Link your Watchfloor account</h2>
+            <p>The same account-linking flow Alexa+ uses: OAuth with PKCE, against the real sign-in server.</p>
+            <a class="btn btn-primary" href="/oauth/login">Sign in</a>
+          </div>
 
-        <div id="suggestions" class="suggestions" aria-label="Try asking" hidden></div>
+          <ol id="transcript" class="transcript" aria-live="polite" aria-relevant="additions"></ol>
 
-        <form id="composer" class="composer" autocomplete="off">
-          <button id="mic" type="button" class="mic" aria-label="Speak" aria-pressed="false"></button>
-          <label class="sr-only" for="message">Message</label>
-          <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" enterkeyhint="send" aria-keyshortcuts="/" />
-          <kbd class="kbd" title="Press / to type">/</kbd>
-          <button id="send" type="submit" class="send" aria-label="Send"></button>
-        </form>
+          <div id="suggestions" class="suggestions" aria-label="Try asking" hidden></div>
 
-        <div class="controls">
-          <label class="switch"><input id="voice" type="checkbox" checked /><span aria-hidden="true"></span>Read replies aloud, with sound cues</label>
-          <button id="logout" type="button" class="link" hidden>Sign out</button>
-        </div>
-      </section>
+          <form id="composer" class="composer" autocomplete="off">
+            <button id="mic" type="button" class="mic" aria-label="Speak" aria-pressed="false"></button>
+            <label class="sr-only" for="message">Message</label>
+            <input id="message" name="message" maxlength="500" placeholder="Ask about your pipeline…" enterkeyhint="send" aria-keyshortcuts="/" />
+            <kbd class="kbd" title="Press / to type">/</kbd>
+            <button id="send" type="submit" class="send" aria-label="Send"></button>
+          </form>
 
-      <section class="trace" aria-labelledby="trace-title">
-        <div class="trace-head">
-          <h2 id="trace-title">Trace</h2>
-          <p class="trace-note">Every MCP tool call with its server latency, newest first.</p>
-        </div>
-        <ol id="calls" class="calls"><li class="calls-empty">Tool calls appear here once you ask something.</li></ol>
-      </section>
+          <div class="controls">
+            <label class="switch"><input id="voice" type="checkbox" checked /><span aria-hidden="true"></span>Read replies aloud, with sound cues</label>
+            <button id="logout" type="button" class="link" hidden>Sign out</button>
+          </div>
+        </section>
+
+        <section class="trace" aria-labelledby="trace-title">
+          <div class="trace-head">
+            <h2 id="trace-title">Trace</h2>
+            <p class="trace-note">Every MCP tool call with its server latency, newest first. <a href="#/activity">See all activity</a></p>
+          </div>
+          <ol id="calls" class="calls"><li class="calls-empty">Tool calls appear here once you ask something.</li></ol>
+        </section>
+      </div>
+
+      <!-- The other pages are built by their modules (src/pipeline.ts and friends). -->
+      <section class="page" data-page="pipeline" hidden></section>
+      <section class="page" data-page="orders" hidden></section>
+      <section class="page" data-page="activity" hidden></section>
+      <section class="page" data-page="guide" hidden></section>
     </main>
+
+    <footer class="foot">
+      <p>Watchfloor · simulated Alexa+ harness. Press <kbd class="kbd solid">?</kbd> for the keyboard shortcuts, or <kbd class="kbd solid">h</kbd> to run it all by voice.</p>
+    </footer>
+
+    <!-- Hands-free: visible on every page while the microphone is open, so the state is never a guess. -->
+    <div id="voice-dock" class="voice-dock" data-state="off" hidden>
+      <span class="dock-orb" aria-hidden="true"></span>
+      <div class="dock-text">
+        <p id="dock-state" class="dock-state"></p>
+        <p id="dock-line" class="dock-line" aria-hidden="true"></p>
+      </div>
+      <button id="dock-talk" type="button" class="btn btn-quiet dock-btn" title="Same as saying “Watchfloor”">Talk</button>
+      <button id="dock-off" type="button" class="btn btn-quiet dock-btn">Turn off</button>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

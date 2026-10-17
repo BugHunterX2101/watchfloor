@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" role="img" aria-label="Watchfloor: pipeline risk watch">
+  <!-- For light backgrounds. The dark variant is logo-lockup-dark.svg. -->
+  <defs>
+    <linearGradient id="ring" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b7f73"/>
+      <stop offset=".55" stop-color="#1d6fb8"/>
+      <stop offset="1" stop-color="#4b55d6"/>
+    </linearGradient>
+    <radialGradient id="orb" cx=".35" cy=".3" r=".8">
+      <stop offset="0" stop-color="#d6fff7"/>
+      <stop offset=".45" stop-color="#33d1bb"/>
+      <stop offset="1" stop-color="#176b8f"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="26" fill="none" stroke="url(#ring)" stroke-width="5" stroke-linecap="round" stroke-dasharray="127.4 36" transform="rotate(-90 32 32)"/>
+  <circle cx="32" cy="32" r="15" fill="url(#orb)"/>
+  <ellipse cx="27" cy="26.5" rx="5" ry="3.2" fill="#fff" opacity=".55" transform="rotate(-25 27 26.5)"/>
+  <circle cx="15.46" cy="11.94" r="3.2" fill="#0b7f73"/>
+  <text x="80" y="36" font-family="Geist, 'Segoe UI', system-ui, sans-serif" font-size="30" letter-spacing="-0.4"><tspan font-weight="650" fill="#111723">Watch</tspan><tspan font-weight="400" fill="#556074">floor</tspan></text>
+  <text x="81" y="55" font-family="'Geist Mono', ui-monospace, Consolas, monospace" font-size="9.5" letter-spacing="2.4" fill="#5f6979">PIPELINE RISK WATCH</text>
+</svg>

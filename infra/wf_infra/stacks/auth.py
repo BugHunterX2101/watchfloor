@@ -18,7 +18,14 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_secretsmanager as sm
 from constructs import Construct
 
-from ..common import Container, PythonLambda, default_host_output, domain_mapping, service_integration
+from ..common import (
+    Container,
+    PythonLambda,
+    default_host_output,
+    domain_mapping,
+    service_integration,
+    throttle,
+)
 from ..config import EnvConfig
 from .data import DataStack
 from .net import NetStack
@@ -159,6 +166,7 @@ class AuthStack(Stack):
             default_domain_mapping=domain_mapping(self, cfg, cfg.auth_domain),
         )
         self.api.add_routes(path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=integ)
+        throttle(self.api, rate=20, burst=40)
         self.function = server
         CfnOutput(self, "Issuer", value=cfg.issuer)
         default_host_output(self, cfg, self.api)

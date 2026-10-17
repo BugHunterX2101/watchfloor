@@ -4,14 +4,16 @@
     GET  /oauth/callback   exchange the code; the tokens go into an encrypted cookie
     GET  /api/session      {"signed_in": bool, "engine": ...}
     POST /api/logout       revoke the refresh token and clear the cookie
-    POST /converse         {"message", "history"} → {"reply", "engine", "calls", "ui"}
+    POST /converse         {"message", "history", "context"?} → {"reply", "engine", "calls", "ui", "actions"}
     POST /api/tool         {"name", "arguments"} from a ui:// view → the tool result (allowlisted tools)
     GET  /healthz          liveness
     GET  /                 the built web app (services/harness/web/dist), when present
 
 Cross-site requests can't use the session: the cookie is SameSite=Lax and the
 POST endpoints take JSON only, which a cross-origin page can't send without a
-CORS preflight this app never grants.
+CORS preflight this app never grants. Every response carries a strict Content-Security-Policy, no framing
+and no sniffing (headers.py), and a person is held to a number of turns and taps a minute (limits.py), since
+a turn runs a language model.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from urllib.parse import urlencode
 import httpx
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -33,6 +36,9 @@ from starlette.staticfiles import StaticFiles
 from . import pkce
 from .agent import ModelFactory, Pending, model_chain, next_pending, run_turn
 from .config import HarnessConfig, Misconfigured, get_config
+from .control import Screen
+from .headers import SecurityHeaders
+from .limits import Limiter, subject
 from .mcp_http import McpError, McpHttp, Unauthorized
 from .session import (
     PENDING_COOKIE,
@@ -65,6 +71,8 @@ class Line(BaseModel):
 class ConverseIn(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     history: list[Line] = Field(default_factory=list, max_length=24)
+    # What the page shows now (fixed words only), so "this page" and "that one" mean something.
+    context: Screen | None = None
 
 
 class ToolIn(BaseModel):
@@ -85,8 +93,18 @@ VIEW_TOOLS = frozenset(
         "extend_preview",
         "confirm_action",
         "undo_action",
+        # The harness's own Orders page (not a ui:// view): list the user's standing orders and
+        # remove one on an explicit tap, after the page's own confirmation step.
+        "list_standing_orders",
+        "remove_standing_order",
     }
 )
+
+
+# Per signed-in person, per minute. A turn runs a model, so it is the dear one; a tap on a view is a
+# single tool call. Both are far above what a person produces by speaking or tapping.
+CONVERSE_PER_MIN = 30
+TOOL_PER_MIN = 120
 
 
 def create_app(
@@ -101,6 +119,7 @@ def create_app(
     s = conf.core
     shared: dict[str, httpx.AsyncClient] = {}
     ui_cache: dict[str, tuple[float, str]] = {}  # view HTML by server and URI (agent._view)
+    converse_limit, tool_limit = Limiter(CONVERSE_PER_MIN), Limiter(TOOL_PER_MIN)
 
     def mcp_client() -> httpx.AsyncClient:
         """One kept-alive client for every MCP call this process makes (see McpHttp.http)."""
@@ -190,11 +209,23 @@ def create_app(
         except pkce.OAuthError:
             return None
 
-    async def with_session(request: Request, work: Callable[[str], Awaitable[dict[str, Any]]]) -> Response:
+    async def with_session(
+        request: Request, work: Callable[[str], Awaitable[dict[str, Any]]], limit: Limiter
+    ) -> Response:
         """Run ``work`` with the user's access token: refresh it when due or rejected, once."""
         session = box.open_session(request.cookies.get(SESSION_COOKIE))
         if session is None:
             return signed_out()
+        wait = limit.hit(subject(session.access_token))
+        if wait:
+            return JSONResponse(
+                {
+                    "error": "rate_limited",
+                    "message": f"That's a lot of requests at once. Try again in {wait} seconds.",
+                },
+                status_code=429,
+                headers={"Retry-After": str(wait)},
+            )
         renewed = False
         if session.expiring():
             session, renewed = await fresh(session), True
@@ -248,11 +279,12 @@ def create_app(
                 model_factory=model_factory,
                 ui_cache=ui_cache,
                 pending=pending,
+                screen=body.context,
             )
             after["pending"] = result.pending
             return result.public()
 
-        resp = await with_session(request, turn)
+        resp = await with_session(request, turn, converse_limit)
         keep_pending(request, resp, after.get("pending"))
         return resp
 
@@ -282,7 +314,7 @@ def create_app(
                 "call": c.public(),
             }
 
-        resp = await with_session(request, call)
+        resp = await with_session(request, call, tool_limit)
         keep_pending(request, resp, after.get("pending"))
         return resp
 
@@ -306,7 +338,11 @@ def create_app(
         routes.append(Mount("/", StaticFiles(directory=conf.web_dist, html=True)))
     else:
         routes.append(Route("/", not_built, methods=["GET"]))
-    return Starlette(routes=routes, lifespan=lifespan)
+    return Starlette(
+        routes=routes,
+        lifespan=lifespan,
+        middleware=[Middleware(SecurityHeaders, hsts=conf.secure_cookies)],
+    )
 
 
 def __getattr__(name: str) -> Any:

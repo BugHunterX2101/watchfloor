@@ -16,8 +16,14 @@ Nothing in our templates or roles explains it, and CloudTrail recorded no Lambda
 account-level restriction that only AWS Support can lift, on its own schedule, days before the
 submission deadline (friction log entry 11).
 
-ECS, EC2, ECR, Cloud Map and API Gateway still work on the account. App Runner does not (it needs a
-subscription the account doesn't have).
+When this was decided, ECS, ECR, Cloud Map and API Gateway still answered. App Runner does not (it
+needs a subscription the account doesn't have).
+
+**Outcome (2026-10-17): the block turned out to cover compute as a whole.** The first ECS deploy
+failed with "unable to place a task because your account is currently blocked", and the Fargate and
+EC2 vCPU quotas read zero (friction log entry 11). The `compute: ecs` layout is built, synthesised and
+tested, but no task has started on this account. It, or `compute: lambda`, is what to deploy once AWS
+Support lifts the block.
 
 ## Decision
 

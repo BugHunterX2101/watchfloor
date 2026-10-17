@@ -34,6 +34,20 @@ from watchfloor_core.bedrock import strip_reasoning, tool_use_options
 from watchfloor_core.usage import Tally
 
 from .config import HarnessConfig, Misconfigured
+from .control import (
+    ASK_NOTE,
+    CONTROL_DESCRIPTION,
+    GATED_WRITES,
+    Screen,
+    TurnState,
+    clean,
+    control_result,
+    control_schema,
+    deadline,
+    describe_write,
+    fingerprint,
+    screen_note,
+)
 from .mcp_http import McpError, McpHttp, ToolCall, Unauthorized
 from .offline import offline_turn
 
@@ -65,34 +79,60 @@ class Pending:
 
     token: str
     summary: str
-    state: Literal["preview", "confirmed"]
+    state: Literal["preview", "confirmed", "ask"]
     until: float  # epoch seconds: the preview's expiry, or the end of the undo window
+    # "ask" only: a direct write held back until the user says yes (control.GATED_WRITES).
+    tool: str = ""
+    args: dict[str, Any] = field(default_factory=dict)
 
     def live(self) -> bool:
         return self.until > time.time()
 
     def to_dict(self) -> dict[str, Any]:
-        return {"t": self.token, "s": self.summary, "k": self.state, "u": self.until}
+        out: dict[str, Any] = {"t": self.token, "s": self.summary, "k": self.state, "u": self.until}
+        if self.state == "ask":
+            out |= {"n": self.tool, "a": self.args}
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> Pending | None:
         try:
             p = cls(str(data["t"]), str(data["s"]), data["k"], float(data["u"]))  # type: ignore[index]
+            if p.state == "ask":
+                p.tool, p.args = str(data["n"]), dict(data["a"])  # type: ignore[index]
         except (TypeError, KeyError, ValueError):
             return None
-        return p if p.state in ("preview", "confirmed") and p.live() else None
+        if p.state not in ("preview", "confirmed", "ask") or not p.live():
+            return None
+        # A sealed cookie is ours, but a held write is only ever one of the gated tools, with
+        # the fingerprint of exactly these arguments.
+        if p.state == "ask" and (p.tool not in GATED_WRITES or p.token != fingerprint(p.tool, p.args)):
+            return None
+        return p
 
     def note(self) -> str:
-        """What the model is told at the start of the turn."""
+        """What the model is told at the start of the turn.
+
+        The summary comes from a tool result, so it can carry CRM text: it goes in as one quoted line,
+        with quotes and line breaks flattened, never as a new instruction.
+        """
+        summary = " ".join(self.summary.replace('"', "'").split())
+        if self.state == "ask":
+            return (
+                f'The user was just asked to confirm this change: "{summary}". If their latest '
+                f"message clearly says yes, call {self.tool} again with exactly these arguments: "
+                f"{json.dumps(self.args, ensure_ascii=False)}. If they say no, change the subject or "
+                "want something different, don't call it."
+            )
         if self.state == "preview":
             return (
-                f'A change is waiting for the user\'s answer. Its preview: "{self.summary}" '
+                f'A change is waiting for the user\'s answer. Its preview: "{summary}" '
                 "If their latest message clearly says yes, call confirm_action with "
                 f'confirmation_token "{self.token}". If they want more time, call extend_preview '
                 "with that token. If they say no or move on, leave it."
             )
         return (
-            f'The user just confirmed this: "{self.summary}" '
+            f'The user just confirmed this: "{summary}" '
             f'If they ask to undo it, call undo_action with confirmation_token "{self.token}".'
         )
 
@@ -104,8 +144,16 @@ def _epoch(value: Any, default_s: float) -> float:
         return time.time() + default_s
 
 
-def next_pending(pending: Pending | None, calls: list[ToolCall]) -> Pending | None:
-    """What waits for the next turn, after this turn's successful calls, in order."""
+def next_pending(
+    pending: Pending | None, calls: list[ToolCall], asked: Pending | None = None
+) -> Pending | None:
+    """What waits for the next turn, after this turn's successful calls, in order.
+
+    ``asked`` is a direct write this turn held back for a yes. A write that was asked about gets one
+    turn to be answered: it is gone after the next turn whether or not the user said yes.
+    """
+    if pending is not None and pending.state == "ask":
+        pending = None
     for c in calls:
         data = c.structured or {}
         token = data.get("confirmation_token") or c.arguments.get("confirmation_token")
@@ -120,6 +168,8 @@ def next_pending(pending: Pending | None, calls: list[ToolCall]) -> Pending | No
             pending = Pending(token, c.summary[:300], "confirmed", _epoch(undo, 30)) if undo else None
         elif c.tool == "undo_action":
             pending = None
+    if asked is not None:
+        pending = asked
     return pending if pending and pending.live() else None
 
 
@@ -130,6 +180,7 @@ class TurnResult:
     calls: list[ToolCall]
     ui: dict[str, str] | None = None
     pending: Pending | None = None  # for the app's cookie, never sent to the browser
+    actions: list[dict[str, Any]] = field(default_factory=list)  # for the page (control.py)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -137,6 +188,7 @@ class TurnResult:
             "engine": self.engine,
             "calls": [c.public() for c in self.calls],
             "ui": self.ui,
+            "actions": self.actions,
         }
 
 
@@ -168,6 +220,8 @@ class _Guard:
     errors: list[str] = field(default_factory=list)
     pending_token: str | None = None  # the preview the user was asked about in an earlier turn
     issued: set[str] = field(default_factory=set)  # tokens of previews made in this turn
+    ask: Pending | None = None  # a direct write the user was asked about in an earlier turn
+    state: TurnState = field(default_factory=TurnState)
 
     def refuse_confirm(self, token: Any) -> str | None:
         if token in self.issued:
@@ -175,6 +229,20 @@ class _Guard:
         if not token or token != self.pending_token:
             return NOT_PENDING
         return None
+
+    def hold_write(self, tool: str, arguments: dict[str, Any]) -> str | None:
+        """What to tell the model when a direct write must wait for a yes; None when it may run.
+
+        It may run only with the arguments of the write the user was asked about in an earlier turn
+        (one use), so a model that asks and "confirms" in the same breath is held too.
+        """
+        fp = fingerprint(tool, arguments)
+        if self.ask is not None and self.ask.token == fp and fp not in self.issued:
+            self.ask = None
+            return None
+        self.issued.add(fp)
+        self.state.asked = Pending(fp, describe_write(tool, arguments), "ask", deadline(), tool, arguments)
+        return ASK_NOTE
 
 
 def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
@@ -192,6 +260,9 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
         ):
             log.warning("confirm_action refused before reaching the server: %s", refusal[:40])
             return result("error", refusal)
+        if name in GATED_WRITES and (held := guard.hold_write(name, arguments)):
+            log.info("%s held for the user's yes", name)
+            return result("success", json.dumps({"summary": held, "status": "needs_confirmation"}))
         try:
             call = await mcp.call_tool(name, arguments)
         except Unauthorized:
@@ -213,6 +284,31 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
         "inputSchema": {"json": spec.get("inputSchema") or {"type": "object", "properties": {}}},
     }
     return PythonAgentTool(name, tool_spec, run)
+
+
+def control_tool(guard: _Guard) -> Any:
+    """``control_app``: the page actions the model asks for are checked, collected, and sent to the page."""
+    from strands.tools.tools import PythonAgentTool
+
+    async def run(tool_use: dict[str, Any], **_: Any) -> dict[str, Any]:
+        def result(status: str, payload: dict[str, Any]) -> dict[str, Any]:
+            text = json.dumps(payload, ensure_ascii=False)
+            return {"toolUseId": tool_use["toolUseId"], "status": status, "content": [{"text": text}]}
+
+        act = clean(tool_use.get("input"))
+        if isinstance(act, str):
+            return result("error", {"summary": act})
+        if (full := guard.state.sink.add(act)) is not None:
+            return result("error", {"summary": full})
+        return result("success", control_result(act))
+
+    run.__name__ = "control_app"
+    spec = {
+        "name": "control_app",
+        "description": CONTROL_DESCRIPTION,
+        "inputSchema": {"json": control_schema()},
+    }
+    return PythonAgentTool("control_app", spec, run)
 
 
 def bedrock_model(cfg: HarnessConfig) -> Any:
@@ -280,13 +376,21 @@ async def strands_turn(
     model_factory: Callable[[HarnessConfig], Any] = bedrock_model,
     pending: Pending | None = None,
     usage: Tally | None = None,
+    screen: Screen | None = None,
+    state: TurnState | None = None,
 ) -> str:
+    """``state`` collects what the model asks of the page and any write held for a yes (control.py)."""
     from strands import Agent
 
     preview = pending if pending and pending.state == "preview" else None
-    guard = _Guard(pending_token=preview.token if preview else None)
+    guard = _Guard(
+        pending_token=preview.token if preview else None,
+        ask=pending if pending and pending.state == "ask" else None,
+        state=state if state is not None else TurnState(),
+    )
     tools = [mcp_tool(mcp, spec, guard) for spec in await mcp.list_tools()]
-    prompt = system_prompt() + (f"\n\n{pending.note()}" if pending else "")
+    tools.append(control_tool(guard))
+    prompt = system_prompt() + screen_note(screen) + (f"\n\n{pending.note()}" if pending else "")
     agent = Agent(
         model=model_factory(cfg),
         tools=tools,
@@ -321,8 +425,13 @@ async def run_turn(
     model_factory: ModelFactory | None = None,
     ui_cache: dict[str, tuple[float, str]] | None = None,
     pending: Pending | None = None,
+    screen: Screen | None = None,
 ) -> TurnResult:
-    """``model_factory`` replaces the model chain (tests). ``pending`` comes from the previous turn."""
+    """``model_factory`` replaces the model chain (tests). ``pending`` comes from the previous turn.
+
+    ``screen`` is what the page shows now; the model sees it, and its ``control_app`` actions come
+    back in ``TurnResult.actions`` for the page to run.
+    """
     engine = cfg.engine
     if engine is None:
         raise Misconfigured(
@@ -331,6 +440,7 @@ async def run_turn(
     mcp = McpHttp(cfg.core.mcp_url, token, transport=transport, http=http)
     usage = Tally()
     tried: list[str] = []
+    state = TurnState()
     try:
         reply: str | None = None
         if engine == "strands":
@@ -338,9 +448,18 @@ async def run_turn(
             for name, factory in chain:
                 tried.append(_model_id(cfg, name))
                 start = len(mcp.calls)
+                state = TurnState()  # a model that failed midway leaves no page changes behind
                 try:
                     reply = await strands_turn(
-                        mcp, cfg, history, message, model_factory=factory, pending=pending, usage=usage
+                        mcp,
+                        cfg,
+                        history,
+                        message,
+                        model_factory=factory,
+                        pending=pending,
+                        usage=usage,
+                        screen=screen,
+                        state=state,
                     )
                     log.info("the %s model answered", name)
                     break
@@ -354,6 +473,7 @@ async def run_turn(
                         break
             if reply is None:
                 engine = "offline"
+                state = TurnState()
                 reply = await offline_turn(mcp, message, history, pending)
         else:
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
@@ -363,7 +483,8 @@ async def run_turn(
             engine=engine,
             calls=mcp.calls,
             ui=await _view(mcp, ui_cache),
-            pending=next_pending(pending, mcp.calls),
+            pending=next_pending(pending, mcp.calls, state.asked),
+            actions=state.sink.actions,
         )
     finally:
         usage.log(scope="harness", engine=engine, model=",".join(tried))

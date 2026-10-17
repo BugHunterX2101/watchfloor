@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -27,6 +28,20 @@ from .tickets import Tickets
 from .token import token
 
 log = logging.getLogger("watchfloor.auth")
+
+PURGE_EVERY_S = 600
+
+
+async def _janitor(store: AuthStore) -> None:
+    """Every ten minutes, drop expired counters, codes and refresh tokens. A failed pass is logged, never fatal."""
+    while True:
+        await asyncio.sleep(PURGE_EVERY_S)
+        try:
+            removed = await store.purge_expired()
+            if removed:
+                log.info("auth purge removed %d expired rows", removed)
+        except Exception:
+            log.warning("auth purge failed", exc_info=True)
 
 
 async def healthz(request: Request) -> JSONResponse:
@@ -69,9 +84,14 @@ def create_app(
             await state.signer.load()
         if owns_store:
             state.store = await AuthStore.open(auth_dsn(settings))
+        janitor = asyncio.create_task(_janitor(state.store)) if owns_store and state.store else None
         try:
             yield
         finally:
+            if janitor is not None:
+                janitor.cancel()
+                with suppress(asyncio.CancelledError):
+                    await janitor
             if owns_store and state.store is not None:
                 await state.store.close()
                 state.store = None

@@ -278,6 +278,22 @@ async def test_views_call_allowlisted_tools_with_the_users_token(
     assert mcp.names() == ["explain_deal_risk"]  # the refused call never reached MCP
 
 
+async def test_the_orders_page_may_list_and_remove_standing_orders_but_not_create_or_edit(
+    client: httpx.AsyncClient, mcp: FakeMcp
+) -> None:
+    await sign_in(client)
+    for name, args in (("list_standing_orders", {}), ("remove_standing_order", {"rule_id": "rule_1"})):
+        r = await client.post("/api/tool", json={"name": name, "arguments": args})
+        assert r.status_code == 200 and r.json()["call"]["tool"] == name
+    assert mcp.calls == [("list_standing_orders", {}), ("remove_standing_order", {"rule_id": "rule_1"})]
+
+    # Writing a rule, a preference or a deal update takes a conversation (a preview and a yes).
+    for name in ("set_standing_order", "update_briefing_preferences", "log_deal_update"):
+        r = await client.post("/api/tool", json={"name": name, "arguments": {}})
+        assert r.status_code == 403 and r.json()["error"] == "not_allowed"
+    assert len(mcp.calls) == 2  # the refused calls never reached MCP
+
+
 class StepsModel(ScriptedModel):
     """Calls each (tool, arguments) in turn, one per model call, then speaks the last result's summary.
 
@@ -385,15 +401,15 @@ async def test_a_model_that_failed_after_a_change_is_not_replayed(
     tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
 ) -> None:
     """A4: no second model or offline router after a write; a read-only failure still falls back."""
-    wrote = StepsModel(("set_standing_order", {"min_score": 65}), fail_after=True)
+    wrote = StepsModel(("undo_action", {"confirmation_token": "tok_1"}), fail_after=True)
     read = StepsModel(("explain_deal_risk", {"deal_id": HARBOR}), fail_after=True)
     async with _model_app(tmp_path, auth, mcp, [wrote, read]) as c:
         await sign_in(c)
-        r = await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        r = await c.post("/converse", json={"message": "Undo that."})
         body = r.json()
-        assert mcp.names() == ["set_standing_order"]
+        assert mcp.names() == ["undo_action"]
         assert (
-            body["engine"] == "strands" and body["reply"].startswith("Saved.") and "stopped" in body["reply"]
+            body["engine"] == "strands" and body["reply"].startswith("Undone.") and "stopped" in body["reply"]
         )
 
         r = await c.post("/converse", json={"message": "What needs my attention today?"})
@@ -436,3 +452,120 @@ def test_the_offline_engine_runs_wherever_models_are_off(tmp_path: Path) -> None
     assert make_config(tmp_path, env="dev", models_enabled=False, haiku_model_id=haiku).engine == "offline"
     assert make_config(tmp_path, env="dev", haiku_model_id=haiku).engine == "strands"
     assert make_config(tmp_path, env="dev").engine is None
+
+
+async def test_the_assistant_works_the_page_and_the_page_gets_the_actions(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """Voice-only use: control_app asks the page to do things; the server's tools never see it."""
+    opened = {"type": "open_deal", "deal_id": HARBOR, "deal_name": "Harbor & Pine"}
+    model = StepsModel(
+        ("lookup_deal", {"name_query": "harbor"}),
+        ("control_app", {"action": "open_deal", "deal_id": HARBOR, "deal_name": "Harbor & Pine"}),
+    )
+    screen = {"page": "pipeline", "theme": "dark", "hands_free": True, "band": "at_risk"}
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Open Harbor.", "context": screen})
+    body = r.json()
+    assert r.status_code == 200 and body["actions"] == [opened] and body["reply"] == "Done."
+    assert mcp.names() == ["lookup_deal"]
+    assert "page pipeline" in model.prompts[0] and "band at_risk" in model.prompts[0]
+    assert "hands-free" in model.prompts[0]
+
+
+async def test_ending_the_session_is_asked_of_the_page_not_done(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(("control_app", {"action": "sign_out"}))]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Sign me out."})
+        assert r.json()["actions"] == [{"type": "sign_out"}]
+        assert "confirm out loud" in r.json()["reply"]
+        assert (await c.get("/api/session")).json()["signed_in"] is True  # only the page's yes ends it
+
+
+async def test_a_page_action_outside_the_list_never_reaches_the_page(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    bad = StepsModel(("control_app", {"action": "navigate", "page": "admin"}))
+    async with _model_app(tmp_path, auth, mcp, [bad]) as c:
+        await sign_in(c)
+        body = (await c.post("/converse", json={"message": "Go to admin."})).json()
+    assert body["actions"] == [] and "navigate needs page" in body["reply"]
+
+
+async def test_a_turn_that_keeps_changing_the_page_is_cut_off(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    pages = ["orders", "activity", "guide", "pipeline", "watch"]
+    model = StepsModel(*[("control_app", {"action": "navigate", "page": p}) for p in pages])
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        body = (await c.post("/converse", json={"message": "Tour every page."})).json()
+    assert [a["page"] for a in body["actions"]] == pages[:4] and "already 4" in body["reply"]
+
+
+async def test_the_screen_context_is_fixed_words_only(client: httpx.AsyncClient) -> None:
+    await sign_in(client)
+    r = await client.post("/converse", json={"message": "hi", "context": {"page": "../admin"}})
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+    r = await client.post("/converse", json={"message": "hi", "context": {"page": "orders", "x": 1}})
+    assert r.status_code == 200 and r.json()["actions"] == []
+
+
+async def test_a_standing_order_is_saved_only_after_a_yes_in_a_later_turn(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A misheard number must not be saved as heard: the user hears the rule and answers first."""
+    rule = ("set_standing_order", {"min_score": 65})
+    other = ("set_standing_order", {"min_score": 50})
+    same_turn, wrong, yes, again = (
+        StepsModel(rule, rule),
+        StepsModel(other),
+        StepsModel(other),
+        StepsModel(other),
+    )
+    async with _model_app(tmp_path, auth, mcp, [same_turn, wrong, yes, again]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        assert mcp.names() == [] and "Not saved yet" in r.json()["reply"]  # asking twice in a turn is no yes
+        assert r.cookies.get("wf_h_pending")
+
+        await c.post("/converse", json={"message": "Yes."})  # but the model came back with other numbers
+        assert mcp.names() == []
+
+        r = await c.post("/converse", json={"message": "Yes, go ahead."})
+        assert (
+            'call set_standing_order again with exactly these arguments: {"min_score": 50}' in yes.prompts[0]
+        )
+        assert mcp.calls == [("set_standing_order", {"min_score": 50})] and r.json()["reply"].startswith(
+            "Saved."
+        )
+        assert "wf_h_pending" not in c.cookies
+
+        r = await c.post("/converse", json={"message": "Do it again."})  # a yes is good for one save
+        assert mcp.names() == ["set_standing_order"] and "Not saved yet" in r.json()["reply"]
+
+
+async def test_a_held_write_is_dropped_when_the_user_moves_on(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    rule = ("set_standing_order", {"min_score": 65})
+    models = [StepsModel(rule), ScriptedModel("get_risk_briefing"), StepsModel(rule)]
+    async with _model_app(tmp_path, auth, mcp, models) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        assert c.cookies.get("wf_h_pending")
+        await c.post("/converse", json={"message": "Actually, what needs my attention?"})
+        assert "wf_h_pending" not in c.cookies
+        r = await c.post("/converse", json={"message": "Yes."})  # too late: nothing was waiting
+        assert mcp.names() == ["get_risk_briefing"] and "Not saved yet" in r.json()["reply"]
+
+
+async def test_the_offline_engine_answers_where_do_i_start_with_the_top_deal(
+    client: httpx.AsyncClient, mcp: FakeMcp
+) -> None:
+    await sign_in(client)
+    r = await client.post("/converse", json={"message": "Where should I start?"})
+    assert r.json()["engine"] == "offline" and mcp.calls[-1] == ("get_risk_briefing", {"limit": 1})

@@ -7,6 +7,6 @@ export function renderBanner(el: HTMLElement): void {
   title.textContent = "Simulated Alexa+ experience";
   const note = document.createElement("span");
   note.textContent =
-    "A stand-in for the Alexa+ app. The Watchfloor MCP server, sign-in and tools behind it are the real ones.";
+    "A stand-in for the Alexa+ app. The Watchfloor MCP server, sign-in and tools behind it are the real ones; the companies, people and deals are made-up sample data.";
   el.append(title, note);
 }

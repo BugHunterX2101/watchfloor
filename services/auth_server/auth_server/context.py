@@ -57,8 +57,14 @@ def server(request: Request) -> AuthServer:
 
 
 def client_ip(request: Request) -> str:
-    """Behind API Gateway and the Lambda Web Adapter the caller is the first X-Forwarded-For hop."""
+    """The caller's address, for rate limits. API Gateway is the one proxy in front of this server and it
+    appends the address it saw to whatever X-Forwarded-For the caller sent, so the last hop is the one to
+    trust: the first is whatever the caller wrote, and would let a password sprayer pick a fresh address
+    for every guess."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded and server(request).settings.env not in ("local", "test"):
-        return forwarded.split(",")[0].strip()
+        hop = forwarded.rsplit(",", 1)[-1].strip()
+        if hop:
+            return hop
+    return request.client.host if request.client else "unknown"
     return request.client.host if request.client else "unknown"

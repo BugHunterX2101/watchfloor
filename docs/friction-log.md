@@ -201,6 +201,12 @@ add-on, and the toolkit is closed to our account.
   from the templates so CloudFormation never calls Lambda again
   ([ADR-025](adr/0025-ecs-when-lambda-is-refused.md)). A support case asks for the restriction's
   reason and its lifting.
+- **Update, 2026-10-17:** The block is wider than Lambda. The first ECS deploy stopped with "unable
+  to place a task because your account is currently blocked", and the service quotas read zero:
+  EC2 on-demand vCPUs 0 of 5, Fargate vCPUs 0 of 6. App Runner is closed to new customers,
+  AgentCore `CreateMemory` answers 403 "contact customer support", and Lightsail refuses
+  `CreateContainerService` ("reached maximum limit") with no services. No AWS compute option is left
+  on the account, so `dev` is down and the entry runs from a local stack until Support lifts it.
 - **Suggestion:** When an account-level restriction denies a service, say so in the error (a
   distinct error code and a link to the AWS Health event or the support path), not an empty
   `AccessDeniedException` that reads like an IAM problem.

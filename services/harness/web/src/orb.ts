@@ -12,14 +12,20 @@ const LABELS: Record<VoiceState, string> = {
 };
 
 let label: HTMLElement | null = null;
-const TITLE = document.title;
+let title = document.title;
+
+/** The tab title while idle: the router sets it per page. */
+export function setBaseTitle(next: string): void {
+  title = next;
+  if (voiceState() === "idle") document.title = title;
+}
 
 export function setVoice(state: VoiceState, text?: string): void {
   label ??= document.getElementById("voice-state");
   document.body.dataset.voice = state;
   if (label) label.textContent = text ?? LABELS[state];
   // The tab says it too, so a demo running in a background tab still shows it is listening.
-  document.title = state === "idle" ? TITLE : `${text ?? LABELS[state]} · Watchfloor`;
+  document.title = state === "idle" ? title : `${text ?? LABELS[state]} · Watchfloor`;
 }
 
 export function voiceState(): VoiceState {
@@ -28,6 +34,7 @@ export function voiceState(): VoiceState {
 
 /** One pulse of the orbs, on each spoken word boundary: the motion follows the real speech. */
 export function beat(): void {
+  window.dispatchEvent(new Event("wf:beat")); // the 3D orb (orb3d.ts) pulses on the same word
   for (const orb of document.querySelectorAll<HTMLElement>(".orb")) {
     orb.classList.add("beat");
     window.setTimeout(() => orb.classList.remove("beat"), 110);

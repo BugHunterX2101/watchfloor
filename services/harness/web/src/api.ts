@@ -1,5 +1,15 @@
 // The harness API (services/harness/api): same origin, cookie session.
 
+import {
+  parseActions,
+  type AppAction,
+  type BandName,
+  type PageName,
+  type SegmentName,
+  type SortName,
+  type ThemeName,
+} from "./voice/actions";
+
 export type Role = "user" | "assistant";
 
 export interface Line {
@@ -26,6 +36,20 @@ export interface Turn {
   engine: "strands" | "offline";
   calls: Call[];
   ui: View | null;
+  /** What the assistant asked the page to do (checked here: only known actions with valid fields). */
+  actions: AppAction[];
+}
+
+/** What the page tells the assistant about itself: fixed words only (the server rejects anything else). */
+export interface Screen {
+  page: PageName;
+  theme: ThemeName;
+  read_aloud: boolean;
+  hands_free: boolean;
+  dialog: "none" | "settings" | "deal" | "confirm";
+  segment?: SegmentName;
+  band?: BandName;
+  sort?: SortName;
 }
 
 export interface SessionInfo {
@@ -41,7 +65,7 @@ export async function session(): Promise<SessionInfo> {
   return (await r.json()) as SessionInfo;
 }
 
-export async function converse(message: string, history: Line[]): Promise<Turn> {
+export async function converse(message: string, history: Line[], context?: Screen): Promise<Turn> {
   const r = await fetch("/converse", {
     method: "POST",
     credentials: "same-origin",
@@ -50,12 +74,17 @@ export async function converse(message: string, history: Line[]): Promise<Turn> 
     body: JSON.stringify({
       message: message.slice(0, 500),
       history: history.slice(-24).map((l) => ({ role: l.role, text: l.text.slice(0, 2000) })),
+      ...(context ? { context } : {}),
     }),
   });
   if (r.status === 401) throw new SignedOut();
-  const body = (await r.json().catch(() => ({}))) as Partial<Turn> & { message?: string; error?: string };
+  const body = (await r.json().catch(() => ({}))) as Partial<Omit<Turn, "actions">> & {
+    actions?: unknown;
+    message?: string;
+    error?: string;
+  };
   if (!r.ok) throw new Error(body.message ?? body.error ?? `HTTP ${r.status}`);
-  return body as Turn;
+  return { ...(body as Omit<Turn, "actions">), actions: parseActions(body.actions) };
 }
 
 export interface ToolResult {

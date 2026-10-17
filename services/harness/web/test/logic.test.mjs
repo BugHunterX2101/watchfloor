@@ -1,0 +1,227 @@
+// Checks the numbers behind the pages: `npm test` (Node's own runner; Node 24 runs the .ts directly).
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  arrangeDeals,
+  boardTotals,
+  callStats,
+  compactUsd,
+  dealTitle,
+  dragLevel,
+  greeting,
+  hash32,
+  healthOf,
+  percentile,
+  promptSafe,
+  pushRecent,
+  relativeTime,
+  ringDash,
+  sinceLabel,
+  skyline,
+  SKYLINE_LANES,
+  toBriefing,
+  toExplain,
+  togglePin,
+} from "../src/logic.ts";
+
+const deal = (id, over = {}) => ({
+  deal_id: id,
+  name: id,
+  account: "Acme",
+  amount_cents: 100_00,
+  amount_display: "$100",
+  stage: "negotiation",
+  owner: "Priya",
+  score: 50,
+  health: 50,
+  band: "watch",
+  top_reason: "",
+  new_since_last_briefing: false,
+  ...over,
+});
+
+test("greeting follows the local hour and never says morning at night", () => {
+  assert.equal(greeting(5), "Good morning.");
+  assert.equal(greeting(11, " Priya "), "Good morning, Priya.");
+  assert.equal(greeting(12), "Good afternoon.");
+  assert.equal(greeting(17), "Good afternoon.");
+  assert.equal(greeting(18), "Good evening.");
+  assert.equal(greeting(21), "Good evening.");
+  assert.equal(greeting(22), "Burning the midnight oil.");
+  assert.equal(greeting(3), "Burning the midnight oil.");
+  assert.equal(greeting(24), "Burning the midnight oil.");
+  assert.equal(greeting(-1), "Burning the midnight oil.");
+  assert.equal(greeting(Number.NaN), "Good afternoon.");
+});
+
+test("percentile is nearest-rank and safe on empty input", () => {
+  assert.equal(percentile([], 95), 0);
+  assert.equal(percentile([10], 95), 10);
+  const ten = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  assert.equal(percentile(ten, 50), 5);
+  assert.equal(percentile(ten, 95), 10);
+  assert.equal(percentile(ten, 90), 9);
+  assert.equal(percentile(ten, 0), 1);
+  assert.equal(percentile(ten, 400), 10);
+});
+
+test("callStats counts errors and writes and rounds the mean", () => {
+  const writes = new Set(["confirm_action"]);
+  const s = callStats(
+    [
+      { tool: "get_risk_briefing", ms: 40, ok: true },
+      { tool: "confirm_action", ms: 120, ok: true },
+      { tool: "explain_deal_risk", ms: 41, ok: false },
+    ],
+    writes,
+  );
+  assert.deepEqual(s, { count: 3, errors: 1, writes: 1, errorRate: 1 / 3, avg: 67, p50: 41, p95: 120, max: 120 });
+  assert.deepEqual(callStats([], writes), { count: 0, errors: 0, writes: 0, errorRate: 0, avg: 0, p50: 0, p95: 0, max: 0 });
+});
+
+test("relativeTime steps through seconds, minutes, hours and days", () => {
+  const now = 1_000_000_000_000;
+  assert.equal(relativeTime(now - 10_000, now), "just now");
+  assert.equal(relativeTime(now + 5_000, now), "just now"); // clock skew never shows a negative
+  assert.equal(relativeTime(now - 3 * 60_000, now), "3 min ago");
+  assert.equal(relativeTime(now - 2 * 3_600_000, now), "2 h ago");
+  assert.equal(relativeTime(now - 24 * 3_600_000, now), "yesterday");
+  assert.equal(relativeTime(now - 5 * 86_400_000, now), "5 days ago");
+});
+
+test("recents keep the newest first, drop repeats and cap the list", () => {
+  assert.deepEqual(pushRecent(["a", "b"], "c"), ["c", "a", "b"]);
+  assert.deepEqual(pushRecent(["a", "b"], "A"), ["A", "b"]);
+  assert.deepEqual(pushRecent(["a"], "   "), ["a"]);
+  assert.equal(pushRecent(["1", "2", "3", "4", "5", "6"], "7").length, 6);
+  assert.equal(pushRecent([], "x".repeat(300))[0].length, 120);
+});
+
+test("pins toggle and stop at the limit", () => {
+  assert.deepEqual(togglePin([], "d1"), { pins: ["d1"], full: false });
+  assert.deepEqual(togglePin(["d1"], "d1"), { pins: [], full: false });
+  assert.deepEqual(togglePin(["a", "b"], "c", 2), { pins: ["a", "b"], full: true });
+});
+
+test("deals sort by urgency then health; pinned lead; filters combine", () => {
+  const deals = [
+    deal("ok", { band: "healthy", health: 90, amount_cents: 500 }),
+    deal("w1", { band: "watch", health: 60, amount_cents: null }),
+    deal("r1", { band: "at_risk", health: 30, amount_cents: 900, name: "Kestrel" }),
+    deal("r2", { band: "at_risk", health: 20, amount_cents: 100, account: "Harbor & Pine" }),
+  ];
+  const f = { band: "all", query: "", sort: "urgency", pins: [] };
+  assert.deepEqual(arrangeDeals(deals, f).map((d) => d.deal_id), ["r2", "r1", "w1", "ok"]);
+  assert.deepEqual(arrangeDeals(deals, { ...f, pins: ["ok"] }).map((d) => d.deal_id)[0], "ok");
+  assert.deepEqual(arrangeDeals(deals, { ...f, sort: "amount" }).map((d) => d.deal_id), ["r1", "ok", "r2", "w1"]);
+  assert.deepEqual(arrangeDeals(deals, { ...f, band: "at_risk", query: "harbor" }).map((d) => d.deal_id), ["r2"]);
+  assert.deepEqual(arrangeDeals(deals, { ...f, query: "zzz" }), []);
+  assert.equal(deals[0].deal_id, "ok", "the input list is not reordered");
+});
+
+test("the health ring arc is health percent of the circumference", () => {
+  const { arc, gap, circumference } = ringDash(75, 20);
+  assert.ok(Math.abs(circumference - 2 * Math.PI * 20) < 1e-9);
+  assert.ok(Math.abs(arc - circumference * 0.75) < 1e-9);
+  assert.ok(Math.abs(arc + gap - circumference) < 1e-9);
+  assert.equal(ringDash(150, 10).gap, 0);
+  assert.equal(ringDash(-5, 10).arc, 0);
+  assert.equal(ringDash(Number.NaN, 10).arc, 0);
+});
+
+test("board totals sum only known amounts", () => {
+  const t = boardTotals([
+    deal("a", { band: "at_risk", amount_cents: 1_200_000 }),
+    deal("b", { band: "at_risk", amount_cents: null }),
+    deal("c", { band: "healthy" }),
+  ]);
+  assert.deepEqual(t, { byBand: { at_risk: 2, watch: 0, healthy: 1 }, atRiskCents: 1_200_000, unknownAmounts: 1 });
+});
+
+test("compact money reads at a glance", () => {
+  assert.equal(compactUsd(95_000), "$950");
+  assert.equal(compactUsd(4_800_000), "$48K");
+  assert.equal(compactUsd(120_000_000), "$1.2M");
+  assert.equal(compactUsd(100_000_000), "$1M");
+  assert.equal(compactUsd(35_000_000_000), "$350M");
+  assert.equal(compactUsd(-5), "$0");
+});
+
+test("health is 100 minus risk, clamped, and prefers the server's own number", () => {
+  assert.equal(healthOf(62), 38);
+  assert.equal(healthOf(62, 40), 40);
+  assert.equal(healthOf(120), 0);
+  assert.equal(healthOf(-4), 100);
+  assert.equal(healthOf(50, Number.NaN), 50);
+  assert.equal(healthOf(33.4), 67);
+});
+
+test("since-labels use the weekday inside a week and the date after", () => {
+  const now = Date.parse("2026-10-17T12:00:00Z");
+  assert.equal(sinceLabel("2026-10-14T09:00:00Z", now, "UTC"), "since Wed");
+  assert.equal(sinceLabel("2026-10-05T09:00:00Z", now, "UTC"), "since Oct 5");
+  assert.equal(sinceLabel("not a date", now, "UTC"), "");
+});
+
+test("a briefing is checked and health is filled in", () => {
+  const ok = toBriefing({
+    summary: "Two deals need you.",
+    all_clear: false,
+    generated_at: "2026-10-17T10:00:00-07:00",
+    new_count: 1,
+    attention_count: 2,
+    triggered_rules: [{ rule_id: "rule_1", description: "Quiet 7 days", deal_ids: ["dl_1", 3] }],
+    deals: [{ deal_id: "dl_1", name: "Kestrel Biotech · Expansion", band: "at_risk", score: 62, top_reason: "No reply" }],
+  });
+  assert.equal(ok.deals[0].health, 38);
+  assert.equal(ok.deals[0].account, "Kestrel Biotech · Expansion");
+  assert.equal(ok.deals[0].amount_cents, null);
+  assert.deepEqual(ok.triggered_rules[0].deal_ids, ["dl_1"]);
+  assert.equal(toBriefing(null), null);
+  assert.equal(toBriefing({ summary: "x", deals: [{ deal_id: "d", name: "n", band: "weird", score: 1 }] }), null);
+  assert.equal(toBriefing({ summary: "x", deals: "no" }), null);
+});
+
+test("an explain result becomes health over time, oldest first", () => {
+  const ex = toExplain({
+    summary: "s",
+    deal: { deal_id: "dl_1", name: "Kestrel", account: "Kestrel Biotech", stage: "negotiation", owner: "Priya", close_date_display: "Oct 30" },
+    risk: { score: 70, band: "at_risk", band_since: "2026-10-14T09:00:00Z", components: { r: 0.8, i: 0.2, g: 0, s: 0.5 } },
+    reasons: [{ code: "quiet", factor: "R", text: "No reply in 9 days." }],
+    other_findings: [{ code: "x", factor: "Z", text: "odd" }],
+    trend_14d: [40, 55, 70],
+  });
+  assert.equal(ex.health, 30);
+  assert.deepEqual(ex.trend, [60, 45, 30]);
+  assert.deepEqual(ex.components, { R: 0.8, I: 0.2, G: 0, S: 0.5 });
+  assert.equal(ex.other[0].factor, "R", "an unknown factor falls back instead of breaking the page");
+  assert.equal(toExplain({ deal: {}, risk: {} }), null);
+});
+
+test("drag words, deal titles", () => {
+  assert.deepEqual([0.9, 0.6, 0.59, 0.3, 0.1, 0].map(dragLevel), ["High", "High", "Some", "Some", "Low", "None"]);
+  assert.equal(dealTitle("Kestrel Biotech", "Kestrel Biotech · Platform expansion"), "Platform expansion");
+  assert.equal(dealTitle("Kestrel Biotech", "Kestrel Biotech"), "Kestrel Biotech");
+  assert.equal(dealTitle("Acme", "Renewal"), "Renewal");
+});
+
+test("the skyline gives each deal its own stable lane and a height that follows risk", () => {
+  const deals = ["dl_a", "dl_b", "dl_c", "dl_d", "dl_e", "dl_f"].map((id, i) => ({ id, band: "watch", health: 100 - i * 20 }));
+  const a = skyline(deals);
+  assert.equal(a.length, 5, "capped at five, as a briefing is");
+  assert.equal(new Set(a.map((p) => p.x)).size, 5, "no two columns share a lane");
+  assert.deepEqual(skyline(deals), a, "stable between calls");
+  assert.ok(a.every((p) => SKYLINE_LANES.includes(p.x)));
+  assert.equal(skyline([{ id: "x", band: "healthy", health: 100 }])[0].height, 1.2);
+  assert.equal(skyline([{ id: "x", band: "at_risk", health: 0 }])[0].height, 5.5);
+  assert.ok(a[0].height < a[4].height, "lower health stands taller");
+  assert.equal(skyline([{ id: "x", band: "watch", health: Number.NaN }])[0].height, 5.5);
+  assert.equal(hash32("dl_a"), hash32("dl_a"));
+  assert.notEqual(hash32("dl_a"), hash32("dl_b"));
+  assert.deepEqual(skyline([]), []);
+});
+
+test("prompt text drops control characters and is capped", () => {
+  assert.equal(promptSafe("Kestrel\n\t Renewal\u0000"), "Kestrel Renewal");
+  assert.equal(promptSafe("x".repeat(200)).length, 80);
+});

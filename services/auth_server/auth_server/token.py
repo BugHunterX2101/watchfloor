@@ -37,7 +37,8 @@ from .context import (
 from .responses import oauth_error, token_json
 from .storage import Client
 
-TOKEN_LIMIT_PER_MIN = 120
+TOKEN_LIMIT_PER_MIN = 120  # per client and address, counted once the client is known
+TOKEN_IP_LIMIT_PER_MIN = 300  # per address, counted before any secret is hashed
 _VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 _WS = re.compile(r"^ws_[0-9A-Za-z_]{1,40}$")
 _JOB = re.compile(r"^job_[0-9A-Za-z]{1,40}$")
@@ -270,6 +271,10 @@ GRANTS = {
 
 async def token(request: Request) -> Response:
     srv = server(request)
+    # Checking a client secret costs an Argon2 hash. Count the caller first, so a stranger who guesses
+    # at secrets cannot make this server do that work without limit.
+    if await srv.db().rate_hit(f"token-ip:{client_ip(request)}") > TOKEN_IP_LIMIT_PER_MIN:
+        return oauth_error("slow_down", "Too many token requests. Try again in a minute.", 429)
     form = await request.form()
     try:
         client = await authenticate_client(srv, request, form)

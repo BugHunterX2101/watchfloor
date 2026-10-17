@@ -201,6 +201,62 @@ def test_harness_serves_api_paths_through_cloudfront(dev: dict[str, Template]) -
     assert dist["Aliases"] == ["harness.dev.watchfloor.example"]
 
 
+def test_every_api_has_a_stage_throttle(dev: dict[str, Template]) -> None:
+    """A flood is answered 429 by API Gateway, before it costs a container, a connection or a model call."""
+    for stack, rate, burst in (("mcp", 25, 50), ("auth", 20, 40), ("harness", 50, 100)):
+        dev[stack].has_resource_properties(
+            "AWS::ApiGatewayV2::Stage",
+            {"DefaultRouteSettings": {"ThrottlingBurstLimit": burst, "ThrottlingRateLimit": rate}},
+        )
+
+
+def _harness_api_headers() -> dict[str, str]:
+    """CSP and Permissions-Policy as services/harness/api/harness_api/headers.py defines them (read, not imported:
+    this project does not install the harness's dependencies)."""
+    import ast
+
+    source = (
+        Path(__file__).resolve().parents[2] / "services" / "harness" / "api" / "harness_api" / "headers.py"
+    )
+    found: dict[str, str] = {}
+    for node in ast.parse(source.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            if name == "CSP" and isinstance(node.value, ast.Call):
+                found[name] = "; ".join(ast.literal_eval(node.value.args[0]))
+            elif name == "PERMISSIONS":
+                found[name] = ast.literal_eval(node.value)
+    return found
+
+
+def test_cloudfront_sends_the_headers_the_harness_api_sends(dev: dict[str, Template]) -> None:
+    from wf_infra.stacks import harness
+
+    api = _harness_api_headers()
+    assert api["CSP"] == harness.CSP and api["PERMISSIONS"] == harness.PERMISSIONS_POLICY
+    dev["harness"].has_resource_properties(
+        "AWS::CloudFront::ResponseHeadersPolicy",
+        {
+            "ResponseHeadersPolicyConfig": Match.object_like(
+                {
+                    "SecurityHeadersConfig": Match.object_like(
+                        {
+                            "ContentSecurityPolicy": {"ContentSecurityPolicy": api["CSP"], "Override": True},
+                            "FrameOptions": {"FrameOption": "DENY", "Override": True},
+                            "ContentTypeOptions": {"Override": True},
+                        }
+                    ),
+                    "CustomHeadersConfig": {
+                        "Items": Match.array_with(
+                            [{"Header": "Permissions-Policy", "Value": api["PERMISSIONS"], "Override": True}]
+                        )
+                    },
+                }
+            )
+        },
+    )
+
+
 def test_alarms_cover_the_td_list(dev: dict[str, Template]) -> None:
     names = {
         r["Properties"]["AlarmName"] for r in dev["ops"].find_resources("AWS::CloudWatch::Alarm").values()

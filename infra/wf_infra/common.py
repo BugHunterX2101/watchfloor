@@ -368,6 +368,16 @@ def domain_mapping(scope: Construct, cfg: EnvConfig, host: str | None) -> apigwv
     return apigwv2.DomainMappingOptions(domain_name=api_domain(scope, cfg, host))
 
 
+def throttle(api: apigwv2.HttpApi, *, rate: int, burst: int) -> None:
+    """A stage-wide ceiling in requests per second (DD §18.1), so a flood is answered 429 by API Gateway
+    before it costs a container, a database connection or a model call."""
+    stage = api.default_stage.node.default_child  # escape hatch: the L2 construct has no throttling option
+    assert isinstance(stage, apigwv2.CfnStage)
+    stage.default_route_settings = apigwv2.CfnStage.RouteSettingsProperty(
+        throttling_burst_limit=burst, throttling_rate_limit=rate
+    )
+
+
 def default_host_output(scope: Construct, cfg: EnvConfig, api: apigwv2.HttpApi) -> None:
     """The host AWS assigned (scripts/default_hosts.py reads it into the config when there is no domain)."""
     CfnOutput(scope, "DefaultHost", value=f"{api.api_id}.execute-api.{cfg.region}.amazonaws.com")

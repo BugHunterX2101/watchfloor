@@ -361,6 +361,76 @@ async def test_alexa_gets_a_service_token_that_only_discovers(
     assert not_alexa.json()["error"] == "invalid_scope"
 
 
+async def test_expired_rows_are_purged_and_live_ones_kept(auth_app: Any) -> None:
+    """Nothing else clears the auth schema (the watcher's role cannot see it), so the server does."""
+    old_code, live_code, old_refresh, live_refresh = (secrets.token_bytes(32) for _ in range(4))
+    conn = await asyncpg.connect(OWNER_URL)
+    store = await AuthStore.open(AUTH_URL)
+    try:
+        await conn.execute(
+            """INSERT INTO auth.rate_limits (subject, window_start, count) VALUES
+                 ('purge-old', now() - interval '2 hours', 3),
+                 ('purge-live', date_trunc('minute', now()), 1)"""
+        )
+        for code_hash, age in ((old_code, "- interval '3 days'"), (live_code, "+ interval '1 minute'")):
+            await conn.execute(
+                f"""INSERT INTO auth.auth_codes (code_hash, client_id, user_id, workspace_id, redirect_uri,
+                                                code_challenge, resource, scope, expires_at)
+                    VALUES ($1, $2, 'u_purge', $3, $4, 'c', $5, 'watchfloor.read', now() {age})""",  # noqa: S608
+                code_hash,
+                HARNESS,
+                WS,
+                HARNESS_CB,
+                RESOURCE,
+            )
+        for token_hash, age in ((old_refresh, "- interval '3 days'"), (live_refresh, "+ interval '1 day'")):
+            await conn.execute(
+                f"""INSERT INTO auth.refresh_tokens (token_hash, family_id, client_id, user_id, workspace_id,
+                                                    scope, resource, expires_at)
+                    VALUES ($1, 'fam_purge', $2, 'u_purge', $3, 'watchfloor.read', $4, now() {age})""",  # noqa: S608
+                token_hash,
+                HARNESS,
+                WS,
+                RESOURCE,
+            )
+
+        assert await store.purge_expired() >= 3
+
+        subjects = {r["subject"] for r in await conn.fetch("SELECT subject FROM auth.rate_limits")}
+        assert "purge-old" not in subjects and "purge-live" in subjects
+        codes = {r["code_hash"] for r in await conn.fetch("SELECT code_hash FROM auth.auth_codes")}
+        assert old_code not in codes and live_code in codes
+        tokens = {r["token_hash"] for r in await conn.fetch("SELECT token_hash FROM auth.refresh_tokens")}
+        assert old_refresh not in tokens and live_refresh in tokens
+    finally:
+        await conn.execute("DELETE FROM auth.rate_limits WHERE subject LIKE 'purge-%'")
+        await conn.execute("DELETE FROM auth.auth_codes WHERE user_id = 'u_purge'")
+        await conn.execute("DELETE FROM auth.refresh_tokens WHERE user_id = 'u_purge'")
+        await store.close()
+        await conn.close()
+
+
+async def test_a_stranger_is_counted_before_any_secret_is_hashed(auth_app: Any) -> None:
+    """Checking a client secret costs an Argon2 hash, so the per-address count comes first."""
+    conn = await asyncpg.connect(OWNER_URL)
+    try:
+        await conn.execute(
+            """INSERT INTO auth.rate_limits (subject, window_start, count)
+               VALUES ('token-ip:10.77.0.1', date_trunc('minute', now()), 299)
+               ON CONFLICT (subject, window_start) DO UPDATE SET count = 299"""
+        )
+        transport = httpx.ASGITransport(app=auth_app, client=("10.77.0.1", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url=ISSUER) as c:
+            guess = {"grant_type": "client_credentials", "client_id": ALEXA, "client_secret": "guess"}
+            at_the_limit = await c.post("/token", data=guess)
+            over = await c.post("/token", data=guess)
+    finally:
+        await conn.execute("DELETE FROM auth.rate_limits WHERE subject = 'token-ip:10.77.0.1'")
+        await conn.close()
+    assert at_the_limit.status_code == 401  # the 300th request is still answered (and refused)
+    assert over.status_code == 429 and over.json()["error"] == "slow_down"
+
+
 async def test_the_add_on_listing_pages_are_public(auth_app: Any) -> None:
     """addon.json needs HTTPS privacy-policy and terms-of-use URLs."""
     async with _browser(auth_app) as c:

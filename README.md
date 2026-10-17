@@ -19,6 +19,12 @@ listing, account linking) is built and ready if access opens ([ADR-024](docs/adr
 
 ## Try it
 
+> **Status, 2026-10-17: the hosted dev environment is down.** AWS has blocked all compute on the
+> account (Lambda from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are
+> refused too, [friction log entry 11](docs/friction-log.md)), so the links below answer with
+> errors until AWS Support lifts it. Everything works the same on your machine: see
+> [Run it locally](#run-it-locally) and open <http://localhost:8082>.
+
 1. Open the hosted harness at <https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/> and select
    **Sign in**. That runs the real OAuth flow (PKCE) against Watchfloor's auth server.
 2. Sign in as `priya@lumenridge.example`. The password is in the Devpost testing instructions; it is
@@ -84,7 +90,7 @@ The exact schemas are pinned in
 | `services/auth_server` | Minimal OAuth 2.1 authorization server (RFC 8414 / 9728, PKCE S256) |
 | `services/workers` | Watcher (every 15 min), outbox dispatcher, sweeper, canary; on ECS, one service runs all four (ADR-025) |
 | `services/agents` | Strands agents on AgentCore Runtime, or in the async stack as a function or a container (ADR-023, ADR-025); its own uv project (ADR-011) |
-| `services/harness` | Simulated Alexa+ (Path B): API with real OAuth sign-in, plus a voice-capable web page |
+| `services/harness` | Simulated Alexa+ (Path B): API with real OAuth sign-in, plus a voice-capable web app (Watch, Pipeline, Orders, Activity and Guide pages, a 3D orb and a 3D floor that shows your deals as a skyline, local personalisation; ADR-026; hands-free voice control of every page, with a wake word and spoken confirmations, ADR-027; brand assets in `docs/brand`) |
 | `db` | Forward-only migrations and the deterministic seed |
 | `infra` | AWS CDK app (Python): eight stacks per environment; its own uv project |
 | `scripts` | Dev keys and tokens, demo operations |
@@ -281,7 +287,7 @@ against `demo`, and upload the eval results.
 
 | Built | In progress |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher jobs) · CDK stacks and CI/CD: **dev is deployed** (us-east-1, on ECS Fargate since the account began refusing Lambda, ADR-025), and every push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Bedrock-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false` and Gemini, ADR-023) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness (API + web) · MCP Apps views (board, detail, confirm) · demo operations (local, and dev through the seeder and watcher jobs) · CDK stacks and CI/CD: **dev was deployed** (us-east-1; moved to ECS Fargate when the account began refusing Lambda, ADR-025) and a push to `main` redeploys it, migrates, reseeds and runs remote conformance (CF-01..15, CF-04 aside) against it, but **since 2026-10-16 the account blocks all compute, so dev is down** until AWS Support lifts it (the CI path is unchanged and was last exercised before the block) · latency probe, triage evals, load profile, utterance sheet (run locally) · Path B: the harness is the entry's Alexa+ experience; the add-on side (ADR-024, listing pages and images, TECHNICAL.md §14) is ready if toolkit access opens | Bedrock-backed eval run (the dev account's Bedrock and AgentCore quotas are 0 until AWS Support raises them, so dev runs with `models_enabled: false` and Gemini, ADR-023) · demo environment (not deployed: one environment fits the free credits) · CloudFront and reserved concurrency in dev (waiting on AWS account limits) |
 
 Where the build departs from the specs, and why, is recorded in
 [docs/implementation-notes.md](docs/implementation-notes.md). Platform rough edges found along

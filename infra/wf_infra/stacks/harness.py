@@ -39,6 +39,7 @@ from ..common import (
     gemini_access,
     hosted_zone,
     service_integration,
+    throttle,
 )
 from ..config import EnvConfig
 from .net import NetStack
@@ -46,6 +47,15 @@ from .net import NetStack
 WEB_DIST = Path(__file__).resolve().parents[3] / "services" / "harness" / "web" / "dist"
 API_PATHS = ("/converse", "/api/*", "/oauth/*", "/healthz")
 PACKAGED_WEB_DIST = "/var/task/harness_web"  # scripts/package_lambdas.py copies the page there
+
+# The harness API sends these on everything it serves (harness_api/headers.py). Behind CloudFront the page
+# and its assets come from S3 instead, so the distribution adds the same ones; a test keeps the copies equal.
+CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+)
+PERMISSIONS_POLICY = "microphone=(self), camera=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
 
 
 class HarnessStack(Stack):
@@ -126,6 +136,7 @@ class HarnessStack(Stack):
             default_domain_mapping=None if cfg.cdn else domain_mapping(self, cfg, cfg.harness_host),
         )
         self.api.add_routes(path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=integration)
+        throttle(self.api, rate=50, burst=100)  # a page load is about a dozen requests
         self.distribution: cloudfront.Distribution | None = None
         if cfg.cdn:
             self.distribution = self._cdn(cfg)
@@ -154,12 +165,42 @@ class HarnessStack(Stack):
             origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
             viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         )
+        page_headers = cloudfront.ResponseHeadersPolicy(
+            self,
+            "PageHeaders",
+            security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
+                content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
+                    content_security_policy=CSP, override=True
+                ),
+                content_type_options=cloudfront.ResponseHeadersContentTypeOptions(override=True),
+                frame_options=cloudfront.ResponseHeadersFrameOptions(
+                    frame_option=cloudfront.HeadersFrameOption.DENY, override=True
+                ),
+                referrer_policy=cloudfront.ResponseHeadersReferrerPolicy(
+                    referrer_policy=cloudfront.HeadersReferrerPolicy.NO_REFERRER, override=True
+                ),
+                strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
+                    access_control_max_age=Duration.days(365), override=True
+                ),
+            ),
+            custom_headers_behavior=cloudfront.ResponseCustomHeadersBehavior(
+                custom_headers=[
+                    cloudfront.ResponseCustomHeader(
+                        header="Permissions-Policy", value=PERMISSIONS_POLICY, override=True
+                    ),
+                    cloudfront.ResponseCustomHeader(
+                        header="Cross-Origin-Opener-Policy", value="same-origin", override=True
+                    ),
+                ]
+            ),
+        )
         distribution = cloudfront.Distribution(
             self,
             "Cdn",
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.S3BucketOrigin.with_origin_access_control(bucket),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                response_headers_policy=page_headers,
             ),
             additional_behaviors={path: api_behavior for path in API_PATHS},
             default_root_object="index.html",

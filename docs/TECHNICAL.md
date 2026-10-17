@@ -860,6 +860,7 @@ watchfloor/
 │       │   └── harness_api/
 │       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, the web page
 │       │       ├── agent.py                # one turn: Strands agent over the user's MCP token
+│       │       ├── control.py              # control_app (page actions for voice), screen context, the hold-until-yes gate (ADR-027)
 │       │       ├── mcp_http.py             # thin MCP client (stateless, JSON responses)
 │       │       ├── offline.py              # keyword router when no model is configured
 │       │       ├── session.py              # Fernet-sealed cookie sessions
@@ -868,10 +869,29 @@ watchfloor/
 │       │       └── prompts/alexa_style.md
 │       └── web/
 │           ├── package.json · tsconfig.json · vite.config.ts · index.html
+│           ├── test/                       # `npm test` (Node's runner): logic.test.mjs the numbers behind the pages;
+│           │                               #   voice.test.mjs the grammar and actions; handsfree.test.mjs the listening state machine
 │           └── src/
-│               ├── main.ts                 # chat loop: text or voice in, reply, view, trace
+│               ├── main.ts                 # app shell: chat loop (text or voice in, reply, view, trace) and wiring
+│               ├── router.ts               # hash routes: Watch · Pipeline · Orders · Activity · Guide (ADR-026)
+│               ├── pipeline.ts             # risk board from get_risk_briefing; deal sheet from explain_deal_risk
+│               ├── orders.ts               # standing orders: list, and remove after a confirmation
+│               ├── activity.ts             # every tool call this session: median, p95, errors, writes
+│               ├── guide.ts · settings.ts  # scenarios, keyboard, what is kept; name, voice, motion
+│               ├── store.ts                # what the browser remembers (localStorage, guarded)
+│               ├── logic.ts                # pure helpers and API-result parsers (unit-tested)
+│               ├── orb3d.ts                # the 3D orb: a point-sphere on a 2D canvas, no library
+│               ├── scene3d.ts              # the 3D watch floor behind the page; your deals stand on it as columns
+│               ├── dom.ts                  # h() builder (text only), toasts, confirm dialog
 │               ├── api.ts                  # same-origin calls to harness_api
-│               ├── speech.ts               # Web Speech API in/out
+│               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone
+│               ├── voice/                  # run everything by voice (ADR-027)
+│               │   ├── actions.ts          #   the 27 page actions, checked on arrival (mirrors control.py)
+│               │   ├── grammar.ts          #   spoken commands that need no model; wake word; fuzzy deal and rule names
+│               │   ├── handsfree.ts        #   wake word, follow-up window, barge-in, auto-off (injected clock and recogniser)
+│               │   ├── commander.ts        #   runs an action against the pages; asks before sign-out, forget, removal
+│               │   ├── dock.ts             #   the on-screen state of hands-free, on every page
+│               │   └── text.ts             #   norm, phonetic fold, edit distance, speakable(), echo check
 │               ├── captions.ts             # live captions synced to the voice
 │               ├── orb.ts · sound.ts       # voice state and earcons (Web Audio, no files)
 │               ├── apphost.ts              # sandboxed iframe host for ui:// resources
@@ -1997,7 +2017,7 @@ jobs:
         with: { node-version: 24 }
       - run: uv sync --frozen && uv run --frozen pytest -q
         working-directory: services/harness/api
-      - run: npm ci && npm run build
+      - run: npm ci && npm run build && npm test
         working-directory: services/harness/web
 
   ui:

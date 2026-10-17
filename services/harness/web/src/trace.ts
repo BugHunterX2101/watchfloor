@@ -6,7 +6,7 @@ import type { Call } from "./api";
 import { ICONS } from "./icons";
 
 /** What each tool did, in words a sales manager reads at a glance; the tool name stays beside it. */
-const LABELS: Record<string, string> = {
+export const LABELS: Record<string, string> = {
   get_risk_briefing: "Read the risk briefing",
   explain_deal_risk: "Explained a deal's risk",
   lookup_deal: "Looked up a deal",
@@ -24,7 +24,7 @@ const LABELS: Record<string, string> = {
 };
 
 /** Calls that change something (tool annotations without readOnlyHint): marked with a pencil. */
-const WRITES = new Set([
+export const WRITES = new Set([
   "confirm_action",
   "undo_action",
   "log_deal_update",

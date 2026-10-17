@@ -217,7 +217,7 @@ def test_a_review_says_when_it_is_quick_or_unchecked() -> None:
         quick=True,
         caveat=triage.QUICK_REVIEW,
     )
-    assert plan["text"] == "Quick review: Harbor & Pine"
+    assert plan["text"] == "Quick review: Harbor &amp; Pine"  # Slack reads this field as mrkdwn too
     assert triage.QUICK_REVIEW in json.dumps(plan)
     usual = slack_blocks.triage_plan(
         account="A", score=72, band="at_risk", voice_summary="Quiet.", actions=[]
