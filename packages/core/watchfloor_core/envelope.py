@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-_TAG = re.compile(r"</?\s*crm_data[^>]*>", re.IGNORECASE)
+_TAG = re.compile(r"<\s*/?\s*crm_data[^>]*>", re.IGNORECASE)  # "< /crm_data>" too: a model reads it as a tag
 _ATTR = re.compile(r"[^A-Za-z0-9_\-]")
 MAX_CHARS = 4000
 

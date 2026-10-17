@@ -32,7 +32,13 @@ class RateLimit:
         try:
             async with system_tx() as conn:
                 n_subject = await misc.rate_hit(conn, f"sub:{principal.rate_subject}")
-                n_ws = await misc.rate_hit(conn, f"ws:{principal.workspace_id}")
+                # A request already refused for the subject's own limit is not charged to the workspace:
+                # one noisy caller must not use up the allowance of everyone else in it.
+                n_ws = (
+                    await misc.rate_hit(conn, f"ws:{principal.workspace_id}")
+                    if n_subject <= self.per_user
+                    else 0
+                )
         except Exception as exc:
             log.warning("rate limiter unavailable, failing open: %s", type(exc).__name__)
             await self.app(scope, receive, send)

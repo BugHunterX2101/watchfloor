@@ -15,6 +15,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 from watchfloor_core import gemini
@@ -90,11 +91,24 @@ async def bedrock_draft(req: DraftRequest, *, model_id: str) -> str:
     return clean(strip_reasoning(await asyncio.to_thread(_converse, model_id, user_prompt(req))))
 
 
-def _converse(model_id: str, prompt: str) -> str:
+@functools.lru_cache(maxsize=1)
+def _bedrock() -> Any:
     import boto3  # lazy: only in AWS
+    from botocore.config import Config
+
+    # Two tries of at most 50 s, then Gemini's 30 s: the whole chain ends well inside the dispatcher's
+    # 3-minute lease. With botocore's defaults (60 s, up to five tries) a stalled endpoint outlives the
+    # lease, a second worker takes the row, and the draft is DM'd twice.
+    return boto3.client(
+        "bedrock-runtime",
+        config=Config(connect_timeout=5, read_timeout=45, retries={"total_max_attempts": 2}),
+    )
+
+
+def _converse(model_id: str, prompt: str) -> str:
     from botocore.exceptions import BotoCoreError, ClientError
 
-    client = boto3.client("bedrock-runtime")
+    client = _bedrock()
     try:
         resp = client.converse(
             modelId=model_id,

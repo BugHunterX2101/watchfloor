@@ -138,7 +138,7 @@ def clean(raw: Any) -> dict[str, Any] | str:
     elif kind in ("open_deal", "pin_deal"):
         deal_id = raw.get("deal_id")
         name = _text(raw.get("deal_name"), 80)
-        if isinstance(deal_id, str) and _DEAL_ID.match(deal_id):
+        if isinstance(deal_id, str) and _DEAL_ID.fullmatch(deal_id):
             act["deal_id"] = deal_id
         if name:
             act["deal_name"] = name

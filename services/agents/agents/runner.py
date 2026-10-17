@@ -56,8 +56,9 @@ class JobIn(BaseModel):
     job_id: str = Field(pattern=r"^job_[0-9A-Za-z]{1,40}$")
     deal_id: str = Field(pattern=r"^dl_[0-9A-Za-z]{1,40}$")
     mcp_token: str = Field(min_length=10, max_length=4096)
-    workspace_id: str | None = None
-    user_ref: str | None = None
+    # With each other they name the AgentCore Memory actor ("/actors/{ws}:{user}/"), so no "/", ":" or "."
+    workspace_id: str | None = Field(default=None, pattern=r"^[0-9A-Za-z_-]{1,64}$")
+    user_ref: str | None = Field(default=None, pattern=r"^[0-9A-Za-z_-]{1,64}$")
     trace_id: str | None = None
 
 

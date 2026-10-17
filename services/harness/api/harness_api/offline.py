@@ -85,6 +85,8 @@ async def offline_turn(
     candidates = (found.structured or {}).get("candidates") or []
     if not found.ok or not candidates:
         return found.summary or f"I couldn't find a deal called {query}."
+    if len(candidates) > 1:  # no clear winner: the server's summary asks which; never review a guess
+        return found.summary
     deal_id = candidates[0]["deal_id"]
     if RESULT.search(message):
         call = await mcp.call_tool("get_triage_result", {"deal_id": deal_id})

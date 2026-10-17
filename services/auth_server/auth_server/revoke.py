@@ -9,13 +9,17 @@ from __future__ import annotations
 from starlette.requests import Request
 from starlette.responses import Response
 
-from .context import server
+from .context import client_ip, server
 from .responses import NO_STORE, oauth_error
-from .token import ClientAuthError, authenticate_client
+from .token import TOKEN_IP_LIMIT_PER_MIN, ClientAuthError, authenticate_client
 
 
 async def revoke(request: Request) -> Response:
     srv = server(request)
+    # The same per-address count as /token, taken before any secret is hashed: this endpoint checks
+    # client secrets too, and an Argon2 check per guess is work a stranger could otherwise demand for free.
+    if await srv.db().rate_hit(f"token-ip:{client_ip(request)}") > TOKEN_IP_LIMIT_PER_MIN:
+        return oauth_error("slow_down", "Too many requests. Try again in a minute.", 429)
     form = await request.form()
     try:
         client = await authenticate_client(srv, request, form)

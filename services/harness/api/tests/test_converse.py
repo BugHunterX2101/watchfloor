@@ -58,6 +58,15 @@ async def test_offline_router_finds_the_deal_by_name(client: httpx.AsyncClient, 
     assert r.json()["reply"] == "Which deal do you mean?"
 
 
+async def test_offline_asks_which_deal_instead_of_reviewing_a_guess(
+    client: httpx.AsyncClient, mcp: FakeMcp
+) -> None:
+    await sign_in(client)
+    r = await client.post("/converse", json={"message": "Run a deep review on Twin"})
+    assert "Which one do you mean?" in r.json()["reply"]
+    assert mcp.names()[-1] == "lookup_deal"  # nothing was started
+
+
 async def test_offline_follow_up_uses_the_deal_named_before(client: httpx.AsyncClient, mcp: FakeMcp) -> None:
     """The board suggests "Dig into it.": the offline router finds "it" in the user's last question."""
     await sign_in(client)

@@ -35,7 +35,7 @@ from .context import (
     server,
 )
 from .responses import oauth_error, token_json
-from .storage import Client
+from .storage import Client, code_family
 
 TOKEN_LIMIT_PER_MIN = 120  # per client and address, counted once the client is known
 TOKEN_IP_LIMIT_PER_MIN = 300  # per address, counted before any secret is hashed
@@ -144,10 +144,13 @@ async def _authorization_code(srv: AuthServer, client: Client, form: FormData) -
     )
     if not code or not redirect_uri or not verifier:
         return oauth_error("invalid_request", "code, redirect_uri and code_verifier are required.")
-    if not _VERIFIER.match(verifier):
+    if not _VERIFIER.fullmatch(verifier):
         return oauth_error("invalid_grant", "Malformed code_verifier.")
     now = srv.clock.now()
     status, row = await srv.db().take_code(code, now)
+    if status == "used" and row is not None and row["client_id"] == client.client_id:
+        # Presented a second time: refuse it, and revoke what the first presentation issued (RFC 6749 §4.1.2).
+        await srv.db().revoke_family(code_family(code), now)
     if status != "ok" or row is None:
         return oauth_error("invalid_grant", "The authorization code is invalid, expired or already used.")
     if row["client_id"] != client.client_id or row["redirect_uri"] != redirect_uri:
@@ -164,7 +167,7 @@ async def _authorization_code(srv: AuthServer, client: Client, form: FormData) -
         refresh = secrets.token_urlsafe(32)
         await srv.db().save_refresh(
             token=refresh,
-            family_id=secrets.token_hex(16),
+            family_id=code_family(code),
             client_id=client.client_id,
             user_id=row["user_id"],
             workspace_id=row["workspace_id"],
@@ -246,7 +249,7 @@ async def _client_credentials(srv: AuthServer, client: Client, form: FormData) -
     if requested != {AGENT_SCOPE} or not requested <= client.scopes:
         return oauth_error("invalid_scope", "client_credentials issues only a service scope this app holds.")
     ws, job = _field(form, "ws"), _field(form, "job")
-    if not ws or not _WS.match(ws) or not job or not _JOB.match(job):
+    if not ws or not _WS.fullmatch(ws) or not job or not _JOB.fullmatch(job):
         return oauth_error("invalid_request", "Job tokens need ws and job parameters.")
     access = await mint_access(
         srv,

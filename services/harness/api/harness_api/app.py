@@ -106,6 +106,19 @@ VIEW_TOOLS = frozenset(
 CONVERSE_PER_MIN = 30
 TOOL_PER_MIN = 120
 
+# RFC 6749 §4.1.2.1. Anything else in ``?error=`` is someone's text, and the page would print it.
+OAUTH_ERRORS = frozenset(
+    {
+        "invalid_request",
+        "unauthorized_client",
+        "access_denied",
+        "unsupported_response_type",
+        "invalid_scope",
+        "server_error",
+        "temporarily_unavailable",
+    }
+)
+
 
 def create_app(
     cfg: HarnessConfig | None = None,
@@ -164,7 +177,7 @@ def create_app(
         q = request.query_params
         attempt = box.open(request.cookies.get(PKCE_COOKIE), ttl=PKCE_TTL_S)
         if q.get("error"):
-            resp = back_to_web(signin=q["error"][:60])
+            resp = back_to_web(signin=q["error"] if q["error"] in OAUTH_ERRORS else "oauth_error")
         elif not attempt or q.get("state") != attempt.get("s"):
             resp = back_to_web(signin="state_mismatch")
         elif q.get("iss") not in (None, s.issuer):  # RFC 9207: a mix-up attack names another issuer

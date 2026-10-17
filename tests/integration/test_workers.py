@@ -242,6 +242,28 @@ async def test_permanent_failure_goes_dead_at_once(seeded: str) -> None:
     assert row["attempts"] == 1 and "invalid_blocks" in row["last_error"]
 
 
+async def test_a_row_whose_worker_keeps_dying_is_abandoned_not_retried_for_ever(seeded: str) -> None:
+    """Attempts that end in a crash never reach record_failure, so only the claim count shows them."""
+    fakes = Fakes()
+    oid = await _enqueue("slack_message", {"channel": "#c", "message": {"text": "x"}})
+    async with db.ws_tx(WS) as conn:
+        await conn.execute("UPDATE outbox SET attempts = $2 WHERE id = $1", oid, outbox.MAX_ATTEMPTS - 1)
+    # Four claims are behind it and a fifth is still allowed: that one is delivered as normal.
+    assert await dispatcher.process(WS, oid, fakes.deps()) == "sent"
+
+    dying = await _enqueue("slack_message", {"channel": "#c", "message": {"text": "poison"}})
+    async with db.ws_tx(WS) as conn:
+        await conn.execute("UPDATE outbox SET attempts = $2 WHERE id = $1", dying, outbox.MAX_ATTEMPTS)
+    assert await dispatcher.process(WS, dying, fakes.deps()) == "dead"
+    row = await _row(dying)
+    assert row["status"] == "dead" and "abandoned" in row["last_error"]
+    assert row["attempts"] == outbox.MAX_ATTEMPTS
+    assert [p for p in fakes.posts if p[1].get("text") == "poison"] == [], (
+        "an abandoned row must not run again"
+    )
+    assert await dispatcher.process(WS, dying, fakes.deps()) == "skipped"
+
+
 # ---------------------------------------------------------------- dispatcher: drafts
 
 

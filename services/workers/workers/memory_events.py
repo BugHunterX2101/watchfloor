@@ -13,6 +13,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from functools import lru_cache
+from typing import Any
 
 from watchfloor_core.settings import Settings
 
@@ -21,11 +23,21 @@ log = logging.getLogger("watchfloor.memory")
 Recorder = Callable[[str, str, str], Awaitable[None]]
 
 
-def _create_event(memory_id: str, actor_id: str, text: str) -> None:
+@lru_cache(maxsize=1)
+def _agentcore() -> Any:
     import boto3  # lazy: only in AWS
+    from botocore.config import Config
 
+    # Best effort, and it runs inside the triage attempt: short, so a stalled endpoint cannot eat the lease.
+    return boto3.client(
+        "bedrock-agentcore",
+        config=Config(connect_timeout=3, read_timeout=10, retries={"total_max_attempts": 2}),
+    )
+
+
+def _create_event(memory_id: str, actor_id: str, text: str) -> None:
     # ⚠ Verify (S6): event payload shape and session semantics in the pinned SDK.
-    boto3.client("bedrock-agentcore").create_event(
+    _agentcore().create_event(
         memoryId=memory_id,
         actorId=actor_id,
         sessionId=f"outcomes-{actor_id.replace(':', '-')}",

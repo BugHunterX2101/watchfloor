@@ -49,7 +49,7 @@ class RecommendedAction(BaseModel):
     @field_validator("play_id")
     @classmethod
     def _known_play(cls, v: str) -> str:
-        if not _PLAY.match(v):
+        if not _PLAY.fullmatch(v):  # not match(): "$" also accepts a trailing newline
             raise ValueError("play_id must be P01..P12")
         return v
 

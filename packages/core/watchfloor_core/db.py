@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import quote
 
 import asyncpg
 import orjson
@@ -42,9 +43,17 @@ def dsn_from_secret(arn: str) -> str:
 
     import boto3  # lazy: only in AWS
 
-    secret = json.loads(boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"])
+    return dsn_from_parts(
+        json.loads(boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"])
+    )
+
+
+def dsn_from_parts(secret: dict[str, Any]) -> str:
+    """A connection URL from an RDS secret. The user and password are percent-encoded: one holding
+    '@', '/', ':' or '#' would otherwise be read as part of the host or path."""
+    user, password = quote(str(secret["username"]), safe=""), quote(str(secret["password"]), safe="")
     return (
-        f"postgresql://{secret['username']}:{secret['password']}@{secret['host']}:"
+        f"postgresql://{user}:{password}@{secret['host']}:"
         f"{secret.get('port', 5432)}/{secret.get('dbname', 'watchfloor')}?sslmode=require"
     )
 

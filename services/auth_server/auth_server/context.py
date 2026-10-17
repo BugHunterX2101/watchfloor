@@ -67,4 +67,3 @@ def client_ip(request: Request) -> str:
         if hop:
             return hop
     return request.client.host if request.client else "unknown"
-    return request.client.host if request.client else "unknown"

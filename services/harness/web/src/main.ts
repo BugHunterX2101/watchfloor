@@ -90,6 +90,7 @@ const SIGNIN_ERRORS: Record<string, string> = {
   state_mismatch: "That sign-in link expired. Please try again.",
   issuer_mismatch: "The sign-in response came from an unexpected server.",
   token_error: "The sign-in could not be completed. Please try again.",
+  no_code: "The sign-in response was incomplete. Please try again.",
 };
 
 const history: Line[] = [];
@@ -1007,7 +1008,12 @@ async function start(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const error = params.get("signin");
   if (error) {
-    addLine("system", SIGNIN_ERRORS[error] ?? `Sign-in failed (${error}).`, "error");
+    // The value comes from the URL, so a link can carry any text: show only what we wrote for known codes.
+    addLine(
+      "system",
+      Object.hasOwn(SIGNIN_ERRORS, error) ? SIGNIN_ERRORS[error]! : "The sign-in could not be completed. Please try again.",
+      "error",
+    );
     window.history.replaceState(null, "", location.pathname + location.hash);
   }
   try {

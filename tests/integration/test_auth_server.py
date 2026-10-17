@@ -176,6 +176,49 @@ async def test_code_is_single_use_and_pkce_bound(auth_app: Any, emails: list[str
     assert late.json()["error"] == "invalid_grant"
 
 
+async def test_replaying_a_spent_code_revokes_what_it_issued(auth_app: Any, emails: list[str]) -> None:
+    """RFC 6749 §4.1.2: a code used twice is refused, and the tokens the first use issued are revoked."""
+    query, verifier = await _link(auth_app, emails[1])
+    exchange = {
+        "grant_type": "authorization_code",
+        "code": query["code"][0],
+        "redirect_uri": HARNESS_CB,
+        "code_verifier": verifier,
+        "client_id": HARNESS,
+    }
+    first = await _token(auth_app, exchange)
+    assert first.status_code == 200, first.text
+    refresh = {
+        "grant_type": "refresh_token",
+        "client_id": HARNESS,
+        "refresh_token": first.json()["refresh_token"],
+    }
+
+    assert (await _token(auth_app, exchange)).json()["error"] == "invalid_grant"
+    assert (await _token(auth_app, refresh)).json()["error"] == "invalid_grant", (
+        "the refresh token the first use issued must die with the replay"
+    )
+
+
+async def test_an_oversized_email_is_refused_like_any_wrong_one(auth_app: Any) -> None:
+    """The address is also a rate-limit key; one too long for the index must not become a 500."""
+    _, challenge = _pkce()
+    params = {
+        "response_type": "code",
+        "client_id": HARNESS,
+        "redirect_uri": HARNESS_CB,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "resource": RESOURCE,
+    }
+    async with _browser(auth_app) as browser:
+        r = await browser.get("/authorize", params=params)
+        r = await browser.post(
+            "/login", data={**_hidden(r.text), "email": "x" * 5000 + "@example.com", "password": PASSWORD}
+        )
+    assert r.status_code == 401 and "Email or password is incorrect" in r.text
+
+
 async def test_confidential_client_must_authenticate(auth_app: Any, emails: list[str]) -> None:
     query, verifier = await _link(auth_app, emails[2], client_id=ALEXA, redirect_uri=ALEXA_CB)
     exchange = {
@@ -264,6 +307,9 @@ async def test_dispatcher_gets_short_lived_job_tokens(auth_app: Any, client: htt
 
     missing = await _token(auth_app, {**job, "job": ""}, auth=(DISPATCHER, DISPATCH_SECRET))
     assert missing.json()["error"] == "invalid_request"
+    for bad in ({"job": "job_TEST01\n"}, {"ws": f"{WS}\n"}):  # "$" alone would let a newline through
+        padded = await _token(auth_app, {**job, **bad}, auth=(DISPATCHER, DISPATCH_SECRET))
+        assert padded.json()["error"] == "invalid_request"
     user_scope = await _token(
         auth_app, {**job, "scope": "watchfloor.write"}, auth=(DISPATCHER, DISPATCH_SECRET)
     )
@@ -428,6 +474,24 @@ async def test_a_stranger_is_counted_before_any_secret_is_hashed(auth_app: Any) 
         await conn.execute("DELETE FROM auth.rate_limits WHERE subject = 'token-ip:10.77.0.1'")
         await conn.close()
     assert at_the_limit.status_code == 401  # the 300th request is still answered (and refused)
+    assert over.status_code == 429 and over.json()["error"] == "slow_down"
+
+
+async def test_revocation_is_counted_before_any_secret_is_hashed(auth_app: Any) -> None:
+    """/revoke checks client secrets too, so it shares the per-address count /token takes first."""
+    conn = await asyncpg.connect(OWNER_URL)
+    try:
+        await conn.execute(
+            """INSERT INTO auth.rate_limits (subject, window_start, count)
+               VALUES ('token-ip:10.77.0.2', date_trunc('minute', now()), 300)
+               ON CONFLICT (subject, window_start) DO UPDATE SET count = 300"""
+        )
+        transport = httpx.ASGITransport(app=auth_app, client=("10.77.0.2", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url=ISSUER) as c:
+            over = await c.post("/revoke", data={"token": "x", "client_id": ALEXA, "client_secret": "guess"})
+    finally:
+        await conn.execute("DELETE FROM auth.rate_limits WHERE subject = 'token-ip:10.77.0.2'")
+        await conn.close()
     assert over.status_code == 429 and over.json()["error"] == "slow_down"
 
 

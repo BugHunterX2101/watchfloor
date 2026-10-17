@@ -84,7 +84,13 @@ async def _now(conn: asyncpg.Connection, ws: str) -> datetime:
 async def process(ws: str, outbox_id: int, deps: Deps) -> str:
     """Deliver one outbox row. Returns sent, retry, dead or skipped."""
     async with ws_tx(ws) as conn:
-        row = await outbox.claim(conn, outbox_id, now=await _now(conn, ws), lease=LEASE)
+        now = await _now(conn, ws)
+        abandoned = await outbox.abandon_exhausted(conn, outbox_id, now=now)
+        row = None if abandoned else await outbox.claim(conn, outbox_id, now=now, lease=LEASE)
+    if abandoned:
+        log.warning("outbox %s (%s) abandoned: every attempt ended without a result", outbox_id, abandoned)
+        runtime.emit_metrics("dispatcher", {"OutboxSent": 0, "OutboxDeadLettered": 1}, {"kind": abandoned})
+        return "dead"
     if row is None:
         return "skipped"
 

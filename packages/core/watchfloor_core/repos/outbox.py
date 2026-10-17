@@ -12,6 +12,7 @@ from typing import Any
 import asyncpg
 
 BACKOFF = (timedelta(seconds=30), timedelta(minutes=2), timedelta(minutes=10), timedelta(minutes=30))
+MAX_ATTEMPTS = len(BACKOFF) + 1
 
 
 async def enqueue(
@@ -59,6 +60,25 @@ async def due_ids(conn: asyncpg.Connection, before: datetime, limit: int = 100) 
         limit,
     )
     return [r["id"] for r in rows]
+
+
+async def abandon_exhausted(conn: asyncpg.Connection, outbox_id: int, *, now: datetime) -> str | None:
+    """Mark dead a due row that has already used every attempt without ever reporting back.
+
+    :func:`record_failure` is what ends the last attempt, so a row still pending with
+    ``MAX_ATTEMPTS`` claims behind it lost its worker each time (a timeout, an out-of-memory kill).
+    Without this the sweeper would hand it back for ever, one more agent run or model call per
+    lease. Returns the row's kind when it was abandoned, else None.
+    """
+    return await conn.fetchval(
+        """UPDATE outbox SET status = 'dead', last_error = $3
+           WHERE id = $1 AND status = 'pending' AND next_attempt_at <= $2 AND attempts >= $4
+           RETURNING kind""",
+        outbox_id,
+        now,
+        f"abandoned: {MAX_ATTEMPTS} attempts ended without a result (the worker died)",
+        MAX_ATTEMPTS,
+    )
 
 
 async def claim(
@@ -114,7 +134,7 @@ async def record_failure(
     Attempts 1-4 wait 30 s, 2 min, 10 min, 30 min (or the server's Retry-After
     when longer); a fifth failure marks the row dead, which raises an alarm.
     """
-    if attempts > len(BACKOFF):
+    if attempts >= MAX_ATTEMPTS:
         await mark_dead(conn, outbox_id, error)
         return "dead"
     wait = max(BACKOFF[attempts - 1], retry_after or timedelta(0))

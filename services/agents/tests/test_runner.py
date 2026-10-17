@@ -42,6 +42,15 @@ async def test_invalid_payload_never_touches_mcp(
     assert mcp.opened == 0
 
 
+async def test_a_memory_actor_cannot_be_steered_into_another_namespace(
+    payload: dict[str, Any], offline_settings: Settings, mcp: FakeMCP
+) -> None:
+    for key, value in (("user_ref", "us_x/../ws_other:us_y"), ("workspace_id", "ws_a:us_b")):
+        events = await _events({**payload, key: value}, offline_settings, mcp)
+        assert events == [{"type": "error", "code": "invalid_payload", "error": f"invalid {key}"}]
+    assert mcp.opened == 0
+
+
 async def test_dev_without_models_is_misconfigured(payload: dict[str, Any], mcp: FakeMCP) -> None:
     events = await _events(payload, Settings(env="dev"), mcp)
     assert [(e["type"], e.get("code")) for e in events] == [("error", "misconfigured")]

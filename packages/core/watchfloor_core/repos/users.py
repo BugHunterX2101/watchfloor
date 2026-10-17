@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncpg
 
+from .deals import like_escape
+
 
 async def get(conn: asyncpg.Connection, user_id: str) -> asyncpg.Record | None:
     return await conn.fetchrow(
@@ -22,10 +24,11 @@ async def find_by_name(conn: asyncpg.Connection, name: str) -> list[asyncpg.Reco
         return exact
     prefix = await conn.fetch(
         """SELECT id, display_name, slack_user_id FROM users
-           WHERE lower(display_name) LIKE lower($1) || '%'
+           WHERE lower(display_name) LIKE lower($2) || '%' ESCAPE '!'
               OR lower(split_part(display_name, ' ', 1)) = lower(split_part($1, ' ', 1))
            ORDER BY display_name""",
         name,
+        like_escape(name),  # spoken words, not a pattern: "50%" or "_" must not match every teammate
     )
     if prefix:
         return prefix

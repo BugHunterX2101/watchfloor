@@ -54,6 +54,9 @@ async def test_callback_refuses_forged_state_and_mixed_up_issuers(
 
     denied = await client.get("/oauth/callback", params={"error": "access_denied"})
     assert denied.headers["location"] == "/?signin=access_denied"
+    # Text from the URL never reaches the page: an unknown code becomes a fixed one.
+    spoof = await client.get("/oauth/callback", params={"error": "Your session expired - call +1 555 0100"})
+    assert spoof.headers["location"] == "/?signin=oauth_error"
     assert auth.tokens == {}  # no code was ever exchanged
     assert (await client.get("/api/session")).json()["signed_in"] is False
 

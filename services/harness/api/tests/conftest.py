@@ -150,6 +150,14 @@ class FakeMcp:
         if name == "get_risk_briefing":
             return {"summary": BRIEFING, "deals": []}
         if name == "lookup_deal":
+            if "twin" in args["name_query"].lower():  # two deals, no clear winner
+                return {
+                    "summary": "I found 2 matching deals: Twin Alpha; Twin Beta. Which one do you mean?",
+                    "candidates": [
+                        {"deal_id": HARBOR, "name": "Twin Alpha", "account": "Twin"},
+                        {"deal_id": "dl_other", "name": "Twin Beta", "account": "Twin"},
+                    ],
+                }
             hit = "harbor" in args["name_query"].lower()
             cands = [{"deal_id": HARBOR, "name": "Harbor & Pine Platform", "account": "Harbor & Pine"}]
             return {

@@ -79,13 +79,35 @@ class RigsParams:
             raise ValueError(f"no RIGS parameters for stage {name!r} (closed deals are not scored)") from None
 
 
+def _validate(p: RigsParams) -> None:
+    """Fail when the file is loaded, not as a ZeroDivisionError in the watcher or a silently wrong band."""
+    w, b = p.weights, p.bands
+    if min(w.r, w.i, w.g, w.s) < 0:
+        raise ValueError("RIGS weights must not be negative")
+    if not 0 <= b.watch_exit_below <= b.watch_enter < b.at_risk_exit_below <= b.at_risk_enter <= 100:
+        raise ValueError(
+            "RIGS bands must satisfy 0 <= watch exit_below <= watch enter < at_risk exit_below <= at_risk enter <= 100"
+        )
+    if not p.stages:
+        raise ValueError("RIGS needs parameters for at least one stage")
+    for s in p.stages.values():
+        if s.norm_days < 1 or s.intent_baseline <= 0:
+            raise ValueError(
+                f"RIGS stage {s.name!r}: norm_days must be 1 or more and intent_baseline above 0"
+            )
+    if p.gaps.per_gap <= 0 or not 0 < p.slippage.amount_cut_threshold < 1:
+        raise ValueError(
+            "RIGS gaps.per_gap must be above 0 and slippage.amount_cut_threshold between 0 and 1"
+        )
+
+
 def parse_params(doc: dict[str, Any]) -> RigsParams:
     w = doc["weights"]
     b = doc["bands"]
     total = w["r"] + w["i"] + w["g"] + w["s"]
     if abs(total - 1.0) > 1e-9:
         raise ValueError(f"RIGS weights must sum to 1.0, got {total}")
-    return RigsParams(
+    params = RigsParams(
         model_version=doc["model_version"],
         weights=Weights(**w),
         bands=BandThresholds(
@@ -100,6 +122,8 @@ def parse_params(doc: dict[str, Any]) -> RigsParams:
         slippage=SlippageParams(**doc["slippage"]),
         gaps=GapParams(**doc["gaps"]),
     )
+    _validate(params)
+    return params
 
 
 @lru_cache(maxsize=1)

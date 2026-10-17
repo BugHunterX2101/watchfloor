@@ -26,6 +26,12 @@ def sha256(value: str) -> bytes:
     return hashlib.sha256(value.encode()).digest()
 
 
+def code_family(code: str) -> str:
+    """The refresh-token family an authorization code starts. Derived from the code, so a second
+    presentation of the code can find and revoke what the first one issued (RFC 6749 §4.1.2)."""
+    return sha256("family:" + code)[:16].hex()
+
+
 @dataclass(frozen=True)
 class Client:
     client_id: str
@@ -275,6 +281,10 @@ class AuthStore:
                 return False
             await self._revoke_family(conn, family, now)
             return True
+
+    async def revoke_family(self, family_id: str, now: datetime) -> None:
+        async with self._tx() as conn:
+            await self._revoke_family(conn, family_id, now)
 
     @staticmethod
     async def _revoke_family(conn: asyncpg.Connection, family_id: str, now: datetime) -> None:

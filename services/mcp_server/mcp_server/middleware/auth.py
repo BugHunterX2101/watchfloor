@@ -66,6 +66,7 @@ class JwksCache:
         static: dict[str, Any] | None = None,
         ttl_s: float = 600,
         min_refetch_s: float = 30,
+        retry_after_s: float = 5,
     ) -> None:
         if url is None and static is None:
             raise ValueError("JwksCache needs a url or static keys")
@@ -73,8 +74,10 @@ class JwksCache:
         self.static = static
         self.ttl_s = ttl_s
         self.min_refetch_s = min_refetch_s
+        self.retry_after_s = retry_after_s
         self._keys: dict[str, PyJWK] | None = None
         self._fetched_at = 0.0
+        self._failed_at = float("-inf")
         self._lock = asyncio.Lock()
 
     async def key(self, kid: str | None) -> PyJWK | None:
@@ -92,11 +95,16 @@ class JwksCache:
         async with self._lock:
             if self._fetched_at != seen:
                 return  # another request refreshed while this one waited: one fetch serves both
+            if self._keys is None and time.monotonic() - self._failed_at < self.retry_after_s:
+                # Nothing cached and the last fetch just failed: the requests queued behind the lock
+                # fail at once instead of each waiting out its own 2 s timeout in turn.
+                raise JwksUnavailable("the key set could not be fetched a moment ago")
             try:
                 doc = await self._load()
                 keys = {k.key_id: k for k in PyJWKSet.from_dict(doc).keys if k.key_id}
             except Exception as exc:
                 if self._keys is None:
+                    self._failed_at = time.monotonic()
                     raise JwksUnavailable(str(exc)) from exc
                 log.warning("JWKS refresh failed; keeping cached keys: %s", exc)
                 self._fetched_at = time.monotonic()

@@ -92,7 +92,7 @@ async def validate(
     if get("response_type") != "code":
         return fail("unsupported_response_type", "Only response_type=code is supported.")
     challenge = get("code_challenge")
-    if get("code_challenge_method") != "S256" or challenge is None or not _CHALLENGE.match(challenge):
+    if get("code_challenge_method") != "S256" or challenge is None or not _CHALLENGE.fullmatch(challenge):
         return fail("invalid_request", "PKCE with code_challenge_method=S256 is required.")
     resource = get("resource") or srv.settings.resource_uri
     if resource != srv.settings.resource_uri:
@@ -169,7 +169,7 @@ async def login(request: Request) -> Response:
     if isinstance(req, Response):
         return req
 
-    email = str(form.get("email") or "").strip().lower()
+    email = str(form.get("email") or "").strip().lower()[:254]  # RFC 5321 limit; it is also a rate-limit key
     password = str(form.get("password") or "")
     store = srv.db()
     over_ip = await store.rate_hit(f"login-ip:{client_ip(request)}") > LOGIN_LIMIT_PER_MIN
