@@ -38,6 +38,7 @@ from .control import (
     ASK_NOTE,
     CONTROL_DESCRIPTION,
     GATED_WRITES,
+    Profile,
     Screen,
     TurnState,
     clean,
@@ -46,6 +47,7 @@ from .control import (
     deadline,
     describe_write,
     fingerprint,
+    profile_note,
     screen_note,
 )
 from .mcp_http import McpError, McpHttp, ToolCall, Unauthorized
@@ -110,26 +112,38 @@ class Pending:
             return None
         return p
 
-    def note(self) -> str:
+    def note(self, unheard: bool = False) -> str:
         """What the model is told at the start of the turn.
 
         The summary comes from a tool result, so it can carry CRM text: it goes in as one quoted line,
-        with quotes and line breaks flattened, never as a new instruction.
+        with quotes and line breaks flattened, never as a new instruction. ``unheard``: the user spoke
+        while the previous reply was still being worked on, so they have not heard this question yet
+        and cannot be answering it.
         """
         summary = " ".join(self.summary.replace('"', "'").split())
+        if unheard and self.state != "confirmed":
+            return (
+                f'A change is waiting: "{summary}". The user said this before they heard your last '
+                "reply, so it cannot be their answer to it: do not confirm or save anything that is "
+                "waiting in this turn. If they changed a detail, make that change again with the "
+                "corrected arguments and ask for their yes; otherwise carry on with what they asked."
+            )
         if self.state == "ask":
             return (
                 f'The user was just asked to confirm this change: "{summary}". If their latest '
                 f"message clearly says yes, call {self.tool} again with exactly these arguments: "
-                f"{json.dumps(self.args, ensure_ascii=False)}. If they say no, change the subject or "
-                "want something different, don't call it."
+                f"{json.dumps(self.args, ensure_ascii=False)}. If they want a detail changed (a "
+                f"number, a name, a day), call {self.tool} with the changed arguments instead: it is "
+                "held again for their yes. If they say no or change the subject, don't call it."
             )
         if self.state == "preview":
             return (
                 f'A change is waiting for the user\'s answer. Its preview: "{summary}" '
                 "If their latest message clearly says yes, call confirm_action with "
                 f'confirmation_token "{self.token}". If they want more time, call extend_preview '
-                "with that token. If they say no or move on, leave it."
+                "with that token. If they want a detail changed, call the tool that made the "
+                "preview again with the corrected arguments (a new preview replaces this one) and "
+                "do not confirm. If they say no or move on, leave it."
             )
         return (
             f'The user just confirmed this: "{summary}" '
@@ -173,6 +187,23 @@ def next_pending(
     return pending if pending and pending.live() else None
 
 
+def awaiting(pending: Pending | None, before: Pending | None = None) -> dict[str, Any] | None:
+    """What the user can still answer, change or undo, for the page (the cookie itself never leaves).
+
+    ``fresh``: this turn made it (or renewed it), so the question just asked is about it. An older
+    one that is merely still alive is not what a bare "no" answers.
+    """
+    if pending is None:
+        return None
+    kind = {"preview": "preview", "ask": "ask", "confirmed": "undo"}[pending.state]
+    return {
+        "kind": kind,
+        "summary": " ".join(pending.summary.split())[:200],
+        "until": pending.until,
+        "fresh": pending is not before,
+    }
+
+
 @dataclass
 class TurnResult:
     reply: str
@@ -181,6 +212,7 @@ class TurnResult:
     ui: dict[str, str] | None = None
     pending: Pending | None = None  # for the app's cookie, never sent to the browser
     actions: list[dict[str, Any]] = field(default_factory=list)  # for the page (control.py)
+    before: Pending | None = None  # what waited when the turn began (to tell what this turn added)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -189,6 +221,7 @@ class TurnResult:
             "calls": [c.public() for c in self.calls],
             "ui": self.ui,
             "actions": self.actions,
+            "awaiting": awaiting(self.pending, self.before),
         }
 
 
@@ -378,19 +411,31 @@ async def strands_turn(
     usage: Tally | None = None,
     screen: Screen | None = None,
     state: TurnState | None = None,
+    profile: Profile | None = None,
+    unheard: bool = False,
 ) -> str:
-    """``state`` collects what the model asks of the page and any write held for a yes (control.py)."""
+    """``state`` collects what the model asks of the page and any write held for a yes (control.py).
+
+    ``unheard``: the message was said before the user heard the last reply, so nothing waiting for
+    their answer can be confirmed by it (the guard refuses, whatever the model decides).
+    """
     from strands import Agent
 
-    preview = pending if pending and pending.state == "preview" else None
+    answerable = pending if pending and not unheard else None
+    preview = answerable if answerable and answerable.state == "preview" else None
     guard = _Guard(
         pending_token=preview.token if preview else None,
-        ask=pending if pending and pending.state == "ask" else None,
+        ask=answerable if answerable and answerable.state == "ask" else None,
         state=state if state is not None else TurnState(),
     )
     tools = [mcp_tool(mcp, spec, guard) for spec in await mcp.list_tools()]
     tools.append(control_tool(guard))
-    prompt = system_prompt() + screen_note(screen) + (f"\n\n{pending.note()}" if pending else "")
+    prompt = (
+        system_prompt()
+        + screen_note(screen)
+        + profile_note(profile)
+        + (f"\n\n{pending.note(unheard)}" if pending else "")
+    )
     agent = Agent(
         model=model_factory(cfg),
         tools=tools,
@@ -426,11 +471,15 @@ async def run_turn(
     ui_cache: dict[str, tuple[float, str]] | None = None,
     pending: Pending | None = None,
     screen: Screen | None = None,
+    profile: Profile | None = None,
+    unheard: bool = False,
 ) -> TurnResult:
     """``model_factory`` replaces the model chain (tests). ``pending`` comes from the previous turn.
 
     ``screen`` is what the page shows now; the model sees it, and its ``control_app`` actions come
-    back in ``TurnResult.actions`` for the page to run.
+    back in ``TurnResult.actions`` for the page to run. ``profile`` is what the browser knows about
+    the user (name, time of day, how long they like replies, pinned deals): context, never commands.
+    ``unheard``: the user spoke before hearing the previous reply, so this message cannot confirm it.
     """
     engine = cfg.engine
     if engine is None:
@@ -460,6 +509,8 @@ async def run_turn(
                         usage=usage,
                         screen=screen,
                         state=state,
+                        profile=profile,
+                        unheard=unheard,
                     )
                     log.info("the %s model answered", name)
                     break
@@ -477,10 +528,10 @@ async def run_turn(
             if reply is None:
                 engine = "offline"
                 state = TurnState()
-                reply = await offline_turn(mcp, message, history, pending)
+                reply = await offline_turn(mcp, message, history, None if unheard else pending)
         else:
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
-            reply = await offline_turn(mcp, message, history, pending)
+            reply = await offline_turn(mcp, message, history, None if unheard else pending)
         return TurnResult(
             reply=reply,
             engine=engine,
@@ -488,6 +539,7 @@ async def run_turn(
             ui=await _view(mcp, ui_cache),
             pending=next_pending(pending, mcp.calls, state.asked),
             actions=state.sink.actions,
+            before=pending,
         )
     finally:
         usage.log(scope="harness", engine=engine, model=",".join(tried))

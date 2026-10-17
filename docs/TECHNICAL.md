@@ -858,9 +858,9 @@ watchfloor/
 │       │   ├── pyproject.toml              # starlette, uvicorn, strands-agents[gemini], httpx, cryptography
 │       │   ├── run.sh
 │       │   └── harness_api/
-│       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, GET /api/view (a view's page, own CSP), the web page
+│       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, POST /api/dismiss, GET /api/view (a view's page, own CSP), the web page
 │       │       ├── agent.py                # one turn: Strands agent over the user's MCP token
-│       │       ├── control.py              # control_app (page actions for voice), screen context, the hold-until-yes gate (ADR-027)
+│       │       ├── control.py              # control_app (page actions for voice), screen and profile context, the hold-until-yes gate (ADR-027, ADR-029)
 │       │       ├── mcp_http.py             # thin MCP client (stateless, JSON responses)
 │       │       ├── offline.py              # keyword router when no model is configured
 │       │       ├── session.py              # Fernet-sealed cookie sessions
@@ -886,9 +886,11 @@ watchfloor/
 │               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone
 │               ├── voice/                  # run everything by voice (ADR-027)
-│               │   ├── actions.ts          #   the 27 page actions, checked on arrival (mirrors control.py)
+│               │   ├── actions.ts          #   the 29 page actions, checked on arrival (mirrors control.py)
 │               │   ├── grammar.ts          #   spoken commands that need no model; wake word; fuzzy deal and rule names
-│               │   ├── handsfree.ts        #   wake word, follow-up window, barge-in, auto-off (injected clock and recogniser)
+│               │   ├── handsfree.ts        #   wake word, conversation window, talk-over, "that's all", auto-off (injected clock and recogniser; ADR-028)
+│               │   ├── context.ts          #   what the assistant is told about the person and the board (ADR-029)
+│               │   ├── watcher.ts          #   what changed on the board since the last look, in words for the ear (ADR-029)
 │               │   ├── commander.ts        #   runs an action against the pages; asks before sign-out, forget, removal
 │               │   ├── dock.ts             #   the on-screen state of hands-free, on every page
 │               │   └── text.ts             #   norm, phonetic fold, edit distance, speakable(), echo check
@@ -2084,7 +2086,8 @@ and the freeze rules of §17.5), then:
 | auth | `POST /revoke` | client auth | Refresh revocation |
 | auth | `GET /jwks.json` | — | Public keys |
 | auth | `GET/POST /login` · `/consent` | CSRF | Server-rendered pages |
-| harness | `POST /converse` | harness session | Path B chat turn |
+| harness | `POST /converse` | harness session | Path B chat turn; takes the screen `context`, the person's `profile` and `unheard`, returns `awaiting` (ADR-029) |
+| harness | `POST /api/dismiss` | harness session | Forget the change waiting for an answer (the user said no) |
 
 ### 13.2 Headers
 

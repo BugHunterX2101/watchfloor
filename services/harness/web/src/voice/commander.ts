@@ -12,7 +12,7 @@ import type { PipelineHandle } from "../pipeline";
 import type { ConfirmOptions } from "../dom";
 import type { Settings } from "../store";
 import { stopSpeaking } from "../speech";
-import { PAGE_LABEL, type AppAction, type DeviceName, type PageName } from "./actions";
+import { PAGE_LABEL, type AppAction, type DeviceName, type PageName, type StyleName } from "./actions";
 import { resolveRule } from "./grammar";
 
 export interface Host {
@@ -70,7 +70,12 @@ const FILTER_SAY: Record<Filter, string> = {
   writes: "Showing only the calls that change something.",
   errors: "Showing only the calls that failed.",
 };
-const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth"];
+const STYLE_SAY: Record<StyleName, string> = {
+  brief: "Short answers from now on.",
+  normal: "Back to my usual length.",
+  detailed: "I'll give you the reasons and the detail.",
+};
+const ORDINAL_WORDS =["first", "second", "third", "fourth", "fifth"];
 
 /** Ask the question on the page's own dialog and out loud. */
 function ask(h: Host, options: ConfirmOptions, yes: () => Promise<string> | string): Outcome {
@@ -125,6 +130,16 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
     case "set_name":
       h.update({ name: a.name });
       return said(`Nice to meet you, ${h.settings().name || a.name}.`);
+    case "set_style":
+      h.update({ style: a.style });
+      return said(STYLE_SAY[a.style]);
+    case "set_alerts":
+      h.update({ alerts: a.on });
+      return said(
+        a.on
+          ? "I'll speak up when something changes on your board."
+          : "Okay, I won't interrupt. Ask me when you want an update.",
+      );
     case "change_voice": {
       const list = h.voices();
       if (list.length < 2) return said("This browser doesn't offer another voice.");

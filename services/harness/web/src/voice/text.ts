@@ -109,6 +109,12 @@ export function speakable(text: string): string {
     .trim();
 }
 
+/** Whether a reply ends by asking the user something, so a hands-free conversation waits longer for the answer. */
+export function asksSomething(text: string): boolean {
+  const tail = text.trim().replace(/["'”’)\]\s]+$/, "");
+  return tail.endsWith("?") || /\bsay yes or no\.?$/i.test(tail);
+}
+
 /** Whether `heard` is just the assistant's own voice coming back in through the microphone. */
 export function isEcho(heard: string, spoken: string): boolean {
   const h = norm(heard);

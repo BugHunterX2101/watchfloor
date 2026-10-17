@@ -171,6 +171,8 @@ export interface PipelineHandle {
   setSignedIn(on: boolean): void;
   reload(): void;
   deals(): readonly BriefingDeal[];
+  /** The deals as the board lists them now (filtered and sorted), in order. */
+  shown(): readonly BriefingDeal[];
   view(): PipelineView;
   openDealId(): string | null;
   /** Change what the board shows (reloading when the segment or the count changed). */
@@ -759,6 +761,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
       if (active) void load();
     },
     deals: () => briefing?.deals ?? [],
+    shown,
     view: () => ({ segment, limit, band, sort }),
     openDealId: () => currentDeal,
     async show(v) {

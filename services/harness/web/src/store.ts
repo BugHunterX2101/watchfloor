@@ -8,6 +8,7 @@ import { pushRecent, togglePin, type SkylineDeal } from "./logic";
 export type ThemeChoice = "auto" | "light" | "dark";
 export type DeviceChoice = "fit" | "compact" | "standard" | "large";
 export type Motion = "auto" | "calm";
+export type ReplyStyle = "brief" | "normal" | "detailed";
 
 export interface Settings {
   name: string;
@@ -18,6 +19,8 @@ export interface Settings {
   scene: boolean; // the 3D floor behind the page
   readAloud: boolean;
   wakeWord: boolean; // hands-free acts only on requests that start with "Watchfloor" (or follow a reply)
+  style: ReplyStyle; // how long the assistant's replies are (told to the model each turn)
+  alerts: boolean; // hands-free speaks up when the board changes (voice/watcher.ts)
   theme: ThemeChoice;
   device: DeviceChoice;
 }
@@ -31,6 +34,8 @@ export const DEFAULTS: Settings = {
   scene: true,
   readAloud: true,
   wakeWord: true,
+  style: "normal",
+  alerts: true,
   theme: "auto",
   device: "fit",
 };
@@ -86,6 +91,8 @@ export function sanitize(raw: unknown): Settings {
     scene: typeof o.scene === "boolean" ? o.scene : DEFAULTS.scene,
     readAloud: typeof o.readAloud === "boolean" ? o.readAloud : DEFAULTS.readAloud,
     wakeWord: typeof o.wakeWord === "boolean" ? o.wakeWord : DEFAULTS.wakeWord,
+    style: oneOf(o.style, ["brief", "normal", "detailed"], DEFAULTS.style),
+    alerts: typeof o.alerts === "boolean" ? o.alerts : DEFAULTS.alerts,
     theme: oneOf(o.theme, ["auto", "light", "dark"], DEFAULTS.theme),
     device: oneOf(o.device, ["fit", "compact", "standard", "large"], DEFAULTS.device),
   };

@@ -18,6 +18,8 @@ export const ACTION_NAMES = [
   "set_orb",
   "set_floor",
   "set_name",
+  "set_style",
+  "set_alerts",
   "pipeline_view",
   "open_deal",
   "pin_deal",
@@ -46,6 +48,7 @@ export type BandName = "all" | "at_risk" | "watch" | "healthy";
 export type SortName = "urgency" | "health" | "amount" | "name";
 export type FilterName = "all" | "writes" | "errors";
 export type ScrollName = "up" | "down" | "top" | "bottom";
+export type StyleName = "brief" | "normal" | "detailed";
 
 export const PAGES: readonly PageName[] = ["watch", "pipeline", "orders", "activity", "guide"];
 export const PAGE_LABEL: Record<PageName, string> = {
@@ -71,6 +74,8 @@ export type AppAction =
   | { type: "set_orb"; on: boolean }
   | { type: "set_floor"; on: boolean }
   | { type: "set_name"; name: string }
+  | { type: "set_style"; style: StyleName }
+  | { type: "set_alerts"; on: boolean }
   | { type: "pipeline_view"; segment?: SegmentName; limit?: number; band?: BandName; sort?: SortName }
   | { type: "open_deal"; deal_id?: string; deal_name?: string }
   | { type: "pin_deal"; deal_id?: string; deal_name?: string; on: boolean }
@@ -106,6 +111,7 @@ const BANDS: readonly BandName[] = ["all", "at_risk", "watch", "healthy"];
 const SORTS: readonly SortName[] = ["urgency", "health", "amount", "name"];
 const FILTERS: readonly FilterName[] = ["all", "writes", "errors"];
 const SCROLLS: readonly ScrollName[] = ["up", "down", "top", "bottom"];
+export const STYLES: readonly StyleName[] = ["brief", "normal", "detailed"];
 const NAMES: ReadonlySet<string> = new Set(ACTION_NAMES);
 
 /** One action, checked and rebuilt from only the fields it is allowed to have; null if it isn't one. */
@@ -131,6 +137,7 @@ export function parseAction(raw: unknown): AppAction | null {
     case "set_read_aloud":
     case "set_orb":
     case "set_floor":
+    case "set_alerts":
     case "hands_free":
     case "wake_word": {
       const on = flag(raw.on);
@@ -147,6 +154,10 @@ export function parseAction(raw: unknown): AppAction | null {
     case "set_name": {
       const name = clean(raw.name, 40);
       return name ? { type: "set_name", name } : null;
+    }
+    case "set_style": {
+      const style = oneOf(raw.style, STYLES);
+      return style ? { type: "set_style", style } : null;
     }
     case "pipeline_view": {
       const act: Extract<AppAction, { type: "pipeline_view" }> = { type: "pipeline_view" };

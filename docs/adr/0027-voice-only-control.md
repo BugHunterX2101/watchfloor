@@ -2,6 +2,7 @@
 
 - **Status:** Accepted (2026-10-17)
 - **Refines:** ADR-003 (confirmation), ADR-018 (interaction details), ADR-026 (harness pages)
+- **Refined by:** ADR-028 (hands-free conversation), ADR-029 (the list is 29 actions since)
 
 ## Context
 
@@ -19,8 +20,9 @@ because it misheard.
 **Hands-free mode** keeps the microphone open and acts like a smart speaker (`web/src/voice/handsfree.ts`).
 Nothing is acted on until the wake word, "Watchfloor", is heard (recognition hears it as one word or
 two; "watch for" is deliberately not a wake word, because it opens real requests). After the wake word
-there are eight seconds to say the request; after a reply there are eight seconds for a follow-up with
-no wake word (Alexa's follow-up mode). While the assistant is talking only "stop" is heard, and not if
+there are twelve seconds to say the request; after a reply the conversation stays open for a follow-up
+with no wake word (Alexa's follow-up mode; ADR-028 sets how long, and adds talking over the assistant).
+While the assistant is talking, "stop" is heard, and not if
 the words are the assistant's own voice coming back through the microphone (`isEcho`, a fuzzy match
 against what is being said, held for three seconds after it stops). It switches itself off after five
 minutes without a request, pauses while the tab is hidden, and says why if the microphone is blocked.

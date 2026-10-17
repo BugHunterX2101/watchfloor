@@ -9,7 +9,18 @@ import "@fontsource-variable/geist-mono";
 import "@fontsource-variable/fraunces/opsz.css";
 import "./styles.css";
 import { clearActivity, mountActivity, recordTurn } from "./activity";
-import { converse, logout, session, SignedOut, type Call, type Line, type Screen } from "./api";
+import {
+  callTool,
+  converse,
+  dismiss,
+  logout,
+  session,
+  SignedOut,
+  type Awaiting,
+  type Call,
+  type Line,
+  type Screen,
+} from "./api";
 import { clearView, renderView, setDevice, setTheme } from "./apphost";
 import { renderBanner } from "./banner";
 import { caption } from "./captions";
@@ -44,9 +55,11 @@ import { clearTrace, pendingTrace, showTrace } from "./trace";
 import { NEEDS_YES } from "./voice/actions";
 import { removeByVoice, run as runAction, type Host, type Outcome } from "./voice/commander";
 import { mountDock } from "./voice/dock";
-import { HELP_TEXT, interpret, stripWake, type Context } from "./voice/grammar";
+import { boardOf, profileOf } from "./voice/context";
+import { HELP_TEXT, interpretAll, isAnswer, stripWake, type Context, type Intent } from "./voice/grammar";
 import { createHandsFree, type HandsFree } from "./voice/handsfree";
-import { speakable } from "./voice/text";
+import { asksSomething, speakable } from "./voice/text";
+import { compare, snapshot, type Snapshot } from "./voice/watcher";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -101,6 +114,14 @@ let wantFocus = false;
 let lastReply = ""; // what "repeat that" says again: the assistant's last answer, or the last page read out
 let muteNext = false; // "stop" said while a reply was on its way: show it, don't read it
 let speechPending = false; // a reply is being (or about to be) read aloud
+const watchedReviews = new Map<string, number>(); // deal id → the timer of the next check on its deep review
+let waiting: Awaiting | null = null; // a change just read back (or held) that a plain "no" drops
+let utterances = 0; // requests handed over by hands-free so far, so a late finish can tell it was overtaken
+const WATCH_MS = 60_000; // how often hands-free looks at the board while it is on
+let watchTimer: number | null = null;
+let watchBusy = false;
+let baseline: Snapshot | null = null; // the board as it was at the last look; null until the first
+const told = new Map<string, number>(); // news key → when it was last said (voice/watcher.ts)
 
 const handsFreeButton = $<HTMLButtonElement>("handsfree");
 mic.innerHTML = ICONS.mic;
@@ -206,6 +227,8 @@ function setSignedIn(signedIn: boolean, engineName: string | null): void {
     scene?.setDeals(loadSkyline()); // the floor shows the pipeline as it was last seen
   } else {
     hf?.stop(); // nobody is signed in: the microphone must not stay open for them
+    for (const timer of watchedReviews.values()) window.clearTimeout(timer);
+    watchedReviews.clear();
     setBadge("pipeline", null);
     scene?.setDeals([]);
     clearSkyline(); // a shared browser must not show the last person's pipeline
@@ -225,9 +248,10 @@ function setBusy(next: boolean): void {
   input.disabled = next;
 }
 
-/** A request is finished and nothing more will be said: hands-free listens for a follow-up. */
-function settle(): void {
-  if (hf?.state() === "busy") hf.done();
+/** A request is finished and nothing more will be said: hands-free listens for a follow-up
+ *  (`asked`: the reply ended on a question, so it waits longer for the answer). */
+function settle(asked = false): void {
+  if (hf?.state() === "busy") hf.done(asked);
 }
 
 /** Show a reply's words on the dock and read it aloud (if reading aloud is on), telling hands-free
@@ -235,16 +259,18 @@ function settle(): void {
  *  `shown` is the line's text; `spoken` can carry more (a page read out after the answer). */
 function deliver(line: HTMLElement | null, shown: string, spoken: string = shown): void {
   dock.said(shown);
+  // A reply that ends on a question (or leaves a yes-or-no on the screen) is waiting for an answer.
+  const asked = asksSomething(shown) || asksSomething(spoken) || dialogKind() === "confirm";
   if (muteNext) {
     muteNext = false;
     setVoice("idle");
-    settle();
+    settle(asked);
     return;
   }
   const say = speakable(spoken);
   if (!settings().readAloud || !say) {
     setVoice("idle");
-    settle();
+    settle(asked);
     return;
   }
   // Word-by-word captions follow the voice only when the spoken words are the written words.
@@ -264,7 +290,7 @@ function deliver(line: HTMLElement | null, shown: string, spoken: string = shown
       cap?.end(interrupted);
       // A reply cut off by a new turn ends after that turn has set "thinking": leave that alone.
       if (voiceState() === "speaking") setVoice("idle");
-      hf?.spoke();
+      hf?.spoke(asked);
     },
   });
 }
@@ -291,7 +317,21 @@ function waitLadder(running: { note(text: string): void }): () => void {
       running.note(traceText);
     }, ms),
   );
-  return () => timers.forEach((t) => window.clearTimeout(t));
+  // Someone talking to a hands-free assistant may not be looking: a wait that long is also said, once
+  // each (not by "stop" words, so the microphone cannot mistake it for an interruption).
+  const aloud: [number, string][] = [
+    [6000, "Still working on that."],
+    [14000, "This one's taking a little longer."],
+  ];
+  const spoken = aloud.map(([ms, text]) =>
+    window.setTimeout(() => {
+      if (hf && hf.state() !== "off" && settings().readAloud && !muteNext) {
+        hf.noteSpoken(text); // its echo in the microphone is not the user speaking up
+        speak(text);
+      }
+    }, ms),
+  );
+  return () => [...timers, ...spoken].forEach((t) => window.clearTimeout(t));
 }
 
 /** A call made outside the chat (a view's tap, or a page): it lands in the trace and in Activity,
@@ -321,9 +361,70 @@ function noteBriefing(data: string): void {
   }
 }
 
+// A deep review takes about twenty seconds. The assistant says it has started; the page then checks
+// on it and tells the user when it is ready, so nobody has to remember to ask (and a hands-free user
+// never has to look).
+const REVIEW_CHECK_MS = 4000;
+const REVIEW_GIVE_UP_MS = 120_000;
+
+function watchReview(dealId: string): void {
+  if (watchedReviews.has(dealId)) return;
+  const until = Date.now() + REVIEW_GIVE_UP_MS;
+  const check = async (): Promise<void> => {
+    let again = false;
+    try {
+      if (engine === null) return;
+      const result = await callTool("get_triage_result", { deal_id: dealId });
+      const status = result.structuredContent?.status;
+      if (status === "queued" || status === "running") {
+        again = Date.now() < until; // too long: the user can still ask
+        return;
+      }
+      report(result.call, "Review");
+      const summary = result.structuredContent?.summary;
+      if (typeof summary === "string" && summary) tellWhenFree(summary);
+    } catch (err) {
+      if (err instanceof SignedOut) handleSignedOut();
+      // Any other failure: the user can still ask for the result.
+    } finally {
+      // The entry stays while a check is in flight, so a second request for the same deal adds no second watcher.
+      if (again && engine !== null) watchedReviews.set(dealId, window.setTimeout(() => void check(), REVIEW_CHECK_MS));
+      else watchedReviews.delete(dealId);
+    }
+  };
+  watchedReviews.set(dealId, window.setTimeout(() => void check(), REVIEW_CHECK_MS));
+}
+
+/** Say a finished review once the assistant is not in the middle of something else. Spoken only when
+ *  hands-free is on (it is the voice-first mode); otherwise it appears in the transcript and as a toast. */
+function tellWhenFree(text: string, tries = 0): void {
+  if (engine === null) return;
+  const handsFree = hf !== null && hf.state() !== "off";
+  const occupied =
+    busy || listening || voiceState() === "speaking" || (handsFree && (hf?.state() === "busy" || hf?.state() === "speaking"));
+  if (occupied && tries < 20) {
+    window.setTimeout(() => tellWhenFree(text, tries + 1), 1500);
+    return;
+  }
+  history.push({ role: "assistant", text }); // "yes, set that up" must mean the review that was just read out
+  if (handsFree) {
+    announce(text);
+  } else {
+    addLine("assistant", text);
+    toast(text);
+  }
+}
+
 const CONFIRMATION = /^\s*(?:yes|yeah|yep|sure|ok|okay|no|nope|undo|thanks?)\b/i;
 
-async function send(message: string): Promise<void> {
+/** A change is waiting for the user's answer only while the question just asked is about it. */
+function liveWaiting(): Awaiting | null {
+  return waiting && (waiting.kind === "preview" || waiting.kind === "ask") && waiting.until * 1000 > Date.now()
+    ? waiting
+    : null;
+}
+
+async function send(message: string, opts: { unheard?: boolean } = {}): Promise<void> {
   const text = message.trim();
   if (!text || busy) return;
   setBusy(true);
@@ -337,7 +438,12 @@ async function send(message: string): Promise<void> {
   const stopLadder = waitLadder(running);
   const t0 = performance.now();
   try {
-    const turn = await converse(text, history, screenState());
+    const turn = await converse(text, history, {
+      context: screenState(),
+      profile: profileOf(settings(), pinnedLabels(), new Date()),
+      unheard: opts.unheard,
+    });
+    waiting = turn.awaiting?.fresh ? turn.awaiting : null;
     stopLadder();
     running.remove();
     pending.classList.remove("pending");
@@ -348,6 +454,11 @@ async function send(message: string): Promise<void> {
     showTrace(calls, turn.calls, elapsed);
     recordTurn("Turn", turn.calls, elapsed);
     for (const call of turn.calls) earconFor(call.tool, call.ok);
+    for (const call of turn.calls) {
+      if (call.tool === "start_deep_triage" && call.ok && typeof call.arguments.deal_id === "string") {
+        watchReview(call.arguments.deal_id);
+      }
+    }
     if (turn.ui) {
       if (turn.ui.tool === "get_risk_briefing") noteBriefing(turn.ui.data);
       renderView(viewBox, turn.ui, viewCall).catch((e: Error) =>
@@ -370,6 +481,12 @@ async function send(message: string): Promise<void> {
     }
     lastReply = [turn.reply, ...extras].join(" ");
     for (const extra of extras) addLine("assistant", extra);
+    if (muteNext && liveWaiting()) {
+      // "Stop" or "cancel" was said while this was being worked on: a change they never heard is not kept waiting.
+      waiting = null;
+      await dismiss().catch(() => undefined);
+      addLine("system", "Dropped that change because you said stop. Nothing was changed.");
+    }
     deliver(pending, turn.reply, question || lastReply);
   } catch (err) {
     stopLadder();
@@ -420,13 +537,18 @@ function grammarContext(): Context {
     deals: pipeline.deals().map((d) => ({ id: d.deal_id, account: d.account, name: d.name })),
     rules: orders.rules().map((r) => ({ id: r.rule_id, description: r.description })),
     openDealId: pipeline.openDealId(),
+    awaiting: liveWaiting() !== null,
   };
 }
 
 /** What the assistant is told about the screen with every message (fixed words only). */
 function screenState(): Screen {
   const view = pipeline.view();
+  const open = pipeline.openDealId();
+  const board = boardOf(pipeline.shown());
   return {
+    ...(open && /^[A-Za-z0-9_-]{1,64}$/.test(open) ? { open_deal: open } : {}),
+    ...(board.length ? { board } : {}),
     page: current(),
     theme: settings().theme,
     read_aloud: settings().readAloud,
@@ -463,14 +585,47 @@ async function local(said: string, work: () => Promise<Outcome>, quiet = false):
   deliver(line, out.say);
 }
 
-async function handleInput(raw: string): Promise<void> {
+/** "No" to a change the assistant is waiting on: the server forgets it, so a later yes cannot confirm it. */
+async function declineWaiting(said: string): Promise<void> {
+  const what = liveWaiting();
+  waiting = null;
+  const reply = what?.kind === "ask" ? "Okay, I won't save it." : "Okay, dropped. Nothing was changed.";
+  await local(said, async () => {
+    await dismiss(); // a SignedOut here is handled by local()
+    history.push({ role: "user", text: said }, { role: "assistant", text: reply });
+    return { say: reply, content: false };
+  });
+}
+
+/** Several commands in one sentence, run in order, answered in one breath. */
+async function runTogether(said: string, intents: Intent[]): Promise<void> {
+  stopSpeaking();
+  await local(said, async () => {
+    const parts: string[] = [];
+    let spoken = false;
+    for (const i of intents) {
+      if (i.kind !== "action") continue;
+      const out = await runAction(i.action, host);
+      if (out.say) parts.push(out.say);
+      spoken ||= out.content;
+    }
+    return { say: parts.join(" "), content: spoken };
+  });
+}
+
+async function handleInput(raw: string, opts: { unheard?: boolean } = {}): Promise<void> {
   const text = raw.trim();
   if (!text) return;
-  const intent = interpret(text, grammarContext());
+  const intents = interpretAll(text, grammarContext());
+  const intent = intents[0];
   const heard = stripWake(text).text || text;
+  if (intents.length > 1) {
+    await runTogether(heard, intents);
+    return;
+  }
   switch (intent.kind) {
     case "model":
-      await send(intent.text || text);
+      await send(intent.text || text, opts);
       return;
     case "wake":
       earcon.listen();
@@ -481,7 +636,8 @@ async function handleInput(raw: string): Promise<void> {
       const button = document.querySelector<HTMLButtonElement>(
         `dialog.small[open] button[value="${intent.kind === "yes" ? "confirm" : "cancel"}"]`,
       );
-      button?.click();
+      if (button) button.click();
+      else if (intent.kind === "no" && liveWaiting()) await declineWaiting(heard);
       return;
     }
     case "back":
@@ -500,6 +656,14 @@ async function handleInput(raw: string): Promise<void> {
     case "help":
       stopSpeaking();
       await local(heard, async () => ({ say: HELP_TEXT, content: true }));
+      return;
+    case "rest":
+      stopSpeaking();
+      // "That's all": answered, and then the wake word is needed again (always-listening mode stays as it is).
+      await local(heard, async () => ({
+        say: hf?.rest() ? "Okay. Say Watchfloor when you need me." : "Okay.",
+        content: false,
+      }));
       return;
     case "remove_rule":
       stopSpeaking();
@@ -618,17 +782,22 @@ const hf: HandsFree | null = (() => {
       clearTimer: (id) => window.clearTimeout(id as number),
     },
     wakeRequired: () => settings().wakeWord,
-    answering: () => dialogKind() === "confirm",
-    onUtterance: (text) => {
-      void handleInput(text)
+    answering: () => dialogKind() === "confirm" || liveWaiting() !== null,
+    canQueue: (text) => !isAnswer(text),
+    onUtterance: (text, opts) => {
+      const mine = ++utterances;
+      void handleInput(text, opts)
         .catch((err: Error) => addLine("system", `Something went wrong: ${err.message}`, "error"))
         .finally(() => {
-          if (!speechPending) settle();
+          // Not when a request said meanwhile has already taken over: it settles itself.
+          if (!speechPending && mine === utterances) settle();
         });
     },
     onState: (state, hint) => {
       dock.render(state, hint);
       const on = state !== "off";
+      if (on) startWatching();
+      else stopWatching();
       handsFreeButton.setAttribute("aria-pressed", String(on));
       handsFreeButton.setAttribute("aria-label", on ? "Stop hands-free listening" : "Start hands-free listening");
       // The orb listens while the microphone is open for a request.
@@ -644,6 +813,7 @@ const hf: HandsFree | null = (() => {
       stopSpeaking();
       earcon.listen();
     },
+    onTalkOver: () => stopSpeaking(),
     onStopWord: () => {
       if (voiceState() === "speaking") stopSpeaking();
       else {
@@ -662,6 +832,48 @@ if (!hf) {
   handsFreeButton.setAttribute("aria-label", "Hands-free needs Chrome or Edge");
 }
 
+// --- keeping an eye on the board while hands-free is on ---
+
+/** One look at the board. The first look is the baseline; after that, anything new and worth saying is
+ *  said once the assistant is free (voice/watcher.ts decides what is worth it). */
+async function watchBoard(): Promise<void> {
+  if (engine === null || document.hidden || !settings().alerts || !hf || hf.state() === "off" || watchBusy) return;
+  watchBusy = true;
+  try {
+    const r = await callTool("get_risk_briefing", { limit: 5 });
+    const b = r.isError ? null : toBriefing(r.structuredContent);
+    if (!b) return;
+    briefingSeen(b); // the tab's badge and the floor stay current too
+    const next = snapshot(b);
+    const prev = baseline;
+    baseline = next;
+    if (!prev) return;
+    const news = compare(prev, next, told, Date.now());
+    if (!news) return;
+    for (const key of news.keys) told.set(key, Date.now());
+    report(r.call, "Watching"); // only a look that led to something being said is logged
+    tellWhenFree(news.say);
+  } catch (err) {
+    if (err instanceof SignedOut) handleSignedOut();
+    // Any other failure: try again at the next look.
+  } finally {
+    watchBusy = false;
+  }
+}
+
+function startWatching(): void {
+  if (watchTimer !== null) return;
+  baseline = null;
+  watchTimer = window.setInterval(() => void watchBoard(), WATCH_MS);
+  void watchBoard();
+}
+
+function stopWatching(): void {
+  if (watchTimer !== null) window.clearInterval(watchTimer);
+  watchTimer = null;
+  baseline = null;
+}
+
 /** Hands-free on or off; returns the sentence that says what happened. */
 function setHandsFree(on: boolean): string {
   if (on) {
@@ -673,7 +885,8 @@ function setHandsFree(on: boolean): string {
     if (wasMuted) update({ readAloud: true }); // there is no hands-free without hearing the answers
     hf.start();
     const how = settings().wakeWord ? "Say “Watchfloor”, then your request." : "I'm listening.";
-    return `Hands-free is on. ${how}${wasMuted ? " I turned read-aloud on so you can hear me." : ""}`;
+    const watching = settings().alerts ? " I'll tell you if the board changes." : "";
+    return `${greeting(new Date().getHours(), settings().name)} Hands-free is on. ${how}${watching}${wasMuted ? " I turned read-aloud on so you can hear me." : ""}`;
   }
   if (!hf || hf.state() === "off") return "Hands-free is already off.";
   hf.stop();
@@ -837,6 +1050,7 @@ onSettings((s, changed) => {
   }
   if (changed.includes("name")) updateGreeting();
   if (changed.includes("wakeWord")) hf?.refresh();
+  if (changed.includes("alerts")) baseline = null; // a fresh look, so what changed while it was off is not "news"
 });
 
 {

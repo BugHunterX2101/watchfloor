@@ -3,11 +3,17 @@
 
 import { h } from "./dom";
 import { speak, stopSpeaking, voices } from "./speech";
-import { forgetEverything, settings, update, type Motion } from "./store";
+import { forgetEverything, settings, update, type Motion, type ReplyStyle } from "./store";
 
 const MOTIONS: [Motion, string][] = [
   ["auto", "Follow my system"],
   ["calm", "Calm"],
+];
+
+const STYLES: [ReplyStyle, string][] = [
+  ["brief", "Brief: one or two short sentences"],
+  ["normal", "Normal"],
+  ["detailed", "Detailed: with the reasons"],
 ];
 
 export interface SettingsHost {
@@ -45,6 +51,15 @@ export function mountSettings(host: SettingsHost): { open(): void } {
 
     const wake = h("input", { id: "set-wake", type: "checkbox", checked: s.wakeWord });
     wake.addEventListener("change", () => update({ wakeWord: wake.checked }));
+
+    const alerts = h("input", { id: "set-alerts", type: "checkbox", checked: s.alerts });
+    alerts.addEventListener("change", () => update({ alerts: alerts.checked }));
+
+    const lengthSelect = h("select", { id: "set-style", class: "select" });
+    for (const [value, text] of STYLES) {
+      lengthSelect.append(h("option", { value, selected: value === s.style }, text));
+    }
+    lengthSelect.addEventListener("change", () => update({ style: lengthSelect.value as ReplyStyle }));
 
     const voiceSelect = h("select", { id: "set-voice", class: "select" });
     const fillVoices = (): void => {
@@ -143,6 +158,19 @@ export function mountSettings(host: SettingsHost): { open(): void } {
           "Only act when I say “Watchfloor”",
           "Hands-free then acts on requests that start with the wake word, or that follow a reply. Off: everything it hears is treated as a request.",
           wake,
+        ),
+        toggle(
+          "set-alerts",
+          "Speak up when the board changes",
+          "While hands-free is on, Watchfloor looks at your pipeline about once a minute and tells you when a deal slips to at risk, drops sharply, recovers, or a standing order triggers.",
+          alerts,
+        ),
+        h(
+          "div",
+          { class: "set-row" },
+          h("label", { for: "set-style", class: "set-label" }, "How long should answers be?"),
+          lengthSelect,
+          h("p", { class: "help" }, "You can also just say “keep it short” or “more detail”."),
         ),
         h("div", { class: "set-row" }, h("label", { for: "set-voice", class: "set-label" }, "Voice"), voiceSelect),
         h(

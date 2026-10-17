@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ACTION_NAMES, MAX_ACTIONS, NEEDS_YES, parseAction, parseActions } from "../src/voice/actions.ts";
 import { hasWake, interpret, resolveDeal, resolveRule, stripWake } from "../src/voice/grammar.ts";
-import { isEcho, levenshtein, norm, ordinal, phonetic, similarity, speakable, toCount } from "../src/voice/text.ts";
+import { asksSomething, isEcho, levenshtein, norm, ordinal, phonetic, similarity, speakable, toCount } from "../src/voice/text.ts";
 
 const deals = [
   { id: "dl_kestrel", account: "Kestrel Biotech", name: "Kestrel Biotech · Platform expansion" },
@@ -212,8 +212,10 @@ test("hands-free and the wake word", () => {
   assert.deepEqual(action("hands free mode"), { type: "hands_free", on: true });
   assert.deepEqual(action("turn on hands-free"), { type: "hands_free", on: true });
   assert.deepEqual(action("stop listening"), { type: "hands_free", on: false });
-  assert.deepEqual(action("that's all"), { type: "hands_free", on: false });
   assert.deepEqual(action("goodbye"), { type: "hands_free", on: false });
+  assert.deepEqual(action("see you later"), { type: "hands_free", on: false });
+  assert.deepEqual(action("bye bye"), { type: "hands_free", on: false });
+  assert.deepEqual(action("that's all"), { kind: "rest" }); // the conversation ends; the microphone stays on
   assert.deepEqual(action("turn off the wake word"), { type: "wake_word", on: false });
   assert.deepEqual(action("always listen"), { type: "wake_word", on: false });
   assert.deepEqual(action("only listen when I say Watchfloor"), { type: "wake_word", on: true });
@@ -332,4 +334,41 @@ test("resolveRule finds an order by position or by its words", () => {
   assert.equal(resolveRule("", [rules[0]]).rule.id, "rule_a");
   assert.deepEqual(resolveRule("nothing like it", rules), { rule: null, ambiguous: [] });
   assert.deepEqual(resolveRule("first", []), { rule: null, ambiguous: [] });
+});
+
+test("'that's all' ends a conversation, but only as the whole utterance", () => {
+  for (const said of [
+    "that's all",
+    "That's it for now",
+    "Thanks, that's all",
+    "that's all thanks",
+    "I'm done",
+    "I am done",
+    "we're done",
+    "nothing else",
+    "OK Watchfloor, that's all",
+  ]) {
+    assert.deepEqual(interpret(said, ctx()), { kind: "rest" }, said);
+  }
+  for (const said of [
+    "that's all the deals over fifty thousand",
+    "bye bye Kestrel",
+    "I'm done with Kestrel, what's next",
+    "thanks, what about Kestrel",
+    "what's the final one",
+    "nothing else is at risk, right",
+  ]) {
+    assert.notEqual(interpret(said, ctx()).kind, "rest", said);
+  }
+  // a question on the screen is answered first
+  assert.deepEqual(interpret("no", ctx({ dialog: "confirm" })), { kind: "no" });
+});
+
+test("asksSomething: a reply that ends on a question waits for the answer", () => {
+  assert.equal(asksSomething("Kestrel is at risk. Should I set up a follow up?"), true);
+  assert.equal(asksSomething("Remove this standing order? Flag big deals. Say yes or no."), true);
+  assert.equal(asksSomething('Did you mean "Harbor and Pine"? '), true);
+  assert.equal(asksSomething("Kestrel is at risk. Health thirty eight."), false);
+  assert.equal(asksSomething("Which deal do you mean? I only found one."), false);
+  assert.equal(asksSomething(""), false);
 });

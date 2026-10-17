@@ -23,7 +23,7 @@ interface Scenario {
 const SCENARIOS: Scenario[] = [
   { title: "Your morning briefing", says: "What needs my attention today?", why: "The risk board opens on the screen and the top deals are read out." },
   { title: "Why is it at risk?", says: "Why is Kestrel at risk?", why: "Health, the reasons behind it and the trend, in one spoken answer." },
-  { title: "Go deeper", says: "Dig into Kestrel", why: "Starts a background review; ask for the result a moment later." },
+  { title: "Go deeper", says: "Dig into Kestrel", why: "Starts a background review; Watchfloor tells you when it is ready, so there is nothing to check." },
   { title: "What am I watching?", says: "What am I watching?", why: "Lists your standing orders." },
   {
     title: "Do something about it",
@@ -124,9 +124,11 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
     h(
       "ul",
       { class: "plain" },
-      h("li", null, "After an answer you can follow up for a few seconds without saying “Watchfloor” again."),
-      h("li", null, "Say “stop” while it is talking to interrupt it, and “stop listening” when you are done."),
-      h("li", null, "Anything that signs you out, clears data or changes your orders is read back first and waits for your yes."),
+      h("li", null, "Once you have asked something the conversation stays open: keep talking, answer its questions or change your mind without saying “Watchfloor” or touching the microphone again. After about 45 seconds of quiet (90 if it asked you something) it waits for “Watchfloor” again."),
+      h("li", null, "Talk over it, or say “stop”, to interrupt. Say “that's all” when you are finished, or “stop listening” to turn hands-free off."),
+      h("li", null, "When a deep review finishes it tells you out loud, without being asked. About once a minute it also looks at your board and tells you if a deal slips to at risk, drops sharply, recovers, or a standing order triggers (that look reads your briefing, so it counts as seen; say “stop interrupting me” to quiet it)."),
+      h("li", null, "Anything that signs you out, clears data or changes your orders is read back first and waits for your yes. Change your mind at any point: say “make it forty” to change a detail, or “no” or “cancel that” to drop it. If you speak while it is still working, it takes that up as soon as it has finished, and it never treats a yes said before you heard the question as your answer."),
+      h("li", null, "Say “keep it short” or “more detail” to set how long answers are, and tell it your name in Settings, or just say “call me …”."),
       h("li", null, "Hands-free switches itself off after five minutes without a request."),
     ),
     h(
@@ -144,7 +146,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
     h(
       "p",
       { class: "muted" },
-      "What it hears: your browser's own speech recognition listens while hands-free is on. In Chrome and Edge that audio is processed by the browser's speech service, not by Watchfloor. Watchfloor itself acts only on requests that start with the wake word (or follow a reply) and sends nothing else anywhere. It needs Chrome or Edge, and pauses while the tab is hidden.",
+      "What it hears: your browser's own speech recognition listens while hands-free is on. In Chrome and Edge that audio is processed by the browser's speech service, not by Watchfloor. Watchfloor itself acts only on requests that start with the wake word (or come during a conversation you started) and sends nothing else anywhere. It needs Chrome or Edge, and pauses while the tab is hidden.",
     ),
   );
 

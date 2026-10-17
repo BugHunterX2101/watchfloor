@@ -605,3 +605,111 @@ async def test_the_offline_engine_answers_where_do_i_start_with_the_top_deal(
     await sign_in(client)
     r = await client.post("/converse", json={"message": "Where should I start?"})
     assert r.json()["engine"] == "offline" and mcp.calls[-1] == ("get_risk_briefing", {"limit": 1})
+
+
+async def test_the_page_is_told_what_still_waits_for_an_answer(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """`awaiting` is what the page may decline, change or undo; the token itself never leaves."""
+    models = [StepsModel(PROPOSE), StepsModel(("confirm_action", {"confirmation_token": "tok_1"}))]
+    async with _model_app(tmp_path, auth, mcp, models) as c:
+        await sign_in(c)
+        body = (await c.post("/converse", json={"message": "Have Maya call the CFO by Friday."})).json()
+        assert body["awaiting"]["kind"] == "preview" and PREVIEW in body["awaiting"]["summary"]
+        assert body["awaiting"]["fresh"] is True and "tok_1" not in json.dumps(body["awaiting"])
+        body = (await c.post("/converse", json={"message": "Yes."})).json()
+        assert body["awaiting"]["kind"] == "undo" and body["awaiting"]["fresh"] is True
+
+
+async def test_an_older_change_still_waiting_is_not_fresh(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A bare "no" answers the question just asked, not a preview left over from earlier."""
+    models = [StepsModel(PROPOSE), ScriptedModel("get_risk_briefing")]
+    async with _model_app(tmp_path, auth, mcp, models) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Have Maya call the CFO by Friday."})
+        body = (await c.post("/converse", json={"message": "Actually, what needs my attention?"})).json()
+        assert body["awaiting"]["kind"] == "preview" and body["awaiting"]["fresh"] is False
+
+
+async def test_a_poll_of_the_board_leaves_a_waiting_change_alone(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """Hands-free looks at the board every minute: that must not drop a rule the user was just asked about."""
+    rule = ("set_standing_order", {"min_score": 65})
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(rule), StepsModel(rule)]) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        sealed = c.cookies.get("wf_h_pending")
+        assert sealed
+        r = await c.post("/api/tool", json={"name": "get_risk_briefing", "arguments": {"limit": 5}})
+        assert r.status_code == 200 and c.cookies.get("wf_h_pending")
+        r = await c.post("/converse", json={"message": "Yes, go ahead."})
+        assert mcp.calls[-1] == ("set_standing_order", {"min_score": 65}) and r.json()["reply"].startswith(
+            "Saved."
+        )
+
+
+async def test_no_clears_a_waiting_change_so_a_late_yes_cannot_confirm_it(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    yes = StepsModel(("confirm_action", {"confirmation_token": "tok_1"}))
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(PROPOSE), yes]) as c:
+        assert (await c.post("/api/dismiss")).status_code == 401  # signed out: nothing to dismiss
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Have Maya call the CFO by Friday."})
+        assert c.cookies.get("wf_h_pending")
+        r = await c.post("/api/dismiss")
+        assert r.status_code == 200 and r.json() == {"awaiting": None}
+        assert "wf_h_pending" not in c.cookies
+        r = await c.post("/converse", json={"message": "Yes, go ahead."})
+        assert mcp.names() == ["propose_action"] and "isn't the preview" in r.json()["reply"]
+
+
+async def test_words_said_before_the_reply_was_heard_cannot_confirm_it(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """The user spoke while the turn was still running: a "yes" then answers a question they never heard."""
+    early = StepsModel(("confirm_action", {"confirmation_token": "tok_1"}))
+    heard = StepsModel(("confirm_action", {"confirmation_token": "tok_1"}))
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(PROPOSE), early, heard]) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Have Maya call the CFO by Friday."})
+        r = await c.post("/converse", json={"message": "yeah go for it", "unheard": True})
+        assert mcp.names() == ["propose_action"] and "isn't the preview" in r.json()["reply"]
+        assert "before they heard your last reply" in early.prompts[0]
+        assert 'confirmation_token "tok_1"' not in early.prompts[0]
+        assert c.cookies.get("wf_h_pending"), "the change still waits for an answer they can hear"
+        r = await c.post("/converse", json={"message": "Yes."})  # said after hearing it: this one counts
+        assert (
+            mcp.calls[-1] == ("confirm_action", {"confirmation_token": "tok_1"}) and r.json()["reply"] == DONE
+        )
+
+
+async def test_the_model_is_told_who_it_is_talking_to(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:
+    model = StepsModel(("get_risk_briefing", {"limit": 3}))
+    profile = {
+        "name": "Priya",
+        "day": "Friday",
+        "part": "evening",
+        "style": "brief",
+        "pins": ["Kestrel Biotech"],
+    }
+    board = [{"id": "dl_K", "name": "Kestrel Biotech", "band": "at_risk", "health": 38}]
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        r = await c.post(
+            "/converse",
+            json={
+                "message": "what about the second one",
+                "profile": profile,
+                "context": {"page": "pipeline", "board": board, "open_deal": "dl_K"},
+            },
+        )
+        assert r.status_code == 200
+        assert 'their name is "Priya"' in model.prompts[0] and "Friday evening" in model.prompts[0]
+        assert '"Kestrel Biotech"' in model.prompts[0] and "short answers" in model.prompts[0]
+        assert '1. "Kestrel Biotech" (deal_id dl_K, at risk, health 38)' in model.prompts[0]
+        bad = await c.post("/converse", json={"message": "hi", "profile": {"style": "rude"}})
+        assert bad.status_code == 400

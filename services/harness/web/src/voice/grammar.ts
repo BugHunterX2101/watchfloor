@@ -34,6 +34,9 @@ export interface Context {
   rules: readonly RuleRef[];
   /** The deal whose sheet is open. */
   openDealId: string | null;
+  /** The assistant has just read back a change and is waiting for the user's answer (a preview, or a
+   *  rule it is holding): a plain "no" or "cancel that" drops it, with no model call. */
+  awaiting?: boolean;
 }
 
 export type Intent =
@@ -44,6 +47,8 @@ export type Intent =
   | { kind: "back" }
   | { kind: "help" }
   | { kind: "signin" }
+  /** "That's all": the conversation is over; the wake word is needed again. */
+  | { kind: "rest" }
   | { kind: "remove_rule"; which: string }
   | { kind: "model"; text: string };
 
@@ -90,6 +95,24 @@ const YES =
   /^(?:yes|yeah|yep|yup|sure|ok|okay|go\s+ahead|do\s+it|confirm|confirmed|affirmative|correct|absolutely|proceed|thats\s+right|please\s+do|yes\s+please|yes\s+go\s+ahead|yes\s+do\s+it|remove\s+it|sign\s+me\s+out|clear\s+it)$/;
 const NO =
   /^(?:no|nope|nah|cancel|stop|dont|do\s+not|never\s+mind|nevermind|negative|not\s+now|leave\s+it|keep\s+it|wait|hold\s+on|no\s+thanks|no\s+dont)$/;
+
+// Dropping a change the assistant has just read back and is waiting on. Narrower than NO on purpose:
+// "wait" and "hold on" ask for more time, and "stop" stops the voice; neither declines the change.
+const DECLINE =
+  /^(?:no(?:\s+(?:thanks|thank\s+you|dont|do\s+not|leave\s+it|not\s+now))?|nope|nah|negative|not\s+now|cancel(?:\s+(?:that|it|this|the\s+(?:change|order|rule|update|action|task)))?|never\s*mind(?:\s+(?:that|it))?|forget\s+(?:it|that)|drop\s+(?:it|that)|scrap\s+(?:it|that)|dont\s+(?:do\s+(?:it|that)|bother|save\s+(?:it|that))|do\s+not\s+(?:do\s+(?:it|that)|save\s+(?:it|that)))$/;
+
+/** A bare yes or no (to a question on the screen or one just asked aloud). Held back while the
+ *  assistant is still working: a "yes" said before the question was heard is not an answer to it. */
+export function isAnswer(raw: string): boolean {
+  const u = tidy(norm(stripWake(raw).text));
+  return YES.test(u) || NO.test(u) || DECLINE.test(u);
+}
+
+// The end of a conversation (the microphone stays on, waiting for the wake word); saying goodbye or
+// "stop listening" ends hands-free itself. Only as a whole utterance, so "thanks, what about Kestrel"
+// carries on. (The cleaner has already taken a trailing "now" off "that's it for now".)
+const REST =
+  /^(?:(?:no|great|perfect|cool|thanks|thank\s+you)\s+)*(?:thats\s+(?:all|it|enough)(?:\s+for(?:\s+(?:now|today))?)?|(?:im|i\s+am|we\s+are|were|all)\s+done|nothing\s+(?:else|more))(?:\s+(?:thanks|thank\s+you))?$/;
 
 // --- pages -----------------------------------------------------------------------------------------
 
@@ -291,7 +314,7 @@ const RULES: Rule[] = [
 
   // hands-free itself
   (u) =>
-    /^(?:stop\s+listening|go\s+to\s+sleep|sleep|hands\s?free\s+off|turn\s+off\s+hands\s?free|goodbye|bye|thats\s+all|im\s+done|i\s+am\s+done|stand\s+down|end\s+(?:the\s+)?(?:session|conversation)|stop\s+hands\s?free)$/.test(u)
+    /^(?:stop\s+listening|go\s+to\s+sleep|sleep|hands\s?free\s+off|turn\s+off\s+hands\s?free|good\s*bye|bye(?:\s+bye)?|see\s+you(?:\s+later)?|talk\s+to\s+you\s+later|stand\s+down|end\s+(?:the\s+)?(?:session|conversation)|stop\s+hands\s?free)$/.test(u)
       ? act({ type: "hands_free", on: false })
       : null,
   (u) =>
@@ -392,6 +415,22 @@ const RULES: Rule[] = [
     const m = /^\s*(?:you\s+can\s+)?(?:call\s+me|my\s+name\s+is|address\s+me\s+as)\s+(.{1,40}?)[\s.!]*$/i.exec(raw);
     return m ? act({ type: "set_name", name: m[1] }) : null;
   },
+  // how long the replies are
+  (u) =>
+    /^(?:keep\s+(?:it|answers|replies|your\s+answers|them)\s+(?:short|brief|quick)|short(?:er)?\s+(?:answers|replies)|be\s+(?:brief|short|concise|quicker)|brief(?:\s+(?:mode|answers|replies))?|concise(?:\s+(?:mode|answers))?|less\s+detail|(?:just\s+)?the\s+(?:headline|headlines|short\s+version|gist)|too\s+(?:long|wordy))$/.test(u)
+      ? act({ type: "set_style", style: "brief" })
+      : /^(?:more\s+detail\s+from\s+now\s+on|detailed\s+(?:answers|replies|mode)|(?:give\s+me\s+)?longer\s+(?:answers|replies)|be\s+(?:more\s+)?(?:detailed|thorough)|give\s+me\s+(?:the\s+)?(?:full|detailed)\s+(?:answers|replies|story)\s*(?:from\s+now\s+on)?)$/.test(u)
+        ? act({ type: "set_style", style: "detailed" })
+        : /^(?:normal|default|usual|standard|regular)\s+(?:length|answers|replies|mode)$|^back\s+to\s+normal\s+(?:length|answers|replies)$/.test(u)
+          ? act({ type: "set_style", style: "normal" })
+          : null,
+  // speaking up about changes on the board
+  (u) =>
+    /^(?:stop\s+interrupting(?:\s+me)?|dont\s+interrupt(?:\s+me)?|no\s+interruptions|(?:dont|do\s+not)\s+(?:speak|say\s+anything)\s+unless\s+(?:i\s+ask|im\s+asked|asked)|only\s+(?:speak|talk)\s+when\s+(?:i\s+ask|spoken\s+to)|(?:turn\s+off|disable|stop|mute)\s+(?:the\s+)?(?:proactive\s+|spoken\s+)?(?:updates|announcements|notifications|proactive\s+alerts|spoken\s+alerts)|no\s+(?:updates|announcements|proactive\s+(?:updates|alerts)))$/.test(u)
+      ? act({ type: "set_alerts", on: false })
+      : /^(?:(?:turn\s+on|enable|start|allow)\s+(?:the\s+)?(?:proactive\s+|spoken\s+)?(?:updates|announcements|notifications|proactive\s+alerts|spoken\s+alerts)|tell\s+me\s+(?:when|if)\s+(?:anything|something|things)\s+changes?|keep\s+me\s+(?:posted|updated|informed)|speak\s+up\s+when\s+(?:anything|something)\s+changes?)$/.test(u)
+        ? act({ type: "set_alerts", on: true })
+        : null,
 
   // the Activity page
   (u, ctx) => {
@@ -459,7 +498,10 @@ export function interpret(raw: string, ctx: Context): Intent {
   if (ctx.confirming || ctx.dialog === "confirm") {
     if (YES.test(u)) return { kind: "yes" };
     if (NO.test(u)) return { kind: "no" };
+  } else if (ctx.awaiting && DECLINE.test(u)) {
+    return { kind: "no" };
   }
+  if (REST.test(u)) return { kind: "rest" };
   for (const rule of RULES) {
     const hit = rule(u, ctx, text);
     if (hit) return hit;
@@ -467,7 +509,29 @@ export function interpret(raw: string, ctx: Context): Intent {
   return { kind: "model", text };
 }
 
+// Several commands in one breath ("go to pipeline and show only at-risk"). Only when every part is a
+// command of its own and none of them asks a question of the user (sign out, forget, clear): one part
+// that needs the assistant sends the whole sentence to it, which can do all of it.
+const JOINERS = /\s+(?:and\s+then|and\s+also|then|and|also)\s+|\s*[,;]\s*(?:and\s+|then\s+)?/;
+const MAX_PARTS = 4;
+const ASKS_USER = new Set(["sign_out", "forget_data", "clear_activity"]);
+
+/** What was meant, as one intent or, for a sentence of several commands, one intent per command. */
+export function interpretAll(raw: string, ctx: Context): Intent[] {
+  const whole = interpret(raw, ctx);
+  if (whole.kind !== "model") return [whole];
+  const { text } = stripWake(raw);
+  const parts = text.split(JOINERS).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > MAX_PARTS) return [whole];
+  const intents = parts.map((p) => interpret(p, ctx));
+  const ok = intents.every((i) => i.kind === "action" && !ASKS_USER.has(i.action.type));
+  return ok ? intents : [whole];
+}
+
 export const HELP_TEXT =
   "You can say: go to pipeline, orders, activity or the guide. Show only at-risk deals. Sort by amount. " +
   "Open a deal by name. Dark mode. Speak slower. Read this page. Stop. Repeat that. " +
-  "Or ask anything about your pipeline, like what needs my attention, or why is a deal at risk.";
+  "Say keep it short or more detail to set how long my answers are, and stop interrupting me to quiet my updates. " +
+  "Or ask anything about your pipeline, like what needs my attention, or why is a deal at risk. " +
+  "If I'm waiting on a change, say no or cancel that, or tell me what to change. " +
+  "In hands-free mode, just keep talking; say that's all when you're done.";

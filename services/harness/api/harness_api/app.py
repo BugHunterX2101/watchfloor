@@ -4,8 +4,10 @@
     GET  /oauth/callback   exchange the code; the tokens go into an encrypted cookie
     GET  /api/session      {"signed_in": bool, "engine": ...}
     POST /api/logout       revoke the refresh token and clear the cookie
-    POST /converse         {"message", "history", "context"?} → {"reply", "engine", "calls", "ui", "actions"}
+    POST /converse         {"message", "history", "context"?, "profile"?, "unheard"?}
+                           → {"reply", "engine", "calls", "ui", "actions", "awaiting"}
     POST /api/tool         {"name", "arguments"} from a ui:// view → the tool result (allowlisted tools)
+    POST /api/dismiss      forget the change waiting for an answer (the user said no)
     GET  /api/view?uri=    a ui:// view's page, for the sandboxed iframe, under its own policy
     GET  /healthz          liveness
     GET  /                 the built web app (services/harness/web/dist), when present
@@ -37,9 +39,9 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import pkce
-from .agent import UI_CACHE_S, ModelFactory, Pending, model_chain, next_pending, run_turn
+from .agent import UI_CACHE_S, ModelFactory, Pending, awaiting, model_chain, next_pending, run_turn
 from .config import HarnessConfig, Misconfigured, get_config
-from .control import Screen
+from .control import Profile, Screen
 from .headers import SecurityHeaders
 from .limits import Limiter, subject
 from .mcp_http import McpError, McpHttp, Unauthorized
@@ -77,11 +79,22 @@ class ConverseIn(BaseModel):
     history: list[Line] = Field(default_factory=list, max_length=24)
     # What the page shows now (fixed words only), so "this page" and "that one" mean something.
     context: Screen | None = None
+    # What the browser knows about the user (name, time of day, reply length, pins): context only.
+    profile: Profile | None = None
+    # Said before the user heard the previous reply (they spoke up while it was being worked on): it
+    # can change what they asked for, but it can never be the "yes" to a change they haven't heard.
+    unheard: bool = False
 
 
 class ToolIn(BaseModel):
     name: str = Field(max_length=64)
     arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+# The tools that make, renew, finish or take back a change: only these move what waits for an answer.
+FLOW_TOOLS = frozenset(
+    {"propose_action", "extend_preview", "confirm_action", "undo_action", "log_deal_update"}
+)
 
 
 # What a ui:// view may call through the host (DD §15): reads, starting a review, and the
@@ -317,6 +330,8 @@ def create_app(
                 ui_cache=ui_cache,
                 pending=pending,
                 screen=body.context,
+                profile=body.profile,
+                unheard=body.unheard,
             )
             after["pending"] = result.pending
             return result.public()
@@ -341,18 +356,31 @@ def create_app(
 
         async def call(token: str) -> dict[str, Any]:
             c = await McpHttp(s.mcp_url, token, http=mcp_client()).call_tool(body.name, body.arguments)
-            after["pending"] = next_pending(
-                pending, [c]
-            )  # a preview made in a view can be confirmed by voice
+            # A preview made in a view can be confirmed by voice. A plain read (a poll of the board, a
+            # row opened) leaves whatever waits for the user's answer exactly as it was.
+            after["pending"] = next_pending(pending, [c]) if body.name in FLOW_TOOLS else pending
             return {
                 "structuredContent": c.structured,
                 "content": [{"type": "text", "text": c.text}] if c.text else [],
                 "isError": not c.ok,
                 "call": c.public(),
+                "awaiting": awaiting(after["pending"], pending),
             }
 
         resp = await with_session(request, call, tool_limit)
         keep_pending(request, resp, after.get("pending"))
+        return resp
+
+    async def dismiss(request: Request) -> Response:
+        """Drop whatever waits for the user's answer (a preview, a held write): they said no, or never mind.
+
+        The model is told to leave an unanswered preview alone, so this only makes "no" certain: a
+        later "yes" cannot confirm a change the user turned down.
+        """
+        if box.open_session(request.cookies.get(SESSION_COOKIE)) is None:
+            return signed_out()
+        resp = JSONResponse({"awaiting": None})
+        resp.delete_cookie(PENDING_COOKIE, path="/")
         return resp
 
     async def view_page(request: Request) -> Response:
@@ -404,6 +432,7 @@ def create_app(
         Route("/api/logout", logout, methods=["POST"]),
         Route("/converse", converse, methods=["POST"]),
         Route("/api/tool", view_tool, methods=["POST"]),
+        Route("/api/dismiss", dismiss, methods=["POST"]),
         Route("/api/view", view_page, methods=["GET"]),
     ]
     if (conf.web_dist / "index.html").is_file():

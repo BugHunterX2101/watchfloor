@@ -1,5 +1,6 @@
 // The harness API (services/harness/api): same origin, cookie session.
 
+import { parseAwaiting } from "./voice/context";
 import {
   parseActions,
   type AppAction,
@@ -37,6 +38,35 @@ export interface Turn {
   ui: View | null;
   /** What the assistant asked the page to do (checked here: only known actions with valid fields). */
   actions: AppAction[];
+  /** What still waits for the user's answer, change or undo (null when nothing does). */
+  awaiting: Awaiting | null;
+}
+
+export interface Awaiting {
+  /** preview: a change read back, waiting for yes. ask: a rule held for yes. undo: just done, can be undone. */
+  kind: "preview" | "ask" | "undo";
+  summary: string;
+  /** Epoch seconds when it lapses. */
+  until: number;
+  /** This turn made it, so the question just asked is about it. */
+  fresh: boolean;
+}
+
+/** The board as the assistant is shown it, so "the second one" means the second deal listed. */
+export interface BoardEntry {
+  id: string;
+  name: string;
+  band: "at_risk" | "watch" | "healthy";
+  health: number;
+}
+
+/** What the browser knows about the user, sent with each message as context (never as orders). */
+export interface Profile {
+  name?: string;
+  day?: "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
+  part?: "morning" | "afternoon" | "evening" | "night";
+  style?: "brief" | "normal" | "detailed";
+  pins?: string[];
 }
 
 /** What the page tells the assistant about itself: fixed words only (the server rejects anything else). */
@@ -49,6 +79,10 @@ export interface Screen {
   segment?: SegmentName;
   band?: BandName;
   sort?: SortName;
+  /** The deal whose sheet is open: "this deal" and "it" mean this one. */
+  open_deal?: string;
+  /** The deals the board lists now, in order (at most five). */
+  board?: BoardEntry[];
 }
 
 export interface SessionInfo {
@@ -86,7 +120,14 @@ export async function session(): Promise<SessionInfo> {
   return (await r.json()) as SessionInfo;
 }
 
-export async function converse(message: string, history: Line[], context?: Screen): Promise<Turn> {
+export interface ConverseOptions {
+  context?: Screen;
+  profile?: Profile;
+  /** Said before the user heard the previous reply: it can change what they asked, never confirm it. */
+  unheard?: boolean;
+}
+
+export async function converse(message: string, history: Line[], opts: ConverseOptions = {}): Promise<Turn> {
   const r = await timedFetch(
     "/converse",
     {
@@ -96,19 +137,33 @@ export async function converse(message: string, history: Line[], context?: Scree
       body: JSON.stringify({
         message: clip(message, 500),
         history: history.slice(-24).map((l) => ({ role: l.role, text: clip(l.text, 2000) })),
-        ...(context ? { context } : {}),
+        ...(opts.context ? { context: opts.context } : {}),
+        ...(opts.profile ? { profile: opts.profile } : {}),
+        ...(opts.unheard ? { unheard: true } : {}),
       }),
     },
     LIMIT_MS.turn,
   );
   if (r.status === 401) throw new SignedOut();
-  const body = (await r.json().catch(() => ({}))) as Partial<Omit<Turn, "actions">> & {
+  const body = (await r.json().catch(() => ({}))) as Partial<Omit<Turn, "actions" | "awaiting">> & {
     actions?: unknown;
+    awaiting?: unknown;
     message?: string;
     error?: string;
   };
   if (!r.ok) throw new Error(body.message ?? body.error ?? `HTTP ${r.status}`);
-  return { ...(body as Omit<Turn, "actions">), actions: parseActions(body.actions) };
+  return {
+    ...(body as Omit<Turn, "actions" | "awaiting">),
+    actions: parseActions(body.actions),
+    awaiting: parseAwaiting(body.awaiting),
+  };
+}
+
+/** The user said no: forget the change that was waiting for an answer, so a later yes cannot confirm it. */
+export async function dismiss(): Promise<void> {
+  const r = await timedFetch("/api/dismiss", { method: "POST" }, LIMIT_MS.quick);
+  if (r.status === 401) throw new SignedOut();
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
 export interface ToolResult {
@@ -116,6 +171,8 @@ export interface ToolResult {
   content: { type: "text"; text: string }[];
   isError: boolean;
   call: Call;
+  /** A preview made by a view's own tap can be answered by voice: the page learns it here. */
+  awaiting?: unknown;
 }
 
 /** A tool call from a ui:// view, made with the signed-in user's token (allowlisted server-side). */
