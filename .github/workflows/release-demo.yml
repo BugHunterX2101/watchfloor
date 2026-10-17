@@ -81,7 +81,7 @@ jobs:
 
       - name: Keep the eval results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with: { name: "evals-${{ github.ref_name }}", path: tests/evals/results/, if-no-files-found: ignore }
 
       # No Alexa+ Local Inspector step: it is interactive (a browser UI) and installs from Amazon's
