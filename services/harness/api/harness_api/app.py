@@ -6,6 +6,7 @@
     POST /api/logout       revoke the refresh token and clear the cookie
     POST /converse         {"message", "history", "context"?} → {"reply", "engine", "calls", "ui", "actions"}
     POST /api/tool         {"name", "arguments"} from a ui:// view → the tool result (allowlisted tools)
+    GET  /api/view?uri=    a ui:// view's page, for the sandboxed iframe, under its own policy
     GET  /healthz          liveness
     GET  /                 the built web app (services/harness/web/dist), when present
 
@@ -19,6 +20,8 @@ a turn runs a language model.
 from __future__ import annotations
 
 import logging
+import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
@@ -34,12 +37,13 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import pkce
-from .agent import ModelFactory, Pending, model_chain, next_pending, run_turn
+from .agent import UI_CACHE_S, ModelFactory, Pending, model_chain, next_pending, run_turn
 from .config import HarnessConfig, Misconfigured, get_config
 from .control import Screen
 from .headers import SecurityHeaders
 from .limits import Limiter, subject
 from .mcp_http import McpError, McpHttp, Unauthorized
+from .refresh import Refreshes
 from .session import (
     PENDING_COOKIE,
     PENDING_TTL_S,
@@ -106,6 +110,23 @@ VIEW_TOOLS = frozenset(
 CONVERSE_PER_MIN = 30
 TOOL_PER_MIN = 120
 
+VIEW_URI = re.compile(r"ui://watchfloor/[a-z0-9-]{1,40}")
+# What a view may do: run its own inline script and style, and nothing that reaches outside itself.
+VIEW_CSP = "; ".join(
+    (
+        "default-src 'none'",
+        "script-src 'unsafe-inline'",
+        "style-src 'unsafe-inline'",
+        "img-src data:",
+        "font-src data:",
+        "connect-src 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'self'",
+        "sandbox allow-scripts",
+    )
+)
+
 # RFC 6749 §4.1.2.1. Anything else in ``?error=`` is someone's text, and the page would print it.
 OAUTH_ERRORS = frozenset(
     {
@@ -133,6 +154,7 @@ def create_app(
     shared: dict[str, httpx.AsyncClient] = {}
     ui_cache: dict[str, tuple[float, str]] = {}  # view HTML by server and URI (agent._view)
     converse_limit, tool_limit = Limiter(CONVERSE_PER_MIN), Limiter(TOOL_PER_MIN)
+    refreshes = Refreshes()
 
     def mcp_client() -> httpx.AsyncClient:
         """One kept-alive client for every MCP call this process makes (see McpHttp.http)."""
@@ -215,10 +237,12 @@ def create_app(
         return resp
 
     async def fresh(session: Session) -> Session | None:
-        if not session.refresh_token:
+        token = session.refresh_token
+        if not token:
             return None
         try:
-            return await pkce.refresh(s, session.refresh_token, transport=auth_transport)
+            # Coalesced: a second request with the same refresh token would read as token theft.
+            return await refreshes.run(token, lambda: pkce.refresh(s, token, transport=auth_transport))
         except pkce.OAuthError:
             return None
 
@@ -331,6 +355,40 @@ def create_app(
         keep_pending(request, resp, after.get("pending"))
         return resp
 
+    async def view_page(request: Request) -> Response:
+        """A ``ui://`` view as a page of its own, for the sandboxed iframe on Watch.
+
+        The view is one self-contained file with inline script and styles, which the app's own policy
+        rightly refuses, so it gets a policy of its own: inline code, and nothing else. It cannot make a
+        request, submit a form, load an image from anywhere or be framed by another site, and ``sandbox``
+        keeps it in an opaque origin (no cookies, no way to call this API) even if its URL is opened
+        directly. It talks to the page by ``postMessage`` only, through the host (apphost.ts).
+        """
+        uri = request.query_params.get("uri", "")
+        if not VIEW_URI.fullmatch(uri):
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        session = box.open_session(request.cookies.get(SESSION_COOKIE))
+        if session is None:
+            return signed_out()
+        key = f"{s.mcp_url} {uri}"
+        hit = ui_cache.get(key)
+        html: str | None = hit[1] if hit is not None and hit[0] > time.monotonic() else None
+        if html is None:  # the turn that showed it normally cached it; an old entry may have lapsed
+            if tool_limit.hit(subject(session.access_token)):
+                return JSONResponse({"error": "rate_limited"}, status_code=429)
+            try:
+                html = await McpHttp(s.mcp_url, session.access_token, http=mcp_client()).read_resource(uri)
+            except Unauthorized:
+                return signed_out()
+            except McpError:
+                return JSONResponse({"error": "mcp_unavailable"}, status_code=502)
+            if html is None:
+                return JSONResponse({"error": "not_found"}, status_code=404)
+            ui_cache[key] = (time.monotonic() + UI_CACHE_S, html)
+        return HTMLResponse(
+            html, headers={"content-security-policy": VIEW_CSP, "x-frame-options": "SAMEORIGIN"}
+        )
+
     async def healthz(request: Request) -> Response:
         models = [name for name, _ in model_chain(conf)]  # names only, never a key
         return JSONResponse({"ok": True, "engine": conf.engine, "models": models})
@@ -346,6 +404,7 @@ def create_app(
         Route("/api/logout", logout, methods=["POST"]),
         Route("/converse", converse, methods=["POST"]),
         Route("/api/tool", view_tool, methods=["POST"]),
+        Route("/api/view", view_page, methods=["GET"]),
     ]
     if (conf.web_dist / "index.html").is_file():
         routes.append(Mount("/", StaticFiles(directory=conf.web_dist, html=True)))

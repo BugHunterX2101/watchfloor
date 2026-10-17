@@ -189,6 +189,7 @@ export function mountSettings(host: SettingsHost): { open(): void } {
 
   return {
     open() {
+      if (dialog?.open) return; // already showing: rebuilding it would orphan its listeners
       // Rebuilt each time so the fields always show what is stored now (after "forget", for one).
       dialog?.remove();
       dialog = build();

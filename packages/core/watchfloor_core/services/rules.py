@@ -22,7 +22,10 @@ def describe_rule(conditions: dict[str, Any]) -> str:
     """Plain-language rule text, generated without an LLM and read back to the user.
 
     >>> describe_rule({"min_amount_cents": 5_000_000, "quiet_days": 5})
-    'Flag deals over $50K with no reply for 5 days.'
+    'Flag deals of $50K or more with no reply for 5 days.'
+
+    "Or more", not "over": the match is at or above the amount (``rules.matches``), so a deal of exactly
+    $50,000, a common round figure, fires, and the read-back must say so.
     """
     subject = []
     if conditions.get("segment"):
@@ -31,7 +34,7 @@ def describe_rule(conditions: dict[str, Any]) -> str:
         subject.append(" or ".join(stage_label(s) for s in conditions["stages"]))
     subject.append("deals")
     if conditions.get("min_amount_cents") is not None:
-        subject.append(f"over {money_display(conditions['min_amount_cents'])}")
+        subject.append(f"of {money_display(conditions['min_amount_cents'])} or more")
     clauses = []
     if conditions.get("min_score") is not None:
         # Stored and matched as RIGS risk; said as health (ADR-020): risk 70 or higher is health 30 or lower.

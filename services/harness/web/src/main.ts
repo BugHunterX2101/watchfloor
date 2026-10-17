@@ -205,6 +205,7 @@ function setSignedIn(signedIn: boolean, engineName: string | null): void {
   if (signedIn) {
     scene?.setDeals(loadSkyline()); // the floor shows the pipeline as it was last seen
   } else {
+    hf?.stop(); // nobody is signed in: the microphone must not stay open for them
     setBadge("pipeline", null);
     scene?.setDeals([]);
     clearSkyline(); // a shared browser must not show the last person's pipeline
@@ -706,7 +707,8 @@ document.addEventListener("keydown", (e) => {
     if (document.body.dataset.voice === "speaking") setVoice("idle");
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || document.querySelector("dialog[open]")) return;
+  // A held key repeats: "h" would otherwise flip hands-free on and off for as long as it is down.
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || document.querySelector("dialog[open]")) return;
   // "g" then a letter jumps between pages, as in most keyboard-first tools.
   if (gAt && Date.now() - gAt < 1000) {
     gAt = 0;

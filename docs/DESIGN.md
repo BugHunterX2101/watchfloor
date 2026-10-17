@@ -613,7 +613,7 @@ Input: `{"confirmation_token": string}` (required). Output: `{summary, status: "
 | `lookup_deal` | `name_query` (2–80 chars, required), `owner_name?` | `candidates[≤3]{deal_id, name, account, amount_display, owner, stage, match_score}`; zero matches → `isError` + `DEAL_NOT_FOUND` + nearest suggestions |
 | `start_deep_triage` | `deal_id` | `{job_id, status: "queued"|"running", eta_seconds, deduplicated: bool}` |
 | `get_triage_result` | `job_id?` or `deal_id?` (one required) | `{status, voice_summary?, drivers[{factor, claim, evidence_ids}], recommended_actions[≤3]{action_type, params, rationale, confidence}, finished_at?}` |
-| `set_standing_order` | `min_amount_usd?`, `quiet_days?` (1–60), `stages?[]`, `min_score?` (1–100), `segment?`, `channel?`; at least one condition required | `{rule_id, description: "Flag deals over $50K with no reply for 5 days"}` |
+| `set_standing_order` | `min_amount_usd?`, `quiet_days?` (1–60), `stages?[]`, `min_score?` (1–100), `segment?`, `channel?`; at least one condition required | `{rule_id, description: "Flag deals of $50K or more with no reply for 5 days."}` |
 | `list_standing_orders` | none | `{rules[{rule_id, description, created_at, last_triggered_at?}]}` |
 | `remove_standing_order` | `rule_id` | `{removed: true, description}` |
 | `log_deal_update` | `deal_id`, `note?` (≤ 1000), `next_step?` (≤ 200), `next_step_date?`, `close_date?`, `amount_usd?`, `stakeholders_mentioned?[]` | `{applied_fields[], score_before, score_after, band_after, pending_proposal?{…as propose_action}}` |
@@ -1581,7 +1581,7 @@ When a triage result exists, a **Plan** tab lists up to 3 recommended actions, e
     {"type": "section", "text": {"type": "mrkdwn",
       "text": "• No two-way contact for 16 days (norm 6)\n• Proposal viewed 6× with no reply\n• Close date pushed twice (+34 days)"}},
     {"type": "context", "elements": [{"type": "mrkdwn",
-      "text": "Standing order: _Flag deals over $50K with no reply for 5 days_ · Watchfloor"}]}
+      "text": "Standing order: _Flag deals of $50K or more with no reply for 5 days._ · Watchfloor"}]}
   ]
 }
 ```

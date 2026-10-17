@@ -34,6 +34,7 @@ export function icon(svg: string, className = "", label?: string): HTMLSpanEleme
 }
 
 let toasts: HTMLElement | null = null;
+const MAX_TOASTS = 4;
 
 /** A short message that doesn't take focus (a polite live region), gone after a few seconds. */
 export function toast(message: string, kind: "info" | "error" = "info"): void {
@@ -42,6 +43,7 @@ export function toast(message: string, kind: "info" | "error" = "info"): void {
     document.body.append(toasts);
   }
   const item = h("p", { class: `toast ${kind}` }, message);
+  while (toasts.children.length >= MAX_TOASTS) toasts.firstElementChild?.remove(); // a burst never fills the screen
   toasts.append(item);
   window.setTimeout(
     () => {

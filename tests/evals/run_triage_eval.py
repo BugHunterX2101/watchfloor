@@ -167,8 +167,12 @@ class Pacer:
 
     async def wait(self) -> None:
         async with self.lock:
-            delay = self.next_at - time.monotonic()
-            if delay > 0:
+            # A timer can wake a few milliseconds early (Windows' is coarse): look at the clock again, so
+            # "at least every_s apart" holds rather than "about".
+            while True:
+                delay = self.next_at - time.monotonic()
+                if delay <= 0:
+                    break
                 await asyncio.sleep(delay)
             self.next_at = time.monotonic() + self.every_s
 

@@ -96,7 +96,7 @@ export function speakable(text: string): string {
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "")
     .replace(/(\*\*|__|\*|`)/g, "")
-    .replace(/\b(?:dl|rule|job|act|usr|tok|ask)_[A-Za-z0-9]{4,}\b/g, "")
+    .replace(/\b(?:ws|us|ac|ct|dl|act|hist|pr|tk|job|rule|al|aud)_[A-Za-z0-9]{4,}\b/g, "") // ids.py's prefixes
     .replace(/\$(\d+(?:\.\d+)?)\s?([kKmMbB])\b/g, (_m, n: string, s: string) => `${n} ${SCALE[s.toLowerCase()]} dollars`)
     .replace(/\$(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g, "$1 dollars")
     .replace(/(\d)\s*%/g, "$1 percent")

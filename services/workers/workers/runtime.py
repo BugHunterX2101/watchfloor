@@ -115,11 +115,20 @@ def emit_metrics(service: str, values: dict[str, float], dimensions: dict[str, s
     print(json.dumps(record), flush=True)
 
 
+@lru_cache(maxsize=1)
+def _secrets_client() -> Any:
+    import boto3  # lazy: only in AWS
+    from botocore.config import Config
+
+    # Bounded like the other clients: a stuck secrets call must not hold up a dispatch or the canary.
+    return boto3.client(
+        "secretsmanager", config=Config(connect_timeout=3, read_timeout=5, retries={"total_max_attempts": 3})
+    )
+
+
 @lru_cache(maxsize=8)
 def secret_string(arn: str) -> str:
-    import boto3  # lazy: only in AWS
-
-    return boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]
+    return _secrets_client().get_secret_value(SecretId=arn)["SecretString"]
 
 
 def secret_field(arn: str, field: str) -> str:

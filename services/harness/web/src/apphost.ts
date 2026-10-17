@@ -93,7 +93,7 @@ export function setDevice(next: Device): void {
 
 export async function renderView(
   container: HTMLElement,
-  view: { uri: string; html: string; data: string },
+  view: { uri: string; data: string },
   onCall: (call: Call) => void,
 ): Promise<void> {
   // Two views can be requested close together (a second turn, or a sign-out): only the newest one
@@ -112,7 +112,10 @@ export async function renderView(
   el.setAttribute("sandbox", "allow-scripts");
   el.setAttribute("referrerpolicy", "no-referrer");
   el.title = `Watchfloor view: ${view.uri}`;
-  el.srcdoc = view.html;
+  // Its own page, not srcdoc: a srcdoc frame inherits this page's policy, which (rightly) allows no
+  // inline script, and the view is one self-contained file. /api/view serves it under a policy of its
+  // own: inline code, but no network, no forms and no way out of the sandbox.
+  el.src = `/api/view?uri=${encodeURIComponent(view.uri)}`;
   container.replaceChildren(el);
   frame = el;
   box = container;

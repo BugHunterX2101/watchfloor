@@ -5,6 +5,8 @@
 import type { Call } from "./api";
 import { ICONS } from "./icons";
 
+const MAX_TURNS = 60;
+
 /** What each tool did, in words a sales manager reads at a glance; the tool name stays beside it. */
 export const LABELS: Record<string, string> = {
   get_risk_briefing: "Read the risk briefing",
@@ -131,6 +133,8 @@ export function showTrace(list: HTMLOListElement, calls: Call[], totalMs: number
   });
   if (!calls.length) turn.append(el("div", "span-none", "No tool calls."));
   list.prepend(turn);
+  // Activity keeps the full history (200 turns); this panel is the recent few, so a long session stays light.
+  while (list.children.length > MAX_TURNS) list.lastElementChild?.remove();
 }
 
 export function clearTrace(list: HTMLOListElement): void {

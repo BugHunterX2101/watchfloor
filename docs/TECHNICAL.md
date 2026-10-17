@@ -858,7 +858,7 @@ watchfloor/
 │       │   ├── pyproject.toml              # starlette, uvicorn, strands-agents[gemini], httpx, cryptography
 │       │   ├── run.sh
 │       │   └── harness_api/
-│       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, the web page
+│       │       ├── app.py                  # sign-in, POST /converse, POST /api/tool, GET /api/view (a view's page, own CSP), the web page
 │       │       ├── agent.py                # one turn: Strands agent over the user's MCP token
 │       │       ├── control.py              # control_app (page actions for voice), screen context, the hold-until-yes gate (ADR-027)
 │       │       ├── mcp_http.py             # thin MCP client (stateless, JSON responses)

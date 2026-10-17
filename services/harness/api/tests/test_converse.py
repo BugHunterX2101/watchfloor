@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -39,7 +40,7 @@ async def test_offline_briefing_turn_shows_the_board(client: httpx.AsyncClient, 
     body = r.json()
     assert r.status_code == 200 and body["engine"] == "offline" and body["reply"] == BRIEFING
     assert [c["tool"] for c in body["calls"]] == ["get_risk_briefing"] and body["calls"][0]["ok"]
-    assert body["ui"]["uri"] == "ui://watchfloor/triage-board" and body["ui"]["html"] == BOARD_HTML
+    assert body["ui"]["uri"] == "ui://watchfloor/triage-board" and "html" not in body["ui"]
     assert mcp.headers[-1]["mcp-protocol-version"] == "2025-11-25"
     assert mcp.headers[-1]["authorization"] == "Bearer at1"
 
@@ -93,8 +94,12 @@ async def test_view_html_is_fetched_once_per_process(client: httpx.AsyncClient, 
     await client.post("/converse", json={"message": "What needs my attention today?"})
     first = len(mcp.headers)  # tools/list, tools/call, resources/read
     r = await client.post("/converse", json={"message": "What needs my attention today?"})
-    assert r.json()["ui"]["html"] == BOARD_HTML
+    assert r.json()["ui"]["uri"] == "ui://watchfloor/triage-board"
     assert len(mcp.headers) - first == 2, "the second turn reuses the cached view HTML"
+    page = await client.get("/api/view", params={"uri": "ui://watchfloor/triage-board"})
+    assert page.text == BOARD_HTML and len(mcp.headers) - first == 2, (
+        "and the iframe is served from the cache"
+    )
 
 
 def test_deal_words_strip_the_intent() -> None:
@@ -309,9 +314,11 @@ class StepsModel(ScriptedModel):
     ``fail_after`` raises instead of answering once the steps are done, like a model throttled mid-turn.
     """
 
-    def __init__(self, *steps: tuple[str, dict[str, object]], fail_after: bool = False) -> None:
+    def __init__(
+        self, *steps: tuple[str, dict[str, object]], fail_after: bool = False, stall_after: bool = False
+    ) -> None:
         super().__init__(steps[0][0])
-        self.steps, self.fail_after = list(steps), fail_after
+        self.steps, self.fail_after, self.stall_after = list(steps), fail_after, stall_after
         self.prompts: list[str] = []
 
     async def stream(self, messages, *a, **k):  # type: ignore[override]
@@ -329,6 +336,8 @@ class StepsModel(ScriptedModel):
             return
         if self.fail_after:
             raise RuntimeError("ThrottlingException")
+        if self.stall_after:  # a model that never finishes its answer: the turn's clock runs out
+            await asyncio.sleep(30)
         last = messages[-1]["content"][0]["toolResult"]
         text = last["content"][0]["text"]
         with contextlib.suppress(ValueError, KeyError, TypeError):  # a refusal is plain text
@@ -423,6 +432,24 @@ async def test_a_model_that_failed_after_a_change_is_not_replayed(
 
         r = await c.post("/converse", json={"message": "What needs my attention today?"})
         assert r.json()["engine"] == "offline" and mcp.names()[-1] == "get_risk_briefing"
+
+
+async def test_a_turn_that_runs_out_of_time_after_a_change_says_what_was_done(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The change happened, so a bare "took too long" would hide it (and the undo that goes with it)."""
+    monkeypatch.setattr("harness_api.agent.TURN_TIMEOUT_S", 1.0)
+    done = StepsModel(("undo_action", {"confirmation_token": "tok_1"}), stall_after=True)
+    stalled = StepsModel(("explain_deal_risk", {"deal_id": HARBOR}), stall_after=True)
+    async with _model_app(tmp_path, auth, mcp, [done, stalled]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Undo that."})
+        assert r.status_code == 200
+        assert r.json()["reply"].startswith("Undone.") and "stopped" in r.json()["reply"]
+
+        # Nothing was changed this time, so the honest answer is still the 504.
+        r = await c.post("/converse", json={"message": "Why is Harbor at risk?"})
+        assert r.status_code == 504 and r.json()["error"] == "timeout"
 
 
 async def test_every_turn_logs_its_model_usage(

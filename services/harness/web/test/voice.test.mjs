@@ -76,6 +76,14 @@ test("speakable turns a screen reply into something a voice reads well", () => {
   assert.equal(speakable("```js\ncode()\n``` after"), "after");
 });
 
+test("speakable never reads out any kind of id (ids.py prefixes)", () => {
+  for (const prefix of ["ws", "us", "ac", "ct", "dl", "act", "hist", "pr", "tk", "job", "rule", "al", "aud"]) {
+    assert.equal(speakable(`Saved ${prefix}_01J9ABCDEF today`), "Saved today", prefix);
+  }
+  // Ordinary words with an underscore-free shape are left alone.
+  assert.equal(speakable("The pr team asked about act two"), "The pr team asked about act two");
+});
+
 test("isEcho spots the assistant's own voice coming back in", () => {
   const said = "Kestrel Biotech is at risk. Health thirty eight. The buyer has not replied for eleven days.";
   assert.equal(isEcho("health thirty eight", said), true);

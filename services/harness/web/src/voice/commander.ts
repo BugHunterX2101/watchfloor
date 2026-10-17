@@ -74,6 +74,8 @@ const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth"];
 
 /** Ask the question on the page's own dialog and out loud. */
 function ask(h: Host, options: ConfirmOptions, yes: () => Promise<string> | string): Outcome {
+  // One question at a time: a second "sign out" while the first is open would stack a second dialog.
+  if (h.dialog() === "confirm") return said("There's a question on the screen already. Say yes or no.");
   h.confirm(options, yes);
   return said(`${options.title} ${options.body} Say yes or no.`);
 }

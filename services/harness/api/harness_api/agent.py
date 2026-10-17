@@ -463,14 +463,17 @@ async def run_turn(
                     )
                     log.info("the %s model answered", name)
                     break
-                except (Unauthorized, McpError, TimeoutError):
+                except (Unauthorized, McpError):
                     raise
-                except Exception as exc:  # throttled, refused or no key: the next model, then the router
+                except Exception as exc:  # throttled, refused, no key or out of time
                     log.warning("%s model turn failed (%s)", name, type(exc).__name__)
                     wrote = [c for c in mcp.calls[start:] if c.ok and mcp.writes(c.tool)]
-                    if wrote:  # another model would make the same change again
+                    if wrote:  # another model would make the same change again: say what was done
                         reply = f"{wrote[-1].summary} {STOPPED}"
                         break
+                    if isinstance(exc, TimeoutError):
+                        raise  # the turn's time is spent: no other model gets a fresh budget
+                    # otherwise the next model, then the router
             if reply is None:
                 engine = "offline"
                 state = TurnState()
@@ -511,6 +514,8 @@ async def _view(mcp: McpHttp, cache: dict[str, tuple[float, str]] | None = None)
                     cache[key] = (time.monotonic() + UI_CACHE_S, html)
             if html is None:
                 return None
+            # The HTML itself stays here, in the cache: the page's iframe loads it from /api/view, where
+            # it gets its own policy, so ~280 KB no longer rides along with every reply.
             data = json.dumps(call.structured or {}, ensure_ascii=False)
-            return {"uri": call.ui_uri, "html": html, "tool": call.tool, "data": data}
+            return {"uri": call.ui_uri, "tool": call.tool, "data": data}
     return None
