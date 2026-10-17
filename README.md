@@ -781,10 +781,12 @@ watchfloor/
 ├── uv.lock
 ├── .env.example                 # local placeholders only
 ├── .github/
+│   ├── dependabot.yml           # weekly update PRs (uv ×4, npm ×2, actions)
 │   └── workflows/
 │       ├── ci.yml               # lint · tests · builds · synth
 │       ├── deploy-dev.yml       # main → dev
-│       └── release-demo.yml     # v*.*.* → demo
+│       ├── release-demo.yml     # v*.*.* → demo
+│       └── security.yml         # advisories + Trivy: dependency PRs, weekly, on demand; never on a push
 ├── packages/
 │   └── core/                    # the shared domain (no web framework in here)
 │       ├── pyproject.toml
@@ -858,12 +860,12 @@ watchfloor/
 │   │   ├── config.py · common.py
 │   │   └── stacks/              # net · data · auth · mcp · agents · async_ · harness · ops
 │   └── tests/                   # config validation and synth assertions
-├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill
+├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · load_baseline · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill
 ├── tests/
 │   ├── unit/                    # RIGS golden and property tests, tokens, envelopes, rate limits, docs sync …
 │   ├── conformance/             # protocol: transport · edge · tools/list · output schemas · PRM · service token
 │   ├── integration/             # against real Postgres: tools, auth server, confirm guard, undo, workers, migrator, seeder, DB and delivery faults, restore drill
-│   ├── security/                # agent scope · token replay · tenant isolation · races · DB privileges · edge guard · log hygiene
+│   ├── security/                # agent scope · token replay · tenant isolation · races · DB privileges · edge guard · log hygiene · committed secrets · CI security config
 │   ├── evals/                   # golden triage set, utterance sheet, scoring
 │   └── load/                    # Locust profile
 ├── docs/
@@ -974,7 +976,7 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 
 | Suite | Count | Covers |
 |---|---:|---|
-| Root (`pytest`) | 416 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
+| Root (`pytest`) | 445 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
 | Harness API | 117 | OAuth flow, a full turn, pending changes, the unheard guard, dismissal, page-action validation, hardening, views |
 | Harness web | 98 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, the board watcher, pure logic |
 | Triage agents | 36 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
@@ -1050,8 +1052,10 @@ Honest limits of the security work ([docs/SECURITY.md](docs/SECURITY.md) has the
 
 - **Not verified:** a staging deploy and migrations there, an RDS snapshot or point-in-time restore
   (the restore drill proves its dump, restore and compare logic against local Postgres only), load
-  percentiles, a RIGS backtest (there is no historical CRM data, so no accuracy figure is claimed), an
-  independent review, and a container image scan.
+  against a deployed environment (a local concurrency curve exists and is not an AWS number), a RIGS
+  backtest (there is no historical CRM data, so no accuracy figure is claimed), an independent review,
+  a scan of any built container image, and the security workflow itself, which has not yet run on
+  GitHub. A Trivy scan of the working tree found nothing at HIGH or CRITICAL.
 - **Model providers:** the Gemini API's unpaid tier may use submitted content to improve Google's
   services and let humans read it, so only the synthetic seed workspace may go to it. Real CRM data
   needs the paid tier or Bedrock.
@@ -1075,7 +1079,7 @@ way are in the [friction log](docs/friction-log.md) and [feature requests](docs/
 | [Implementation notes](docs/implementation-notes.md) | Where the build departs from the specs |
 | [Friction log](docs/friction-log.md) · [Feature requests](docs/feature-requests.md) | What the platforms made hard, and what we'd ask for |
 | [Brand](docs/brand/README.md) | The mark, the lockups, the colours |
-| [Performance plans](docs/perf/README.md) | EXPLAIN output for the hot queries |
+| [Performance](docs/perf/README.md) | EXPLAIN output for the hot queries; a local concurrency curve |
 
 ## License
 

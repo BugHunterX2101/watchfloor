@@ -37,6 +37,13 @@ one complete answer, so there is no partial output for a buffering proxy to hold
 - **`braces` ReDoS (GHSA-vfj7-8cjw-p6xm)** reaches `services/mcp_server/ui` through `vite-plugin-singlefile`
   → `micromatch`. It is a build-time dev dependency, no fixed release exists, and the pattern input is the
   repository's own files. Production audits should run `npm audit --omit=dev`.
+- **`mcp` 2.1.1, CVE-2026-59951** (unbounded session memory in the stateful Streamable HTTP *server*; fixed in
+  1.30.0 and 2.2.0) in `services/agents` and `services/harness/api`. `strands-agents` pins `mcp<2.2`
+  (ADR-011), so both stay on 2.1.1. Neither serves MCP: no code in them imports `mcp`, they use the strands
+  client only. The MCP server itself is on 2.3.0 and stateless, so it is not exposed. The one exception is
+  written out, by id and by project, in `.github/workflows/security.yml` and `make audit`;
+  `tests/security/test_ci_security_config.py` fails if the two disagree or if an ignored id is missing
+  from this page. Remove it when `strands-agents` allows `mcp>=2.2`.
 - **Health checks** treat any status below 500 as alive, so a 421 from the Host check does not fail them.
   The cost is that `/healthz` cannot report database trouble to the orchestrator; the alarms do.
 
@@ -59,11 +66,16 @@ These could not be run, and nothing here claims they pass:
   (the AWS account's compute block).
 - An RDS snapshot or point-in-time restore. `scripts/restore_drill.py` proves the dump/restore/compare logic
   against local Postgres only.
-- Load percentiles, provider-failure behaviour under load, and a RIGS backtest against real outcomes: there is
-  no historical CRM data, so no accuracy figure is claimed.
+- Load against a deployed environment, provider-failure behaviour under load, and a RIGS backtest against real
+  outcomes: there is no historical CRM data, so no accuracy figure is claimed. A local concurrency curve exists
+  (`docs/perf/load-baseline.md`); it shares one laptop with its load generator and database, so it is not an
+  AWS number.
 - Independent security review.
-- Container image scan: the one local attempt (Trivy over the working tree) died walking a virtualenv and
-  produced no result.
+- Container image scan. Trivy 0.58.2 was run over the working tree on 2026-10-17 (lock files, Dockerfiles, the
+  CloudFormation templates and a secret scan; HIGH and CRITICAL, unfixed ignored) and found no vulnerability or
+  misconfiguration. Its one hit was the local dev signing key under `.secrets/`, which is gitignored and
+  untracked, so the CI job skips that directory. No built image was scanned. `.github/workflows/security.yml`
+  has not run on GitHub, and Dependabot's acceptance of `.github/dependabot.yml` is unconfirmed.
 
 ## Running the server on a plain container host (for example Render)
 

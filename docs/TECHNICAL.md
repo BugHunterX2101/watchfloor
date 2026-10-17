@@ -668,11 +668,13 @@ This is the tree as built (a few `__init__.py` files and lockfiles are left out)
 ```
 watchfloor/
 ├── .github/
+│   ├── dependabot.yml                      # weekly update PRs for the four uv projects, two npm projects and the actions
 │   └── workflows/
 │       ├── ci.yml                          # PR gate: ruff, uv lock, tool snapshot, root suite on Postgres; agents,
 │       │                                   #   harness, ui and infra suites/builds as their own jobs
 │       ├── deploy-dev.yml                  # main → checks → package → cdk deploy dev → migrate → seed → conformance
-│       └── release-demo.yml                # tag → deploy demo → migrate → clients → conformance → evals → latency
+│       ├── release-demo.yml                # tag → deploy demo → migrate → clients → conformance → evals → latency
+│       └── security.yml                    # advisories (pip-audit, npm audit) + Trivy; PRs touching dependencies, weekly, on demand; never on a push
 ├── .gitattributes                          # LF everywhere (the snapshot check is byte for byte)
 ├── .env.example                            # every env var with safe placeholder values (§7.1)
 ├── .gitignore
@@ -943,6 +945,7 @@ watchfloor/
 │   ├── remote_mcp.py                       # sign in as a real user against a running server
 │   ├── conformance_remote.py               # CF-01..15 against a URL
 │   ├── latency_probe.py                    # N calls per read tool → p50/p95/p99 table
+│   ├── load_baseline.py                    # concurrency curve on this machine (own server) → docs/perf/load-baseline.md
 │   └── addon_assets/                       # listing images and addon.json filler (Path A only)
 │
 └── tests/
@@ -963,7 +966,7 @@ watchfloor/
     │   ├── test_tool_calls.py · test_confirm_guard.py · test_undo.py · test_workers.py
     │   └── test_auth_server.py · test_seeder.py · test_migrator.py · test_demo_ops.py
     ├── security/
-    │   └── test_token_replay.py · test_agent_scope.py
+    │   └── test_token_replay.py · test_agent_scope.py · test_ci_security_config.py · test_no_secrets_committed.py
     ├── evals/
     │   └── golden_triage.jsonl · run_triage_eval.py · scoring.py · utterances.csv · results/
     └── load/
@@ -2549,7 +2552,7 @@ The files exactly as committed. `tests/unit/test_docs_sync.py` fails the build i
 SHELL := /bin/bash
 ENV ?= local
 
-.PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency perf-plans evals test test-all test-agents agents-sync agents-image lint snapshot snapshot-check \
+.PHONY: bootstrap db-up db-down migrate seed dev-keys auth-bootstrap dev workers-once canary conformance-remote latency load-baseline perf-plans restore-drill evals test test-all test-agents agents-sync agents-image lint audit snapshot snapshot-check \
         demo-reset demo-clock demo-watch-now demo-status harness-sync harness-web test-harness ui \
         infra-sync package synth test-infra deploy cdk-deploy default-hosts agents-push migrate-remote seed-remote
 
@@ -2605,8 +2608,14 @@ conformance-remote:   ## CF-01..15 against a running server as the canary user (
 latency:              ## p95/p99 of the read tools, paced under the per-user rate limit (N=200 by default)
 	uv run python scripts/latency_probe.py --env $(ENV) --n $(or $(N),200)
 
+load-baseline:        ## concurrency curve of the read tools on this machine (own server, free port) → docs/perf/load-baseline.md
+	uv run python scripts/load_baseline.py --out docs/perf/load-baseline.md
+
 perf-plans:           ## EXPLAIN (ANALYZE, BUFFERS) of the hot-path queries on the local seed → docs/perf/
 	uv run python scripts/explain_plans.py --check
+
+restore-drill:        ## dump the local database, restore it into a scratch one, compare, upgrade it, drop it (needs `make db-up`)
+	uv run python scripts/restore_drill.py drill --source watchfloor --migrate
 
 evals:                ## deep-triage evals: 40 driver + 10 injection cases (ENV=local uses the offline engine)
 	uv run python tests/evals/run_triage_eval.py --env $(ENV) $(if $(OUT),--out $(OUT),)
@@ -2630,6 +2639,17 @@ agents-image:         ## arm64 image for AgentCore Runtime (TD §10.3)
 
 lint:
 	uv run ruff check . && uv run ruff format --check .
+
+# Same commands and the same one exception as .github/workflows/security.yml (a test keeps them equal).
+audit:                ## known advisories in every lock file (needs network): pip-audit on the four uv projects, npm audit on what ships
+	@set -e; req=$$(mktemp); for d in . services/agents services/harness/api infra; do \
+	  echo "== $$d"; ign=""; \
+	  case "$$d" in services/agents|services/harness/api) ign="--ignore-vuln CVE-2026-59951";; esac; \
+	  (cd $$d && uv export --frozen --no-emit-workspace --no-emit-project --quiet | grep -v '^-e \|^--editable' > "$$req"); \
+	  uvx pip-audit@2.10.1 --no-deps --disable-pip $$ign -r "$$req"; \
+	done; rm -f "$$req"
+	@set -e; for d in services/harness/web services/mcp_server/ui; do \
+	  echo "== $$d"; (cd $$d && npm audit --omit=dev --audit-level=high); done
 
 # ENV=dev|demo runs these through the seeder and watcher Lambdas with your AWS credentials (scripts/demo.py).
 demo-reset:           ## re-seed the demo workspace relative to now and assert the scenario scores

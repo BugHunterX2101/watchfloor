@@ -21,8 +21,9 @@ build/
 node_modules/
 services/mcp_server/mcp_server/ui_dist/
 
-# CDK
+# CDK (cdk.context.json caches lookups, including the AWS account id: never committed)
 infra/cdk.out/
+infra/cdk.context.json
 
 # Editors and OS
 .idea/

@@ -1,0 +1,77 @@
+# Dependency and file scans (docs/SECURITY.md). Separate from ci.yml on purpose: a new advisory for a
+# package nobody touched must not block an unrelated pull request, so this runs when dependencies change,
+# weekly (to catch advisories published after the last change), and on demand. Never on a push to main.
+#
+# The secret-pattern test (tests/security/test_no_secrets_committed.py) runs in ci.yml with the rest of pytest.
+name: security
+on:
+  pull_request:
+    paths:
+      - "**/uv.lock"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/package.json"
+      - "**/Dockerfile"
+      - ".github/workflows/security.yml"
+  schedule:
+    - cron: "17 5 * * 1" # Mondays, 05:17 UTC
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-advisories:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: ".", ignore: "" }
+          # strands-agents pins mcp<2.2 (ADR-011), so these two stay on 2.1.1. CVE-2026-59951 is a memory
+          # leak in mcp's stateful Streamable HTTP *server*; neither project serves MCP, they use
+          # strands' client only. Remove the exception when strands-agents allows mcp>=2.2 (docs/SECURITY.md).
+          - { project: "services/agents", ignore: "--ignore-vuln CVE-2026-59951" }
+          - { project: "services/harness/api", ignore: "--ignore-vuln CVE-2026-59951" }
+          - { project: "infra", ignore: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # Locked, hashed versions only. The editable path to packages/core is this repository's own code.
+      - name: Export the lock file
+        working-directory: ${{ matrix.project }}
+        run: |
+          uv export --frozen --no-emit-workspace --no-emit-project --quiet \
+            | grep -v '^-e \|^--editable' > "$RUNNER_TEMP/requirements.txt"
+          test -s "$RUNNER_TEMP/requirements.txt"
+      - name: Known advisories (OSV and PyPI)
+        env:
+          IGNORE: ${{ matrix.ignore }}
+        run: uvx pip-audit@2.10.1 --no-deps --disable-pip $IGNORE -r "$RUNNER_TEMP/requirements.txt"
+
+  node-advisories:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ["services/harness/web", "services/mcp_server/ui"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      # What ships, not the build tools: see "Accepted" in docs/SECURITY.md for the dev-only advisory.
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: ${{ matrix.project }}
+
+  files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Lock files, Dockerfiles and the CloudFormation template. A clean checkout has no .venv, node_modules
+      # or .secrets; they are skipped (at any depth) so a local run of this command does not walk or flag them.
+      - name: Trivy (vulnerabilities, misconfiguration, secrets)
+        run: |
+          docker run --rm -v "$PWD":/src -w /src aquasec/trivy:0.58.2 fs --no-progress \
+            --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --skip-dirs '**/.venv,**/node_modules,**/cdk.out,**/build,**/dist,.secrets,.git' --timeout 10m .

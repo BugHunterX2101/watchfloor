@@ -16,3 +16,13 @@ takes over 5 ms.
 `ranked_risks`, `fired_since` and `attention_counts` are the briefing (`get_risk_briefing`); `rule_match`
 is one standing order in the watcher; `load_snapshots` builds the RIGS inputs for every open deal, the
 watcher's 15-minute recompute. The seed is small, so these show plan shapes and index use, not scale.
+
+## Load on this machine
+
+[load-baseline.md](load-baseline.md) is a concurrency curve of the five read tools (1, 4, 16 and 64 callers,
+15 s each) against one local server and the local database, with the rate limits lifted. `make load-baseline`
+regenerates it. In the recorded run throughput peaked at 16 callers and fell at 64, where p95 passed 2.9 s;
+no call failed. The load generator, the server and the database shared one 8 GB laptop, so the file shows the
+shape of the curve, not what AWS would do, and the cause of the drop at 64 callers was not isolated. It is not
+a latency claim: the p95 ≤ 150 ms target in the release checklist is measured with `make latency` against a
+deployed environment.
