@@ -65,6 +65,7 @@ log = logging.getLogger(__name__)
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 TURN_TIMEOUT_S = 25.0  # under API Gateway's 30 s limit, so a slow turn gets our 504, not the gateway's
+OFFLINE_RESERVE_S = 5.0  # kept back from the model so the offline router can still answer a slow turn
 UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6
 RECHECK_MIN_S = 6.0  # time a second look needs; with less left, unsupported sentences are just dropped
@@ -441,6 +442,11 @@ def _model_id(cfg: HarnessConfig, name: str) -> str:
     return name
 
 
+def model_budget() -> float:
+    """The model's share of a turn: the rest is the offline router's, should the model run out of time."""
+    return max(TURN_TIMEOUT_S - OFFLINE_RESERVE_S, TURN_TIMEOUT_S / 2)
+
+
 async def strands_turn(
     mcp: McpHttp,
     cfg: HarnessConfig,
@@ -492,12 +498,11 @@ async def strands_turn(
         retry_strategy=None,
     )
     loop = asyncio.get_running_loop()
-    ends = loop.time() + TURN_TIMEOUT_S
+    budget = model_budget()
+    ends = loop.time() + budget
     first = len(mcp.calls)
     try:
-        result = await asyncio.wait_for(
-            agent.invoke_async(message, limits={"turns": MAX_TURNS}), TURN_TIMEOUT_S
-        )
+        result = await asyncio.wait_for(agent.invoke_async(message, limits={"turns": MAX_TURNS}), budget)
         reply = strip_reasoning(str(result)) or NO_REPLY
 
         def missing_from(text: str) -> list[str]:
@@ -571,6 +576,7 @@ async def run_turn(
         reply: str | None = None
         if engine == "strands":
             chain = [("model", model_factory)] if model_factory else model_chain(cfg)
+            turn_ends = asyncio.get_running_loop().time() + TURN_TIMEOUT_S
             for name, factory in chain:
                 tried.append(_model_id(cfg, name))
                 start = len(mcp.calls)
@@ -600,12 +606,13 @@ async def run_turn(
                         reply = f"{wrote[-1].summary} {STOPPED}"
                         break
                     if isinstance(exc, TimeoutError):
-                        raise  # the turn's time is spent: no other model gets a fresh budget
+                        break  # the model's share is spent: no other model gets a fresh budget
                     # otherwise the next model, then the router
             if reply is None:
                 engine = "offline"
                 state = TurnState()
-                reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
+                async with asyncio.timeout_at(turn_ends):  # the router answers in the reserve, or the 504
+                    reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
         else:
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
             reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)

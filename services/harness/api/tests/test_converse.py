@@ -503,7 +503,27 @@ async def test_a_turn_that_runs_out_of_time_after_a_change_says_what_was_done(
         assert r.status_code == 200
         assert r.json()["reply"].startswith("Undone.") and "stopped" in r.json()["reply"]
 
-        # Nothing was changed this time, so the honest answer is still the 504.
+        # Nothing was changed this time: the model's share ran out, and the offline router answers in
+        # the time kept back for it, rather than leaving the user with no answer at all.
+        r = await c.post("/converse", json={"message": "Why is Harbor at risk?"})
+        assert r.status_code == 200 and r.json()["engine"] == "offline"
+        assert mcp.names()[-1] == "explain_deal_risk"
+
+
+async def test_a_turn_still_too_slow_for_the_offline_router_is_a_504(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reserve bounds the router too: the turn never outlasts TURN_TIMEOUT_S (API Gateway cuts at 30 s)."""
+    monkeypatch.setattr("harness_api.agent.TURN_TIMEOUT_S", 1.0)
+
+    async def stuck(*_: object, **__: object) -> str:
+        await asyncio.sleep(5)
+        return "too late"
+
+    monkeypatch.setattr("harness_api.agent.offline_turn", stuck)
+    stalled = StepsModel(("explain_deal_risk", {"deal_id": HARBOR}), stall_after=True)
+    async with _model_app(tmp_path, auth, mcp, [stalled]) as c:
+        await sign_in(c)
         r = await c.post("/converse", json={"message": "Why is Harbor at risk?"})
         assert r.status_code == 504 and r.json()["error"] == "timeout"
 

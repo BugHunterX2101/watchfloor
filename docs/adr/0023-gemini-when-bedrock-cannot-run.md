@@ -66,6 +66,10 @@ mini challenge names the Strands SDK among the AWS services that qualify.
   backed by evidence). Before this, a slow or ungrounded free-tier model failed the job: the local
   eval run had 1 of 50 jobs `timed_out` and 1 `rejected`. `rejected` now means the offline draft
   failed the gate too.
+- (2026-10-19) A conversation turn works the same way: the model gets the 25 s turn less 5 s, and a
+  model that runs out of time without changing anything leaves the offline router to answer in what
+  is left (`"engine": "offline"`). Before this, a slow free-tier model ended the turn with a 504 and
+  no answer. The 504 remains only for a turn the router cannot finish in time either.
 - There is no AgentCore Memory on Lambda: `recall_preferences` returns an empty list.
 - `start_deep_triage` is offered where `agents_enabled` is on and Bedrock or a Gemini model is.
 - Once AWS enables AgentCore, `agents_host: agentcore` (with `models_enabled: true`) moves the
