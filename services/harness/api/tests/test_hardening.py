@@ -15,7 +15,7 @@ from harness_api import app as app_module
 from harness_api import headers
 from harness_api.agent import Pending
 from harness_api.limits import MAX_KEYS, WINDOW_S, Limiter, subject
-from harness_api.mcp_http import McpError, McpHttp
+from harness_api.mcp_http import McpError, McpHttp, RateLimited
 from starlette.applications import Starlette
 
 
@@ -208,6 +208,15 @@ async def test_a_malformed_mcp_reply_is_an_mcp_error_not_a_crash(body: object) -
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=body))
     with pytest.raises(McpError):
         await McpHttp("http://mcp.test/mcp", "tok", transport=transport).list_tools()
+
+
+@pytest.mark.parametrize(("header", "wait"), [("7", 7), (None, 1), ("soon", 1), ("0", 1), ("900", 60)])
+async def test_the_mcp_servers_rate_limit_is_busy_not_down(header: str | None, wait: int) -> None:
+    headers = {"Retry-After": header} if header is not None else {}
+    transport = httpx.MockTransport(lambda request: httpx.Response(429, headers=headers))
+    with pytest.raises(RateLimited) as caught:
+        await McpHttp("http://mcp.test/mcp", "tok", transport=transport).list_tools()
+    assert caught.value.retry_after == wait
 
 
 def test_a_preview_summary_cannot_break_out_of_the_models_note() -> None:

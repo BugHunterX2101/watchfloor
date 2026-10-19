@@ -26,6 +26,21 @@ class McpError(Exception):
     """A transport or JSON-RPC error (not a tool error: those come back as results)."""
 
 
+class RateLimited(McpError):
+    """The MCP server's per-user limit (HTTP 429): busy, not down. ``retry_after`` is in seconds."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"rate limited by the MCP server; try again in {retry_after} seconds")
+        self.retry_after = retry_after
+
+
+def _retry_after(value: str | None) -> int:
+    try:
+        return min(max(int(value or ""), 1), 60)
+    except ValueError:
+        return 1
+
+
 @dataclass
 class ToolCall:
     tool: str
@@ -95,6 +110,8 @@ class McpHttp:
             raise McpError(f"MCP server unreachable ({type(exc).__name__})") from None
         if r.status_code == 401:
             raise Unauthorized(r.headers.get("www-authenticate", ""))
+        if r.status_code == 429:
+            raise RateLimited(_retry_after(r.headers.get("retry-after")))
         if r.status_code != 200:
             raise McpError(f"{method}: HTTP {r.status_code}")
         try:

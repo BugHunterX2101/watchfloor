@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import time
 from typing import Any
 
 import httpx
@@ -76,19 +77,36 @@ async def test_the_lead_gets_the_job_and_memory(
     assert seen == {"account": "ac_harbor", "recall": "recall_preferences"}
 
 
-async def test_the_deadline_ends_the_job_as_timed_out(
+async def _slow(job: JobData, s: Settings, recall: Any) -> LeadDraft:
+    await asyncio.sleep(5)
+    raise AssertionError("unreachable")
+
+
+class SlowTimelineMCP(FakeMCP):
+    def __call__(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name == "get_deal_timeline":
+            time.sleep(1)
+        return super().__call__(name, args)
+
+
+async def test_a_slow_model_leaves_the_offline_engine_time_to_finish(
     payload: dict[str, Any], model_settings: Settings, mcp: FakeMCP
 ) -> None:
-    async def slow(job: JobData, s: Settings, recall: Any) -> LeadDraft:
-        await asyncio.sleep(5)
-        raise AssertionError("unreachable")
+    events = await _events(payload, model_settings, mcp, lead=_slow, timeout_s=0.4)
+    assert events[-1]["type"] == "result" and events[-1]["engine"] == "offline"
+    assert mcp.opened == mcp.closed == 1
 
-    events = await _events(payload, model_settings, mcp, lead=slow, timeout_s=0.2)
+
+async def test_the_deadline_ends_the_job_as_timed_out(
+    payload: dict[str, Any], model_settings: Settings
+) -> None:
+    mcp = SlowTimelineMCP()  # the model runs out of its share, then the offline engine out of the rest
+    events = await _events(payload, model_settings, mcp, lead=_slow, timeout_s=0.2)
     assert events[-1] == {"type": "error", "code": "timed_out", "error": "no result within 0 seconds"}
     assert mcp.closed == 1
 
 
-async def test_unsupported_drafts_and_failed_reads_are_errors(
+async def test_an_unsupported_draft_goes_offline_and_failed_reads_are_errors(
     payload: dict[str, Any], model_settings: Settings, offline_settings: Settings
 ) -> None:
     async def invent(job: JobData, s: Settings, recall: Any) -> LeadDraft:
@@ -99,7 +117,10 @@ async def test_unsupported_drafts_and_failed_reads_are_errors(
         )
 
     events = await _events(payload, model_settings, FakeMCP(), lead=invent)
-    assert events[-1]["code"] == "rejected"
+    assert (
+        events[-1]["type"] == "result" and events[-1]["engine"] == "offline"
+    )  # the gate refused the model's
+    assert "Invented" not in json.dumps(events[-1]["output"])
 
     events = await _events(payload, offline_settings, FakeMCP(fail={"explain_deal_risk"}))
     assert events[-1]["code"] == "data_unavailable" and "outside this review" in events[-1]["error"]

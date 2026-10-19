@@ -44,7 +44,7 @@ from .config import HarnessConfig, Misconfigured, get_config
 from .control import Profile, Screen
 from .headers import SecurityHeaders
 from .limits import Limiter, subject
-from .mcp_http import McpError, McpHttp, Unauthorized
+from .mcp_http import McpError, McpHttp, RateLimited, Unauthorized
 from .refresh import Refreshes
 from .session import (
     PENDING_COOKIE,
@@ -259,6 +259,16 @@ def create_app(
         except pkce.OAuthError:
             return None
 
+    def too_many(wait: int) -> Response:
+        return JSONResponse(
+            {
+                "error": "rate_limited",
+                "message": f"That's a lot of requests at once. Try again in {wait} seconds.",
+            },
+            status_code=429,
+            headers={"Retry-After": str(wait)},
+        )
+
     async def with_session(
         request: Request, work: Callable[[str], Awaitable[dict[str, Any]]], limit: Limiter
     ) -> Response:
@@ -268,14 +278,7 @@ def create_app(
             return signed_out()
         wait = limit.hit(subject(session.access_token))
         if wait:
-            return JSONResponse(
-                {
-                    "error": "rate_limited",
-                    "message": f"That's a lot of requests at once. Try again in {wait} seconds.",
-                },
-                status_code=429,
-                headers={"Retry-After": str(wait)},
-            )
+            return too_many(wait)
         renewed = False
         if session.expiring():
             session, renewed = await fresh(session), True
@@ -293,6 +296,8 @@ def create_app(
             return signed_out()
         except Misconfigured as exc:
             return JSONResponse({"error": "misconfigured", "message": str(exc)}, status_code=503)
+        except RateLimited as exc:  # the MCP server's own per-user limit: busy, not down
+            return too_many(exc.retry_after)
         except McpError as exc:
             return JSONResponse({"error": "mcp_unavailable", "message": str(exc)}, status_code=502)
         except TimeoutError:
@@ -408,6 +413,8 @@ def create_app(
                 html = await McpHttp(s.mcp_url, session.access_token, http=mcp_client()).read_resource(uri)
             except Unauthorized:
                 return signed_out()
+            except RateLimited as exc:
+                return too_many(exc.retry_after)
             except McpError:
                 return JSONResponse({"error": "mcp_unavailable"}, status_code=502)
             if html is None:

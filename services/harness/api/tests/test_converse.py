@@ -330,6 +330,16 @@ async def test_views_call_allowlisted_tools_with_the_users_token(
     assert mcp.names() == ["explain_deal_risk"]  # the refused call never reached MCP
 
 
+async def test_a_busy_mcp_server_reads_as_busy_not_unavailable(tmp_path: Path, auth: FakeAuth) -> None:
+    busy = httpx.MockTransport(lambda request: httpx.Response(429, headers={"Retry-After": "5"}))
+    app = create_app(make_config(tmp_path), auth_transport=httpx.MockTransport(auth), mcp_transport=busy)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/api/tool", json={"name": "explain_deal_risk", "arguments": {"deal_id": HARBOR}})
+    assert r.status_code == 429 and r.headers["retry-after"] == "5"
+    assert r.json()["error"] == "rate_limited" and "5 seconds" in r.json()["message"]
+
+
 async def test_the_orders_page_may_list_and_remove_standing_orders_but_not_create_or_edit(
     client: httpx.AsyncClient, mcp: FakeMcp
 ) -> None:

@@ -10,8 +10,10 @@ Contract with ``workers.agentcore_client.final_output``:
   ``rejected`` (nothing survived the gate), ``data_unavailable`` (an MCP read
   failed) or ``agent_failed``.
 
-A model that fails the Lead (throttled, unreachable, no key) hands the job to
-the offline engine, whose result says ``"engine": "offline"`` (ADR-023). The
+A model that fails the Lead (throttled, unreachable, no key, out of its share
+of the time, or a draft with nothing the gate accepts) hands the job to the
+offline engine, whose result says ``"engine": "offline"`` (ADR-023). The model
+gets the budget less ``OFFLINE_RESERVE_S``, so that handover still fits. The
 output itself carries the same ``engine``, plus ``checked`` (the critic approved
 the final draft) and ``specialists`` (how each one finished), so the dispatcher
 stores them with the result. Every job also logs one ``llm_usage`` line.
@@ -44,6 +46,7 @@ from .schemas import LeadDraft, TriageOutput
 log = logging.getLogger("watchfloor.agents")
 
 TIMEOUT_S = 90.0
+OFFLINE_RESERVE_S = 20.0  # of the budget, kept for the offline engine (one timeline read, then local work)
 Engine = Literal["strands", "offline"]
 Connector = Callable[[str, str], AbstractContextManager[Caller]]
 Lead = Callable[[JobData, Settings, Any], Awaitable[LeadDraft]]
@@ -100,7 +103,14 @@ def _record(out: TriageOutput, engine: Engine, job: JobData) -> TriageOutput:
 
 
 async def _triage(
-    job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit, usage: Tally
+    job_in: JobIn,
+    s: Settings,
+    engine: Engine,
+    connect: Connector,
+    lead: Lead,
+    emit: Emit,
+    usage: Tally,
+    lead_by: float,
 ) -> tuple[Engine, TriageOutput]:
     try:
         session = connect(s.mcp_url, job_in.mcp_token)
@@ -113,20 +123,24 @@ async def _triage(
         await asyncio.to_thread(job.read, "explain_deal_risk")
         await asyncio.to_thread(job.read, "get_playbook")
         emit({"type": "progress", "step": "analyzing", "engine": engine})
-        if engine == "offline":
-            draft = await asyncio.to_thread(offline_triage, job)
-        else:
+        if engine == "strands":
             recall = make_recall(s.memory_id, actor_id(job_in.workspace_id, job_in.user_ref))
             try:
-                draft = await lead(job, s, recall)
-            except (Rejected, ToolFailed, Misconfigured):
+                async with asyncio.timeout_at(lead_by):
+                    draft = await lead(job, s, recall)
+                emit({"type": "progress", "step": "checking"})
+                return engine, _record(finalize(draft, job), engine, job)
+            except (ToolFailed, Misconfigured):
                 raise
-            except Exception:
+            except Exception as exc:  # the job's own deadline is a CancelledError here, so it passes
                 log.warning(
-                    "triage %s: the model failed, the offline engine finishes", job_in.job_id, exc_info=True
+                    "triage %s: the model failed (%s), the offline engine finishes",
+                    job_in.job_id,
+                    type(exc).__name__,
+                    exc_info=not isinstance(exc, (Rejected, TimeoutError)),
                 )
                 engine = "offline"
-                draft = await asyncio.to_thread(offline_triage, job)
+        draft = await asyncio.to_thread(offline_triage, job)
         emit({"type": "progress", "step": "checking"})
         return engine, _record(finalize(draft, job), engine, job)
     finally:
@@ -137,11 +151,12 @@ async def _work(
     job_in: JobIn, s: Settings, engine: Engine, connect: Connector, lead: Lead, emit: Emit, timeout_s: float
 ) -> None:
     deadline = asyncio.timeout(timeout_s)
+    lead_by = asyncio.get_running_loop().time() + max(timeout_s - OFFLINE_RESERVE_S, timeout_s / 2)
     usage = Tally()
     used, outcome = engine, "cancelled"  # unless set below: the caller went away
     try:
         async with deadline:
-            used, out = await _triage(job_in, s, engine, connect, lead, emit, usage)
+            used, out = await _triage(job_in, s, engine, connect, lead, emit, usage, lead_by)
         emit({"type": "result", "engine": used, "output": out.model_dump(mode="json")})
         outcome = "result"
     except TimeoutError:
