@@ -30,7 +30,7 @@ and the next step. Nothing changes until you say yes. Then change your mind, and
 1. [What it is](#what-it-is)
 2. [Try it](#try-it)
 3. [What you can say](#what-you-can-say)
-4. [Architecture](#architecture) — 21 diagrams
+4. [Architecture](#architecture) 
 5. [Repository map](#repository-map)
 6. [Decisions that shape it](#decisions-that-shape-it)
 7. [Run it locally](#run-it-locally)
