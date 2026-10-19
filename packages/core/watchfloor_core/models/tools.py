@@ -304,6 +304,8 @@ class BriefingOut(_Out):
     watch_amount_display: str | None = None
     # The same counts from the daily snapshot seven days ago; absent when there is none to compare with.
     week_ago: WeekAgo | None = None
+    # The segment every count and total covers (the one asked for, else the user's focus); absent for all.
+    segment: Segment | None = None
 
 
 class DealCard(_Out):

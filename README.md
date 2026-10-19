@@ -958,6 +958,15 @@ keyword router and the agents use a deterministic offline engine; both say so in
 ([ADR-013](docs/adr/0013-offline-triage-engine.md)). In `dev` and `demo` the offline engine never
 stands in for a missing model. Without a Slack webhook, Slack messages print to the console.
 
+The harness's offline router answers specific questions from the tools' own figures, never from
+guesses: totals and counts by band or segment, deals over or under an amount, the top *n*, deals
+closing in a window, a rep's deals, and, for one deal, why it's at risk, who owns it, when it
+closes, the next step, its stage, worth or 14-day trend. Follow-ups work ("it", "the third one",
+"and Harbor?"; the deal in focus is kept in a sealed 30-minute cookie, `wf_h_focus`). A name that
+matches several deals is asked about, never guessed; a change request is refused plainly and
+nothing is changed. It is still less fluent than a model: it recognises phrasings, it does not
+reason about them.
+
 ### The tools
 
 | For Alexa+ (user scope) | For the triage agents (job scope) |
@@ -989,11 +998,11 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 | Suite | Count | Covers |
 |---|---:|---|
 | Root (`pytest`) | 448 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
-| Harness API | 181 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router reading the screen |
+| Harness API | 235 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router reading the screen |
 | Harness web | 113 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic |
 | Triage agents | 36 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
 | Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
-| **Total** | **816** | |
+| **Total** | **870** | |
 
 ```bash
 make test          # unit + protocol conformance

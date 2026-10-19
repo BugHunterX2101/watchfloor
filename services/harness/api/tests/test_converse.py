@@ -516,11 +516,11 @@ async def test_a_turn_still_too_slow_for_the_offline_router_is_a_504(
     """The reserve bounds the router too: the turn never outlasts TURN_TIMEOUT_S (API Gateway cuts at 30 s)."""
     monkeypatch.setattr("harness_api.agent.TURN_TIMEOUT_S", 1.0)
 
-    async def stuck(*_: object, **__: object) -> str:
+    async def stuck(*_: object, **__: object) -> tuple[str, None]:
         await asyncio.sleep(5)
-        return "too late"
+        return "too late", None
 
-    monkeypatch.setattr("harness_api.agent.offline_turn", stuck)
+    monkeypatch.setattr("harness_api.agent.offline_answer", stuck)
     stalled = StepsModel(("explain_deal_risk", {"deal_id": HARBOR}), stall_after=True)
     async with _model_app(tmp_path, auth, mcp, [stalled]) as c:
         await sign_in(c)
@@ -806,7 +806,8 @@ async def test_the_offline_engine_answers_where_do_i_start_with_the_top_deal(
 ) -> None:
     await sign_in(client)
     r = await client.post("/converse", json={"message": "Where should I start?"})
-    assert r.json()["engine"] == "offline" and mcp.calls[-1] == ("get_risk_briefing", {"limit": 1})
+    # The five riskiest, so "and the second one?" has a list to point into; the first is read out.
+    assert r.json()["engine"] == "offline" and mcp.calls[-1] == ("get_risk_briefing", {"limit": 5})
 
 
 async def test_the_page_is_told_what_still_waits_for_an_answer(

@@ -70,6 +70,11 @@ mini challenge names the Strands SDK among the AWS services that qualify.
   model that runs out of time without changing anything leaves the offline router to answer in what
   is left (`"engine": "offline"`). Before this, a slow free-tier model ended the turn with a 504 and
   no answer. The 504 remains only for a turn the router cannot finish in time either.
+- (2026-10-19) The offline router answers specifics (totals and counts by band and segment, amount
+  filters, top *n*, closing windows, a rep's deals, and one deal's owner, close date, next step,
+  stage, worth and trend) from tool results alone, and follows up on the deal or list just
+  discussed. The focus is ids only, in the sealed cookie `wf_h_focus` (30 minutes), validated on
+  read. `get_risk_briefing` reports the `segment` it applied. Ambiguous names are asked about.
 - There is no AgentCore Memory on Lambda: `recall_preferences` returns an empty list.
 - `start_deep_triage` is offered where `agents_enabled` is on and Bedrock or a Gemini model is.
 - Once AWS enables AgentCore, `agents_host: agentcore` (with `models_enabled: true`) moves the

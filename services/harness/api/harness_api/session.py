@@ -9,7 +9,9 @@ API can read. Three cookies:
 - ``wf_h_pending``: what waits for the next turn (``agent.Pending``), valid 15 minutes at most:
   a preview or the action just confirmed, ``{"t": token, "s": summary, "k": "preview" | "confirmed",
   "u": epoch seconds}``, or a held write the user must say yes to, ``{"k": "ask", "n": tool, "a": args,
-  "t": a fingerprint of the arguments, "u": ...}``, which is dropped after 180 seconds or one turn.
+  "t": a fingerprint of the arguments, "u": ...}``, which is dropped after 180 seconds or one turn;
+- ``wf_h_focus``: what the conversation last talked about (``offline.Focus``: deal ids from tool
+  results, never names), 30 minutes, so the offline engine can answer "who owns it?" and "the second one".
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ SESSION_TTL_S = 30 * 86400  # the refresh token's lifetime; the access token is 
 # The preview waiting for the user's yes (or the action just confirmed), between turns (agent.Pending).
 PENDING_COOKIE = "wf_h_pending"
 PENDING_TTL_S = 15 * 60  # a preview's longest life, extensions included (actions.MAX_PREVIEW)
+FOCUS_COOKIE = "wf_h_focus"  # the deals the conversation is about (offline.Focus), for the offline engine
+FOCUS_TTL_S = 30 * 60
 
 
 @dataclass

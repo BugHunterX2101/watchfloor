@@ -1,24 +1,135 @@
-"""Offline conversation engine: a keyword router, for local and test runs without a model id.
+"""Offline conversation engine: a deterministic router over the MCP tools, for turns no model answers.
 
-It is not a language model and never pretends to be: the API labels every turn
-it answers with ``"engine": "offline"``. It exists so the harness, the OAuth flow
-and the real MCP tools can be exercised end to end on a laptop. Replies are the
-tools' own ``summary`` fields, which are written to be spoken (DD §6.3). It never
-proposes a change, but a "yes" confirms a preview made in an earlier turn, and
-"undo" reverses the action just confirmed.
+It is not a language model and never pretends to be: the API labels every turn it answers with
+``"engine": "offline"``. It answers when no model is configured, and when the model fails or runs
+out of time (ADR-023). Every fact it says comes from a tool result in the same turn: a tool's own
+spoken ``summary``, or a sentence built here from the structured fields (counts, totals, owners,
+dates, health), never from a guess. A question the tools can't answer gets a plain "I can't" and
+what it can do instead.
+
+Without a model it answers:
+
+- the briefing and its parts: the totals at risk and on watch, counts, last week's comparison, what's
+  new, the top N, the biggest deal, one owner's deals, deals closing soon, for any segment;
+- one deal, named, placed ("the second one") or followed up ("who owns it?"): why it's at risk, its
+  owner, close date, next step, amount, stage, health and trend; a deep review and its result;
+- standing orders (listed), a yes to a preview or a held write, and undo.
+
+It never makes a change of its own: a request to change something gets "nothing was changed".
+
+Follow-ups resolve through :class:`Focus`, what the conversation last talked about, built from tool
+results (ids, never names) and kept between turns in a sealed cookie: "it" is the deal last
+discussed, "the second one" the second deal last listed, and "and on watch?" asks the last
+question again for the watch band.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
-from .mcp_http import McpHttp
+from watchfloor_core.speech import date_display, join_words, money_display, plural
+
+from .control import declines
+from .mcp_http import McpHttp, ToolCall
 
 if TYPE_CHECKING:
     from .agent import Pending
     from .control import Screen
+
+# ---------------------------------------------------------------------------------------------------------
+# What the conversation is about, between turns.
+
+DEAL_ID = re.compile(r"^dl_[0-9A-Za-z]{1,40}$")
+SEGMENTS = ("smb", "mid", "enterprise", "all")
+DEAL_KINDS = ("owner", "stage", "amount", "close", "next", "health", "trend")
+AGG_KINDS = ("total", "count", "compare", "new", "list", "biggest", "closing", "briefing", "over")
+TURN_KINDS = frozenset(
+    {"explain", "detail", "result", "triage", "priority", "owners", *DEAL_KINDS, *AGG_KINDS}
+)
+
+
+@dataclass
+class Focus:
+    """What the conversation last talked about: deal ids from tool results, never a guess.
+
+    ``deal``: the deal last discussed ("it"). ``listed``: the deals last listed, in order ("the second
+    one"). ``fresh``: the list came from the turn just before, so a place means it, not the board.
+    ``kind``: what was last asked ("owner,close", "total"), for "and the second one?". ``segment``:
+    the segment the user last asked for, kept until they ask for another.
+    """
+
+    deal: str | None = None
+    listed: list[str] = field(default_factory=list)
+    fresh: bool = False
+    kind: str = ""
+    segment: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"d": self.deal, "l": self.listed, "f": self.fresh, "k": self.kind, "g": self.segment}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> Focus | None:
+        """A sealed cookie is ours, but every value is still checked before it can reach a tool."""
+        if not isinstance(data, dict):
+            return None
+        deal, listed, segment = data.get("d"), data.get("l"), data.get("g")
+        return cls(
+            deal=deal if isinstance(deal, str) and DEAL_ID.match(deal) else None,
+            listed=[d for d in listed if isinstance(d, str) and DEAL_ID.match(d)][:5]
+            if isinstance(listed, list)
+            else [],
+            fresh=data.get("f") is True,
+            kind=",".join(k for k in str(data.get("k") or "").split(",") if k in TURN_KINDS),
+            segment=segment if segment in SEGMENTS else None,
+        )
+
+
+def _ids(items: Any) -> list[str]:
+    found = [d.get("deal_id") for d in items or [] if isinstance(d, dict)]
+    return [i for i in found if isinstance(i, str) and DEAL_ID.match(i)][:5]
+
+
+def next_focus(
+    focus: Focus | None, calls: Sequence[ToolCall], kind: str = "", segment: str | None = None
+) -> Focus:
+    """The focus after this turn's tool calls, in order. ``kind`` and ``segment``: what was asked."""
+    before = focus or Focus()
+    out = replace(before, listed=list(before.listed), fresh=False, kind=kind)
+    if segment is not None:
+        out.segment = segment
+    for c in calls:
+        if not c.ok:
+            if c.tool == "lookup_deal":  # "Did you mean ...": the suggestions are what a place now means
+                ids = _ids(((c.structured or {}).get("error") or {}).get("suggestions"))
+                if ids:
+                    out.listed, out.fresh = ids, True
+            continue
+        data = c.structured or {}
+        if c.tool == "get_risk_briefing":
+            ids = _ids(data.get("deals"))
+            if ids:
+                out.listed, out.fresh, out.deal = ids, True, ids[0]
+            if c.arguments.get("segment") in SEGMENTS:
+                out.segment = c.arguments["segment"]
+        elif c.tool == "lookup_deal":
+            ids = _ids(data.get("candidates"))
+            if len(ids) == 1:
+                out.deal = ids[0]
+            elif ids:
+                out.listed, out.fresh = ids, True
+        else:
+            deal = c.arguments.get("deal_id") or data.get("deal_id")
+            if isinstance(deal, str) and DEAL_ID.match(deal):
+                out.deal = deal
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Words. Each pattern is matched against the user's message, never against tool output.
 
 # The whole message is a plain yes ("Yes, go ahead."), so "yes, but change the title" is not one.
 YES = re.compile(
@@ -26,59 +137,965 @@ YES = re.compile(
     r"(?:[\s,.!]+(?:yes|please|go ahead|do it|thanks|thank you))*[\s,.!]*",
     re.IGNORECASE,
 )
+YES_BUT = re.compile(r"\s*(?:yes|yeah|yep|sure|ok|okay)\b", re.IGNORECASE)
+ACK = re.compile(r"\s*(?:got it|great|cool|alright|all right|fine|nice|understood)[\s,.!]*", re.IGNORECASE)
 UNDO = re.compile(r"\b(undo|take (it|that) back|reverse (it|that))\b", re.IGNORECASE)
-STANDING = re.compile(r"standing orders?|my (rules|alerts)|what am i watching", re.IGNORECASE)
-# "Where do I start?": the briefing's first deal, which the server ranks by band and deal value.
-PRIORITY = re.compile(
-    r"\b(what should i (do|tackle|handle|look at) first|where (do|should) i start|most urgent|"
-    r"biggest (risk|problem)|top (deal|risk|priority)|first priority)\b",
+THANKS = re.compile(
+    r"\s*(?:thanks|thank you|thx|cheers|bye|goodbye|good night|see you|talk later|that'?s (?:all|it|everything))"
+    r"(?:[\s,.!]+(?:so much|a lot|very much|again|for (?:your )?help|bye|thanks|that'?s (?:all|it|everything)))*"
+    r"[\s,.!]*",
     re.IGNORECASE,
 )
-RESULT = re.compile(r"\b(results?|finished|came back|outcome)\b", re.IGNORECASE)
-TRIAGE = re.compile(r"\b(deep|triage|review|dig into|look into)\b", re.IGNORECASE)
-EXPLAIN = re.compile(r"\b(why|explain|what'?s wrong|how is|how's|tell me about)\b", re.IGNORECASE)
-STOP = frozenset(
-    """a an the is are was be at on in of for to with about me my our please can you could would
-    why what whats what's wrong how hows how's doing explain tell deal deals risk risky at-risk
-    deep triage review run start do dig into look results result finished came back outcome
-    did go going show give status on it that this""".split()  # noqa: SIM905 - easier to read and extend
+GREETING = re.compile(
+    r"\s*(hi|hello|hey|hiya|good (?:morning|afternoon|evening)|morning|evening)\b[\s,.!]*", re.I
 )
-WORD = re.compile(r"[A-Za-z0-9&][A-Za-z0-9&'.-]*")
-# "the second one", "the top deal", "number three": a place on the board the user is looking at.
+SMALL_TALK = re.compile(r"\s*(how are you|how'?s it going|how are things)[\s?.!]*", re.IGNORECASE)
+HELP = re.compile(
+    r"\s*(help|help me|what can you do|what can i (ask|say)|what do you do|how does this work|"
+    r"what are my options|what can you help (me )?with)[\s?.!]*",
+    re.IGNORECASE,
+)
+
+# Changes. None is made here: each is said to need the model (or the CRM), and nothing changes.
+WRITES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "rule_remove",
+        re.compile(
+            r"\b(stop watching|remove|delete|cancel|turn off|drop|get rid of)\b.*\b(rules?|standing orders?|alerts?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "prefs",
+        re.compile(
+            r"\bonly (give|show|tell|brief) me (about )?\w+ deals?\b|\b(give|show) me (just |only )?\w+ deals? "
+            r"(from now on|each time|every time|in (my|each|the) briefings?)\b|\b(don'?t|do not|stop|never) "
+            r"(read(ing)?|say(ing)?|tell(ing)?|includ(e|ing)|mention(ing)?|giv(e|ing))( me)?( out)? (the |deal )?"
+            r"amounts?\b|\b(leave|keep) (the |deal )?amounts? out\b|\bfocus (my )?(briefings? )?on (smb|mid|"
+            r"enterprise|small)|\bchange my (briefing|segment|focus)\b|\bbriefing (limit|length|settings)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "rule_set",
+        re.compile(
+            r"\b(from now on|going forward|flag (any|all|every|deals?)|alert me|notify me|let me know (when|if)|"
+            r"tell me (when|if|whenever)|ping me (when|if))\b"
+            r"|^\s*(please\s+)?(watch (for|out for)|keep (an eye|watching))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "stage",
+        re.compile(
+            r"\b(mark|move|set|change|switch|put)\b[^?]*\b(closed?[ -]?(won|lost)|won|lost|stage|discovery|demo|"
+            r"proposal|negotiation|closing)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "task",
+        re.compile(
+            r"^\s*(?:please\s+)?(?:have\s+(?!(?:me|us|you|i|we|they|it|the|a|an|there|any|some|my)\b)[a-z]+\s+[a-z]+|(?:ask|tell|get)\s+"
+            r"(?!me\b|us\b)[a-z']+\s+to\s+\w+)|\b(create|add|make|set up|assign|open) (a |an )?(task|to-?do|"
+            r"reminder)\b|\bremind (me|\w+) to\b|\breassign\b|\bhand (it|this|that|\w+) (over )?to\b|\bnotify "
+            r"(the )?(channel|team|slack)\b|\bpost (it |this )?(to|in|on) (slack|the channel)\b|\bbook (a |the )?"
+            r"(call|meeting)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "draft",
+        re.compile(
+            r"\b(draft|write|compose)\b|\bsend\b.*\b(email|e-mail|follow[- ]?up|message|note|reply)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "update",
+        re.compile(
+            r"\bis now (worth )?\$?\d|\bis now (\w+ )?(thousand|million|k)\b|\bnow worth\b|\b(change|update|set) "
+            r"the (amount|close date|next step)\b|\blog (an? )?(update|note|call|meeting)\b|\bpush(ed)? the close\b|"
+            r"\bmove the close date\b|\bthe next step is\b|\bthey (agreed|signed|said)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+NEEDS_MODEL = {
+    "rule_remove": "Removing a standing order",
+    "prefs": "Changing your briefing settings",
+    "rule_set": "Setting up a standing order",
+    "task": "Creating tasks and reassigning deals",
+    "draft": "Drafting a follow-up",
+    "update": "Logging a deal update",
+}
+
+STANDING = re.compile(
+    r"standing orders?|my (rules|alerts)|what am i watching|what are you watching( for)?", re.IGNORECASE
+)
+# "Where do I start?": the briefing's first deal, which the server ranks by band and deal value.
+PRIORITY = re.compile(
+    r"\b(what should i (do|tackle|handle|look at|work on) first|where (do|should) i (start|begin)|most urgent|"
+    r"biggest (risk|problem|worry|fire)|top (deal|risk|priority)|first priority|what'?s (my )?(top|first) priority)\b",
+    re.IGNORECASE,
+)
+RESULT = re.compile(
+    r"\b(results?|findings?|came back|outcome|(review|triage|it|that) (find|found|say|said|show|turn up|come up with)"
+    r"|(review|triage) (done|ready|back|finished|over)|is it (done|finished|back|ready))\b",
+    re.IGNORECASE,
+)
+TRIAGE = re.compile(
+    r"\b(deep|triage|review|dig into|dig in|look into|investigate|analy[sz]e)\b", re.IGNORECASE
+)
+# Asking about one deal: these make a named deal a real lookup, not a guess from loose words.
+ASK_DEAL = re.compile(
+    r"\b(why|explain|what'?s wrong|what is wrong|what'?s going on with|in trouble|a problem|tell me (more )?about|"
+    r"show me|look up|pull up|details|status of|how is|how'?s|how are|doing|at risk|risky|worried about|"
+    r"concern(ed|s)?)\b",
+    re.IGNORECASE,
+)
+DETAIL = re.compile(
+    r"\b(tell me (more )?about|show me|look up|pull up|details|info(rmation)? on)\b", re.IGNORECASE
+)
+EVERYTHING = re.compile(
+    r"\b(everything|all (of )?(it|the details?)|full (story|picture|details?))\b", re.IGNORECASE
+)
+KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "owner",
+        re.compile(
+            r"\b(who owns|who'?s the owner|who is the owner|owner|owned by|who'?s (on|handling|running|working on)|"
+            r"who is (handling|running|working on|on)|who'?s responsible|which rep)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("stage", re.compile(r"\b(stage|phase)\b", re.IGNORECASE)),
+    ("amount", re.compile(r"\b(worth|how much|how big|deal size|size of|value|amount)\b", re.IGNORECASE)),
+    (
+        "close",
+        re.compile(
+            r"\b(when (does|will|do|is|are|should) .*\b(close|closing|decide|sign|signing)|close date|closing date|"
+            r"expected (to )?close|decide|decision|deadline)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "next",
+        re.compile(
+            r"\b(next steps?|next action|what'?s next|what happens next|what should (i|we) do (next|about (it|this|"
+            r"that)))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("health", re.compile(r"\b(health|score)\b", re.IGNORECASE)),
+    (
+        "trend",
+        re.compile(
+            r"\b(better or worse|worse or better|getting (better|worse)|improv\w*|worsen\w*|trend\w*|declin\w*|"
+            r"last week|week ago|over time|changed)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+TOTAL = re.compile(
+    r"\b(how much|total|altogether|dollars?|money|value|worth|exposure|at stake|on the line|in danger|exposed)\b",
+    re.IGNORECASE,
+)
+# "deals over 50K", "under fifty thousand": a filter on amount, answered from the briefing's deals.
+AMOUNT_OVER = re.compile(
+    r"\b(?P<op>over|above|more than|bigger than|larger than|greater than|at least|exceeding|exceeds|under|below|"
+    r"less than|smaller than)\s+\$?\s*(?P<n>\d[\d,]*(?:\.\d+)?|(?:a |one )?(?:ten|twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred)(?:[ -](?:five|ten))?)\s*(?P<unit>k|m|thousand|million|grand)?\b",
+    re.IGNORECASE,
+)
+TENS = {"ten": 10, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+        "eighty": 80, "ninety": 90, "hundred": 100}  # fmt: skip
+WHY = re.compile(r"\b(why|explain|what'?s wrong|what is wrong|in trouble|what'?s going on)\b", re.IGNORECASE)
+COUNT = re.compile(r"\b(how many|number of|count)\b", re.IGNORECASE)
+COMPARE = re.compile(
+    r"\b(last week|a week ago|week over week|than (before|last)|compared? (to|with)|healthier|"
+    r"better or worse|worse or better|improv(ing|ed)|getting (better|worse))\b",
+    re.IGNORECASE,
+)
+NEW = re.compile(
+    r"\b(new|what changed|what'?s changed|since (yesterday|my last|the last|last time|this morning|then)|lately|"
+    r"recently|latest|updates?)\b",
+    re.IGNORECASE,
+)
+BIGGEST = re.compile(r"\b(biggest|largest|most valuable|highest[- ]value|top dollar)\b", re.IGNORECASE)
+TOP_N = re.compile(r"\btop (\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE)
+LIST = re.compile(
+    r"\b(list|which deals|what deals|all (the |my )?deals|(at[- ]risk|risky|watch(ed)?) deals|deals (that are )?"
+    r"(at risk|on watch)|show (me )?(the |all |my )?deals|name them|which ones|what are they)\b",
+    re.IGNORECASE,
+)
+CLOSING = re.compile(
+    r"\b(clos(e|es|ing)|due|decid\w*|sign\w*)\b.*\b(this|next) (week|month|quarter)\b|\bclosing soon\b|"
+    r"\bclose soon\b|\b(this|next) (week|month|quarter)\b.*\bclos",
+    re.IGNORECASE,
+)
+WINDOW = re.compile(r"\b(this|next) (week|month|quarter)\b", re.IGNORECASE)
+BRIEFING = re.compile(
+    r"\b(attention|brief(ing)?|what'?s (going on|happening|up)|overview|summary|catch me up|on fire|fires?|"
+    r"how('s| is| are) (my |the )?(pipeline|deals|things|everything)|status|what'?s at risk|anything at risk|"
+    r"any risks?|what needs me|needs? me|what should i (be )?(watch\w*|look\w*|worr\w*)( out)?( for| at| about)?)\b",
+    re.IGNORECASE,
+)
+SEGMENT = re.compile(
+    r"\b(smb|small business(es)?|mid[- ]?market|midmarket|mid|enterprise|all segments|every segment|"
+    r"whole pipeline|entire pipeline)\b",
+    re.IGNORECASE,
+)
+SEGMENT_OF = {"smb": "smb", "small": "smb", "mid": "mid", "enterprise": "enterprise"}
+SEGMENT_WORDS = {"smb": "SMB", "mid": "mid-market", "enterprise": "enterprise"}
+ELLIPSIS = re.compile(r"\s*(and|what about|how about|same for|and what about|what of)\b", re.IGNORECASE)
+GENERAL = re.compile(
+    r"\bhow(?:'s| is| are| does| do)\s+(?:my |the )?(?:everything|things|it all|it looking|all looking)\b",
+    re.I,
+)
+WATCH_BAND = re.compile(r"\b(on watch|watch ?list|watched|being watched)\b", re.IGNORECASE)
+RISK_BAND = re.compile(r"\b(at[- ]risk)\b", re.IGNORECASE)
+
+# "this deal" is the open sheet; "it" is the deal last discussed. "This month" is neither.
+THIS = re.compile(
+    r"\bthis( one| deal| account)?\b(?!\s+(week|month|quarter|year|morning|afternoon|evening))", re.I
+)
+PRONOUN = re.compile(
+    r"\b(it|its|it's|that one|that deal|that account|they|them|their)\b|\bthat[?.!\s]*$", re.IGNORECASE
+)
+# "the second one", "the top deal", "number three": a place in the list the user just heard or sees.
 PLACE = re.compile(
     r"\b(?:the\s+)?(first|second|third|fourth|fifth|top|last)\s+(?:one|deal|account)\b"
-    r"|\b(?:deal\s+)?number\s+(one|two|three|four|five|[1-5])\b",
+    r"|\b(?:deal\s+)?number\s+(one|two|three|four|five|[1-5])\b"
+    r"|\bthe\s+(first|second|third|fourth|fifth|last)\s*[?.!]*\s*$",
     re.IGNORECASE,
 )
 PLACES = {"first": 1, "top": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "last": -1,
           "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}  # fmt: skip
+NUMBERS = {**PLACES, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+ORDINALS = ("First", "Second", "Third", "Fourth", "Fifth")
+
+# "Maya's deals", "which deals does Daniel own": an owner, never looked up as a company.
+OWNER = re.compile(
+    r"\b(?:which|what) (?:deals|ones|accounts) (?:does|do|is|are) (?P<a>[a-z]+)\b[^?]*?\b(?:own|owns|have|has|"
+    r"handle|handles|run|runs|working on)\b"
+    r"|\b(?P<b>[a-z]+)['’]s (?:deals|accounts|pipeline|book)\b"
+    r"|\b(?:deals|accounts) (?:owned by|of|for|belonging to|that belong to|run by|handled by) (?P<c>[a-z]+)\b"
+    r"|\b(?:what|which) does (?P<d>[a-z]+) (?:own|have|handle)\b"
+    r"|\bwhat(?:'s| is) (?P<e>[a-z]+) working on\b",
+    re.IGNORECASE,
+)
+
+STOP = frozenset(
+    """a an the is are was were be been am at on in of for to with about from by as into me my mine our ours i
+    we you your yours please can could would will should shall may might must do does did done doing have has had
+    get got give gives show tell let lets let's want need needs needed
+    why what whats what's which who whos who's whom whose when where how hows how's
+    wrong explain deal deals account accounts risk risks risky at-risk trouble problem problems issue issues
+    concern concerns concerned worried worry
+    deep triage review reviews reviewing run start dig look looking investigate analyse analyze results result
+    finished came back outcome find found findings finding say said turn up ready over
+    go going status it its it's this that these those they them their there here one ones
+    and or but so just only also too then than now right today yesterday tomorrow week weeks month months
+    quarter year morning afternoon evening tonight soon
+    much many total totals altogether money dollars dollar value worth amount size big bigger biggest large larger
+    largest most more less exposure stake
+    new news changed change changes update updates latest lately recently since last ago before
+    owner owners owns own owned rep handling handle handles running runs working responsible belong belongs
+    close closes closing closed decide decision decides date dates sign signing deadline due expected
+    next step steps action actions plan happens happen
+    stage stages phase health healthy healthier score scores trend trending better worse improving improve
+    improved getting declining decline worsening time
+    list top first second third fourth fifth last number line lines
+    segment segments all every everything whole smb mid mid-market midmarket market enterprise small business
+    businesses pipeline pipelines briefing brief attention anything something nothing fire fires
+    watch watching watched watchlist
+    help hi hello hey thanks thank cheers bye good great ok okay yes no sure uh um er like
+    details detail info information pull open lookup know more name names
+    over above under below least exceeding exceeds greater smaller thousand million grand hundred k
+    any some anyone versus vs against compared compare looked seen checked heard
+    two three four five six seven eight nine ten eleven twelve dozen couple few several many
+    currently still really actually anyway else""".split()  # noqa: SIM905 - easier to read and extend
+)
+MONEY = re.compile(r"^\$?\d[\d,.]*[kKmM]?$|^(ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)$")
+WORD = re.compile(r"[A-Za-z0-9&][A-Za-z0-9&'’.-]*")
+
+FALLBACK = (
+    "Sorry, I didn't follow that. You can ask what needs your attention, how much is at risk in total, "
+    "how this week compares with last week, or about one deal: why it's at risk, who owns it, when it "
+    "closes and what the next step is."
+)
+HELP_TEXT = (
+    "Right now I'm answering straight from your deal data, without the assistant model. You can ask what "
+    "needs your attention, how much is at risk or on watch, how many deals are at risk, how this week "
+    "compares with last week, what's new, or for the top five. About one deal, ask why it's at risk, who "
+    "owns it, when it closes, what the next step is, what it's worth, its stage or its trend, or ask me to "
+    "dig into it for a deep review. I can also list your standing orders. Making changes, like tasks, "
+    "follow-up drafts or new standing orders, needs the assistant model."
+)
+WHICH = "Which deal do you mean?"
+
+
+def _place(message: str) -> int | None:
+    m = PLACE.search(message)
+    if not m:
+        return None
+    word = (m.group(1) or m.group(2) or m.group(3)).lower()
+    return PLACES.get(word) or int(word)
+
+
+def _at_place(message: str, ids: Sequence[str]) -> str | None:
+    n = _place(message)
+    if n is None or not ids:
+        return None
+    if n == -1:
+        return ids[-1]
+    return ids[n - 1] if n <= len(ids) else None
 
 
 def screen_deal(message: str, screen: Screen | None) -> str | None:
     """The deal id a place on the board names ("the second one"), when the message names one."""
-    m = PLACE.search(message)
-    if not m or screen is None or not screen.board:
-        return None
-    word = (m.group(1) or m.group(2)).lower()
-    n = PLACES.get(word) or int(word)
-    deal = screen.board[-1] if n == -1 else (screen.board[n - 1] if n <= len(screen.board) else None)
-    return deal.id if deal else None
+    return _at_place(message, [d.id for d in screen.board] if screen is not None else [])
 
 
 def deal_words(message: str) -> str:
-    """The words left once intent words are removed: the deal or company name, hopefully."""
-    words = [w.removesuffix("'s").strip(".'") for w in WORD.findall(message)]
-    return " ".join(w for w in words if w and w.lower() not in STOP)[:80]
+    """The words left once intent words are removed: the deal or company name, hopefully.
+
+    "and" (or "&") stays only between two kept words, so "Harbor and Pine" survives but "who owns it,
+    and when" doesn't leave an "and" to look up.
+    """
+    words = [w.removesuffix("'s").removesuffix("’s").strip(".'’") for w in WORD.findall(message)]
+    keep = [bool(w) and w.lower() not in STOP and not MONEY.match(w) and len(w) > 1 for w in words]
+    out = []
+    for i, w in enumerate(words):
+        if w.lower() in ("and", "&"):
+            if 0 < i < len(words) - 1 and keep[i - 1] and keep[i + 1]:
+                out.append(w)
+        elif keep[i]:
+            out.append(w)
+    return " ".join(out)[:80]
+
+
+def _without_owner(message: str) -> tuple[str | None, str]:
+    """The owner a message names ("Maya's deals") and the message without that phrase."""
+    for m in OWNER.finditer(message):
+        name = next((g for g in m.groups() if g), None)
+        if name and name.lower() not in STOP:
+            return name.title(), (message[: m.start()] + " " + message[m.end() :]).strip()
+    return None, message
 
 
 def recent_deal(history: Sequence[tuple[str, str]]) -> str:
-    """The deal the user last named, for a follow-up like "Dig into it." (the board suggests it)."""
+    """The deal the user last named, for a follow-up like "Dig into it." when no focus was kept."""
     for role, text in reversed(history):
-        if role == "user" and (TRIAGE.search(text) or EXPLAIN.search(text) or RESULT.search(text)):
-            words = deal_words(text)
+        if role == "user" and (TRIAGE.search(text) or ASK_DEAL.search(text) or RESULT.search(text)):
+            words = deal_words(_without_owner(text)[1])
             if len(words) >= 2:
                 return words
     return ""
+
+
+def _kinds(message: str) -> list[str]:
+    return [k for k, pattern in KINDS if pattern.search(message)]
+
+
+def _segment(message: str) -> str | None:
+    m = SEGMENT.search(message)
+    if not m:
+        return None
+    word = m.group(1).lower().replace("-", "").replace(" ", "")
+    return next((seg for prefix, seg in SEGMENT_OF.items() if word.startswith(prefix)), "all")
+
+
+def _band(message: str) -> str | None:
+    watch, risk = bool(WATCH_BAND.search(message)), bool(RISK_BAND.search(message))
+    return "watch" if watch and not risk else "at_risk" if risk and not watch else None
+
+
+def _top_n(message: str) -> int:
+    m = TOP_N.search(message)
+    return int(m.group(1)) if m and m.group(1).isdigit() else NUMBERS.get(m.group(1).lower(), 5) if m else 5
+
+
+def _aggregate(message: str) -> str | None:
+    """The question about the whole pipeline (or a segment of it), if this is one."""
+    if CLOSING.search(message):
+        return "closing"
+    if COMPARE.search(message):
+        return "compare"
+    if AMOUNT_OVER.search(message):
+        return "over"
+    if COUNT.search(message):
+        return "count"
+    if BIGGEST.search(message):
+        return "biggest"
+    if TOP_N.search(message) or LIST.search(message):
+        return "list"
+    if TOTAL.search(message):
+        return "total"
+    if NEW.search(message):
+        return "new"
+    return None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Sentences from tool data.
+
+BAND_WORDS = {"at_risk": "at risk", "watch": "on watch", "healthy": "healthy"}
+
+
+def _is(n: int) -> str:
+    return "is" if n == 1 else "are"
+
+
+def _seg_words(data: dict[str, Any]) -> str:
+    seg = data.get("segment")
+    return f" in {SEGMENT_WORDS[seg]}" if seg in SEGMENT_WORDS else ""
+
+
+def _day(iso: Any) -> str | None:
+    try:
+        return date_display(date.fromisoformat(str(iso)[:10]))
+    except ValueError:
+        return None
+
+
+def _deal_line(d: dict[str, Any]) -> str:
+    amount = f", {d['amount_display']}" if d.get("amount_display") else ""
+    band = BAND_WORDS.get(d.get("band", ""), "flagged")
+    return f"{d.get('account') or d.get('name')}{amount}, {band}, health {d.get('health')}"
+
+
+def _counts(data: dict[str, Any], seg: str) -> str:
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    watch = attention - at
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch right now."
+    if at == 0:
+        return f"No deals{seg} are at risk, and {plural(watch, 'deal')} {_is(watch)} on watch."
+    more = f", and {watch} more {_is(watch)} on watch" if watch else ", and none are on watch"
+    return f"{plural(at, 'deal')}{seg} {_is(at)} at risk{more}."
+
+
+def say_total(data: dict[str, Any], band: str | None) -> str:
+    seg = _seg_words(data)
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    watch = attention - at
+    risk_amt, watch_amt = data.get("at_risk_amount_display"), data.get("watch_amount_display")
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch, so nothing is at stake right now."
+    if (at and not risk_amt) or (watch and not watch_amt):
+        return f"Your briefing settings leave amounts out, so I can't total them. {_counts(data, seg)}"
+    if band == "watch":
+        if not watch:
+            return f"No deals{seg} are on watch right now."
+        return f"{watch_amt} is on watch{seg}, across {plural(watch, 'deal')}."
+    if at == 0:
+        return (
+            f"No deals{seg} are at risk right now. {watch_amt} is on watch, across {plural(watch, 'deal')}."
+        )
+    out = f"{risk_amt} is at risk{seg}, across {plural(at, 'deal')}."
+    if band is None and watch:
+        out += f" Another {watch_amt} is on watch, across {plural(watch, 'deal')}."
+    return out
+
+
+def say_count(data: dict[str, Any], band: str | None) -> str:
+    seg = _seg_words(data)
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    watch = attention - at
+    if band == "watch":
+        worth = (
+            f", worth {data['watch_amount_display']} in total"
+            if watch and data.get("watch_amount_display")
+            else ""
+        )
+        return f"{plural(watch, 'deal')}{seg} {_is(watch)} on watch{worth}."
+    if band == "at_risk":
+        return f"{plural(at, 'deal')}{seg} {_is(at)} at risk."
+    return _counts(data, seg)
+
+
+def say_compare(data: dict[str, Any]) -> str:
+    seg = data.get("segment")
+    lead = f"In {SEGMENT_WORDS[seg]}: " if seg in SEGMENT_WORDS else ""
+    week = data.get("week_ago") or {}
+    if not week.get("comparison"):
+        return f"I don't have a snapshot from a week ago{_seg_words(data)} to compare with yet."
+    return lead + week["comparison"]
+
+
+def say_new(data: dict[str, Any]) -> str:
+    seg = _seg_words(data)
+    n = int(data.get("new_count") or 0)
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    rules = [r for r in data.get("triggered_rules") or [] if isinstance(r, dict)]
+    if n == 0 and not rules:
+        return f"Nothing new{seg} since your last briefing. {_counts(data, seg)}"
+    parts = []
+    if n:
+        named = [str(d.get("account")) for d in deals if d.get("new_since_last_briefing")]
+        rest = n - len(named)
+        names = f": {join_words(named + ([f'{rest} more'] if rest > 0 else []))}" if named else ""
+        parts.append(f"{plural(n, 'deal')}{seg} {_is(n)} new on the list since your last briefing{names}.")
+    else:
+        parts.append(f"No deals{seg} are new on the list since your last briefing.")
+    by_id = {d.get("deal_id"): d.get("account") for d in deals}
+    for r in rules[:2]:
+        named = [str(by_id[i]) for i in r.get("deal_ids") or [] if by_id.get(i)]
+        who = join_words(named[:2]) if named else plural(len(r.get("deal_ids") or []), "deal")
+        parts.append(f"Your standing order “{r.get('description')}” flagged {who}.")
+    return " ".join(parts)
+
+
+def say_list(data: dict[str, Any], band: str | None, asked: int) -> str:
+    seg = _seg_words(data)
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    total = attention
+    if band:
+        deals = [d for d in deals if d.get("band") == band]
+        total = at if band == "at_risk" else attention - at
+    if not deals:
+        return f"Nothing{seg} is {BAND_WORDS[band] if band else 'at risk or on watch'} right now."
+    lines = " ".join(f"{ORDINALS[i]}, {_deal_line(d)}." for i, d in enumerate(deals))
+    if band:
+        head = f"{plural(total, 'deal')}{seg} {_is(total)} {BAND_WORDS[band]}."
+    elif len(deals) < total:
+        head = f"The top {len(deals)} of the {total} deals{seg} that need attention:"
+    else:
+        head = f"{plural(total, 'deal')}{seg} need{'s' if total == 1 else ''} attention."
+    out = f"{head} {lines}"
+    if len(deals) < total and (band or asked > len(deals)):
+        rest = total - len(deals)
+        out += (
+            f" I can only see the top five deals that need attention, so {rest} more {_is(rest)} not shown."
+        )
+    return out
+
+
+def say_biggest(data: dict[str, Any], band: str | None) -> str:
+    seg = _seg_words(data)
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    pool = [d for d in deals if d.get("band") == band] if band else deals
+    total = (at if band == "at_risk" else attention - at) if band else attention
+    if not pool:
+        return f"Nothing{seg} is {BAND_WORDS[band] if band else 'at risk or on watch'} right now."
+    if any(not isinstance(d.get("amount_cents"), int) for d in pool):
+        return "Your briefing settings leave amounts out, so I can't tell which deal is biggest."
+    best = max(pool, key=lambda d: d["amount_cents"])
+    what = " ".join(w for w in (BAND_WORDS[band] if band else "", seg.strip()) if w)
+    status = BAND_WORDS.get(best.get("band", ""), "flagged")
+    line = f"{best.get('account')}, at {best.get('amount_display')}: {status}, health {best.get('health')}."
+    if len(pool) >= total:
+        return f"The biggest deal{' ' + what if what else ''} is {line}"
+    return (
+        f"Of the {len(deals)} riskiest deals{seg}, the biggest{' ' + BAND_WORDS[band] if band else ''} one is "
+        f"{line} I can see only the top five, so {total - len(pool)} more {_is(total - len(pool))} not in "
+        "that list."
+    )
+
+
+def say_owner(data: dict[str, Any], owner: str) -> str:
+    seg = _seg_words(data)
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    attention = int(data.get("attention_count") or 0)
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch right now, so none of {owner}'s deals need attention."
+    mine = _owned(data, owner)
+    scope = (
+        f" I can see only the top {len(deals)} of the {attention} deals that need attention."
+        if len(deals) < attention
+        else ""
+    )
+    if not mine:
+        return f"None of the {len(deals)} riskiest deals{seg} belong to {owner}.{scope}"
+    items = [f"{d.get('account')} ({_deal_line(d).split(', ', 1)[1]})" for d in mine]
+    return (
+        f"Among the {len(deals)} riskiest deals{seg}, {mine[0].get('owner')} owns {join_words(items)}.{scope}"
+    )
+
+
+def parse_amount(message: str) -> tuple[str, int] | None:
+    """("over" | "under" | "at least", cents) from "over 50K", "under fifty thousand", else None."""
+    m = AMOUNT_OVER.search(message)
+    if not m:
+        return None
+    raw = m.group("n").lower().replace(",", "")
+    try:
+        n = float(raw)
+    except ValueError:
+        n = float(sum(TENS[w] for w in re.split(r"[ -]", raw) if w in TENS))
+    unit = (m.group("unit") or "").lower()
+    if unit in ("k", "thousand", "grand"):
+        n *= 1_000
+    elif unit in ("m", "million"):
+        n *= 1_000_000
+    elif (
+        n < 1_000 and not unit and not raw[0].isdigit()
+    ):  # "over fifty": thousands, as deals are talked about
+        n *= 1_000
+    word = m.group("op").lower()
+    if word == "at least":
+        op = "at least"
+    elif word in ("under", "below", "less than", "smaller than"):
+        op = "under"
+    else:
+        op = "over"
+    return (op, int(n * 100)) if n > 0 else None
+
+
+def say_over(data: dict[str, Any], band: str | None, op: str, cents: int) -> str:
+    seg = _seg_words(data)
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    at, attention = int(data.get("at_risk_count") or 0), int(data.get("attention_count") or 0)
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch right now."
+    if any(not isinstance(d.get("amount_cents"), int) for d in deals):
+        return "Your briefing settings leave amounts out, so I can't filter deals by amount."
+    pool = [d for d in deals if d.get("band") == band] if band else deals
+    total = (at if band == "at_risk" else attention - at) if band else attention
+    state = BAND_WORDS[band] if band else "at risk or on watch"
+    keep = {"over": lambda c: c > cents, "under": lambda c: c < cents, "at least": lambda c: c >= cents}[op]
+    hit = [d for d in pool if keep(d["amount_cents"])]
+    label = f"{op} {money_display(cents)}"
+    scope = (
+        f" I can see only the top {len(deals)} of the {attention} deals that need attention."
+        if len(pool) < total
+        else ""
+    )
+    if not hit:
+        return (
+            f"None of the {plural(len(pool), 'deal')}{seg} that {_is(len(pool))} {state} is {label}.{scope}"
+        )
+    items = [f"{d.get('account')}, {d.get('amount_display')}" for d in hit]
+    return (
+        f"Of the {plural(len(pool), 'deal')}{seg} that {_is(len(pool))} {state}, {len(hit)} "
+        f"{_is(len(hit))} {label}: {join_words(items)}.{scope}"
+    )
+
+
+def _owned(data: dict[str, Any], owner: str) -> list[dict[str, Any]]:
+    deals = [d for d in data.get("deals") or [] if isinstance(d, dict)]
+    return [d for d in deals if str(d.get("owner") or "").split(" ")[0].lower() == owner.lower()]
+
+
+def _window(word: str, unit: str, today: date) -> tuple[date, date]:
+    if unit == "week":
+        start = today - timedelta(days=today.weekday()) + timedelta(days=7 if word == "next" else 0)
+        return start, start + timedelta(days=6)
+    if unit == "month":
+        first = today.replace(day=1)
+        if word == "next":
+            first = (first + timedelta(days=32)).replace(day=1)
+        return first, (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    q = (today.month - 1) // 3 + (1 if word == "next" else 0)
+    year, q = today.year + q // 4, q % 4
+    first = date(year, 3 * q + 1, 1)
+    return first, date(year + (q == 3), (3 * q + 3) % 12 + 1, 1) - timedelta(days=1)
+
+
+def say_closing(data: dict[str, Any], cards: list[dict[str, Any]], message: str) -> str:
+    seg = _seg_words(data)
+    attention = int(data.get("attention_count") or 0)
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch right now."
+    try:
+        today = datetime.fromisoformat(str(data.get("generated_at"))).date()
+    except ValueError:
+        return "I can't tell today's date from the briefing, so I can't say what closes when."
+    m = WINDOW.search(message)
+    word, unit = (m.group(1).lower(), m.group(2).lower()) if m else ("this", "month")
+    start, end = _window(word, unit, today)
+    words = f"{word} {unit}"
+    dated: list[tuple[date, dict[str, Any]]] = []
+    for c in cards:
+        try:
+            dated.append((date.fromisoformat(str(c.get("close_date"))), c))
+        except ValueError:
+            continue
+    dated.sort(key=lambda x: x[0])
+    scope = (
+        f" I checked the top {len(cards)} of the {attention} deals that need attention."
+        if len(cards) < attention
+        else ""
+    )
+    inside = [(d, c) for d, c in dated if start <= d <= end]
+    if inside:
+        items = [f"{c.get('account')}, on {date_display(d)}" for d, c in inside]
+        verb = "closes" if len(inside) == 1 else "close"
+        return (
+            f"Among the {len(cards)} riskiest deals{seg}, {plural(len(inside), 'deal')} {verb} {words}: "
+            f"{join_words(items)}.{scope}"
+        )
+    if not dated:
+        return f"I couldn't read the close dates of the riskiest deals{seg}."
+    d, c = dated[0]
+    return (
+        f"None of the {len(cards)} riskiest deals{seg} close {words}. The soonest is {c.get('account')}, "
+        f"on {date_display(d)}.{scope}"
+    )
+
+
+def say_deal(kinds: Sequence[str], data: dict[str, Any]) -> str:
+    """Answers about one deal from explain_deal_risk's structured result; the deal is named once."""
+    deal, risk = data.get("deal") or {}, data.get("risk") or {}
+    name = str(deal.get("account") or deal.get("name") or "That deal")
+    out: list[str] = []
+    for k in DEAL_KINDS:
+        if k not in kinds:
+            continue
+        first = not out
+        subject = name if first else "It"
+        if k == "owner":
+            out.append(f"{deal.get('owner') or 'Nobody'} owns {name if first else 'it'}.")
+        elif k == "stage":
+            out.append(f"{subject} is in the {deal.get('stage')} stage.")
+        elif k == "amount":
+            amount = deal.get("amount_display")
+            out.append(f"{subject} is worth {amount}." if amount else f"I don't have an amount for {name}.")
+        elif k == "close":
+            day = deal.get("close_date_display") or _day(deal.get("close_date"))
+            out.append(
+                f"{subject} is expected to close on {day}." if day else f"{name} has no close date on record."
+            )
+        elif k == "next":
+            step = str(deal.get("next_step") or "").strip().rstrip(".")
+            due = _day(deal.get("next_step_date"))
+            whose = f" for {name}" if first else ""
+            if step:
+                out.append(f"The next step on record{whose} is: {step}" + (f", due {due}." if due else "."))
+            else:
+                out.append(f"There's no next step on record{whose}.")
+        elif k == "health":
+            band = BAND_WORDS.get(str(risk.get("band")), "")
+            owner_of = f"{name}'s" if first else "Its"
+            out.append(f"{owner_of} health is {risk.get('health')}" + (f", {band}." if band else "."))
+        elif k == "trend":
+            out.append(_trend(subject, data))
+    return " ".join(out) or str(data.get("summary") or "")
+
+
+def _trend(subject: str, data: dict[str, Any]) -> str:
+    """Health two weeks ago against now, from explain_deal_risk's 14 daily risk scores (health = 100 - score)."""
+    risk = data.get("risk") or {}
+    scores = [
+        s for s in data.get("trend_14d") or [] if isinstance(s, (int, float)) and not isinstance(s, bool)
+    ]
+    band = BAND_WORDS.get(str(risk.get("band")), "")
+    since = _day(risk.get("band_since"))
+    tail = f" It has been {band} since {since}." if band and since else ""
+    if len(scores) < 2:
+        who = subject if subject != "It" else "it"
+        return f"I don't have enough history yet to say which way {who} is heading.{tail}"
+    then, now = 100 - round(scores[0]), 100 - round(scores[-1])
+    ago = f"{len(scores) - 1} days ago" if len(scores) == 14 else "at the start of what I have"
+    if now < then:
+        return f"{subject} is getting worse: health {then} {ago}, {now} now.{tail}"
+    if now > then:
+        return f"{subject} is getting better: health {then} {ago}, {now} now.{tail}"
+    return f"{subject} is holding steady at health {now}, the same as {ago}.{tail}"
+
+
+def say_detail(data: dict[str, Any]) -> str:
+    deal = data.get("deal") or {}
+    amount = str(deal.get("amount_display") or "")
+    article = "an" if re.match(r"\$(?:8\d*|11|18)(?!\d)", amount) else "a"
+    kind = f"{article} {amount} deal" if amount else "a deal"
+    if deal.get("stage"):
+        kind += f" in {deal['stage']}"
+    facts = [kind]
+    if deal.get("owner"):
+        facts.append(f"owned by {deal['owner']}")
+    if deal.get("close_date_display"):
+        facts.append(f"expected to close on {deal['close_date_display']}")
+    return f"{data.get('summary', '')} It's {', '.join(facts)}.".strip()
+
+
+def say_priority(top: dict[str, Any], data: dict[str, Any]) -> str:
+    deal, risk = data.get("deal") or {}, data.get("risk") or {}
+    name = deal.get("account") or top.get("account")
+    amount = f", {deal['amount_display']}" if deal.get("amount_display") else ""
+    owner = f", owned by {deal['owner']}" if deal.get("owner") else ""
+    band = BAND_WORDS.get(str(risk.get("band") or top.get("band")), "flagged")
+    reasons = " ".join(str(r.get("text")) for r in (data.get("reasons") or [])[:2] if isinstance(r, dict))
+    step = str(deal.get("next_step") or "").strip().rstrip(".")
+    due = _day(deal.get("next_step_date"))
+    nxt = f"The next step on record is: {step}" + (f", due {due}." if due else ".") if step else ""
+    head = f"Start with {name}{amount}{owner}: it's {band}, health {risk.get('health', top.get('health'))}."
+    return " ".join(p for p in (head, reasons, nxt) if p)
+
+
+def _lookup_failed(call: ToolCall, query: str) -> str:
+    err = (call.structured or {}).get("error") or {}
+    names = [
+        str(s.get("name")) for s in err.get("suggestions") or [] if isinstance(s, dict) and s.get("name")
+    ]
+    message = err.get("message") or call.summary or f"I couldn't find a deal called {query}."
+    return f"{message} Did you mean {join_words(names[:3])}?" if names else (call.summary or message)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# The turn.
+
+
+@dataclass
+class _Turn:
+    mcp: McpHttp
+    message: str
+    history: Sequence[tuple[str, str]]
+    screen: Screen | None
+    focus: Focus
+    kind: str = ""
+    segment: str | None = None
+    reset_segment: bool = False  # a fresh "what needs my attention" starts from the user's own focus again
+    owner_hit: bool = True
+
+    async def briefing(
+        self, *, limit: int | None = 5, segment: str | None = None, keep: bool = True
+    ) -> ToolCall:
+        args: dict[str, Any] = {}
+        if limit:
+            args["limit"] = limit
+        if seg := segment or (self.focus.segment if keep else None):
+            args["segment"] = seg
+        return await self.mcp.call_tool("get_risk_briefing", args)
+
+    async def lookup(
+        self, query: str, owner: str | None = None, *, strict: bool = False
+    ) -> str | ToolCall | None:
+        """A deal id, or the call to say (several matches, or none), or None for a strict miss."""
+        args = {"name_query": query} | ({"owner_name": owner} if owner else {})
+        found = await self.mcp.call_tool("lookup_deal", args)
+        cands = [c for c in (found.structured or {}).get("candidates") or [] if isinstance(c, dict)]
+        if strict:  # a name inside another question: only a near-exact match counts
+            sure = [c for c in cands if float(c.get("match_score") or 0) >= 0.9]
+            if not sure:
+                return None
+            return str(sure[0]["deal_id"]) if len(sure) == 1 and len(cands) == 1 else found
+        if not found.ok or len(cands) != 1:  # none, or no clear winner: never answer about a guess
+            return found
+        return str(cands[0]["deal_id"])
+
+    def placed(self) -> str | None:
+        """The deal at a place ("the second one"): the list just heard, else the board, else the last list."""
+        board = [d.id for d in self.screen.board] if self.screen is not None else []
+        if self.focus.fresh and self.focus.listed:
+            return _at_place(self.message, self.focus.listed)
+        return _at_place(self.message, board or self.focus.listed)
+
+    def referred(self) -> str | None:
+        """The deal "this" or "it" means: the open sheet for "this", the deal last discussed for "it"."""
+        open_deal = self.screen.open_deal if self.screen is not None else None
+        if THIS.search(self.message) and open_deal:
+            return open_deal
+        return self.focus.deal or open_deal
+
+    async def about_deal(self, deal_id: str, kinds: Sequence[str]) -> str:
+        msg = self.message
+        if RESULT.search(msg):
+            self.kind = "result"
+            return (await self.mcp.call_tool("get_triage_result", {"deal_id": deal_id})).summary
+        if TRIAGE.search(msg) and not kinds:
+            self.kind = "triage"
+            return (await self.mcp.call_tool("start_deep_triage", {"deal_id": deal_id})).summary
+        call = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deal_id})
+        data = call.structured or {}
+        self.kind = "explain"
+        if not call.ok or not data.get("deal"):
+            return call.summary
+        if kinds:
+            self.kind = ",".join(kinds)
+            facts = say_deal(kinds, data)
+            return f"{call.summary} {facts}" if WHY.search(msg) else facts
+        if EVERYTHING.search(msg):
+            self.kind = "detail"
+            return f"{say_detail(data)} {say_deal(['next', 'trend'], data)}"
+        if DETAIL.search(msg):
+            self.kind = "detail"
+            return say_detail(data)
+        return call.summary
+
+    async def aggregate(self, kind: str, *, owner: str | None = None, segment: str | None = None) -> str:
+        msg, band = self.message, _band(self.message)
+        self.kind = kind
+        if segment:
+            self.segment = segment
+        if kind == "briefing":
+            self.reset_segment = not segment
+            call = await self.briefing(limit=None, segment=segment, keep=False)
+            return ("Across all segments: " if call.ok and segment == "all" else "") + call.summary
+        if kind == "list":
+            asked = _top_n(msg)
+            call = await self.briefing(limit=max(1, min(asked, 5)), segment=segment)
+            return say_list(call.structured or {}, band, asked) if call.ok else call.summary
+        call = await self.briefing(segment=segment)
+        data = call.structured or {}
+        if not call.ok:
+            return call.summary
+        if kind == "total":
+            return say_total(data, band)
+        if kind == "count":
+            return say_count(data, band)
+        if kind == "compare":
+            return say_compare(data)
+        if kind == "new":
+            return say_new(data)
+        if kind == "biggest":
+            return say_biggest(data, band)
+        if kind == "owners" and owner:
+            self.owner_hit = bool(_owned(data, owner))
+            return say_owner(data, owner)
+        if kind == "over":
+            amount = parse_amount(msg)
+            return say_over(data, band, *amount) if amount else call.summary
+        if kind == "closing":
+            cards = []
+            for d in data.get("deals") or []:
+                if isinstance(d, dict) and d.get("deal_id"):
+                    card = await self.mcp.call_tool("explain_deal_risk", {"deal_id": d["deal_id"]})
+                    if card.ok and (card.structured or {}).get("deal"):
+                        cards.append(card.structured["deal"])  # type: ignore[index]
+            return say_closing(data, cards, msg)
+        return call.summary
+
+    async def priority(self) -> str:
+        self.kind = "priority"
+        self.reset_segment = True
+        call = await self.briefing(limit=5, keep=False)
+        deals = [d for d in (call.structured or {}).get("deals") or [] if isinstance(d, dict)]
+        if not call.ok or not deals:
+            return call.summary
+        explained = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deals[0]["deal_id"]})
+        if not explained.ok or not (explained.structured or {}).get("deal"):
+            return call.summary
+        return say_priority(deals[0], explained.structured or {})
+
+
+async def offline_answer(
+    mcp: McpHttp,
+    message: str,
+    history: Sequence[tuple[str, str]] = (),
+    pending: Pending | None = None,
+    screen: Screen | None = None,
+    focus: Focus | None = None,
+) -> tuple[str, Focus]:
+    """The reply, and the focus for the next turn (from this turn's tool results).
+
+    ``pending``: the preview waiting for a yes, a held write, or the action just confirmed (agent.Pending).
+    ``screen``: what the page shows: "this deal" is the open sheet and "the second one" the second deal
+    on the board, unless a list was just read out. ``focus``: what the conversation was about; ignored
+    when there is no history (a new conversation).
+    """
+    start = len(mcp.calls)
+    turn = _Turn(mcp, message, history, screen, (focus if history else None) or Focus())
+    reply = await _route(turn, pending)
+    after = next_focus(turn.focus, mcp.calls[start:], turn.kind, turn.segment)
+    if turn.reset_segment and turn.segment is None:
+        after.segment = None
+    return reply, after
 
 
 async def offline_turn(
@@ -87,50 +1104,150 @@ async def offline_turn(
     history: Sequence[tuple[str, str]] = (),
     pending: Pending | None = None,
     screen: Screen | None = None,
+    focus: Focus | None = None,
 ) -> str:
-    """``pending``: the preview waiting for a yes, or the action just confirmed (agent.Pending).
+    return (await offline_answer(mcp, message, history, pending, screen, focus))[0]
 
-    ``screen``: what the page shows. "This deal" means the open deal sheet and "the second one" the
-    second deal on the board, so neither needs a name (the page's ids, never a guess).
-    """
-    if pending and pending.state == "preview" and YES.fullmatch(message):
+
+async def _route(turn: _Turn, pending: Pending | None) -> str:
+    mcp, raw = turn.mcp, turn.message
+    greeting = ""
+    g = GREETING.match(raw)
+    if g and not YES.fullmatch(raw):
+        greeting = f"{g.group(1).capitalize()}. "
+        turn.message = raw[g.end() :].strip()
+    msg = turn.message
+
+    # A yes, a no or an undo, about what waits from an earlier turn.
+    if pending and pending.state == "ask" and YES.fullmatch(msg):
+        return (await mcp.call_tool(pending.tool, dict(pending.args))).summary
+    if pending and pending.state == "preview" and YES.fullmatch(msg):
         return (await mcp.call_tool("confirm_action", {"confirmation_token": pending.token})).summary
-    if pending and pending.state == "confirmed" and UNDO.search(message):
+    if pending and pending.state == "confirmed" and UNDO.search(msg):
         return (await mcp.call_tool("undo_action", {"confirmation_token": pending.token})).summary
-    if STANDING.search(message):
-        return (await mcp.call_tool("list_standing_orders", {})).summary
-    if PRIORITY.search(message):
-        return (await mcp.call_tool("get_risk_briefing", {"limit": 1})).summary
-    if not (TRIAGE.search(message) or EXPLAIN.search(message) or RESULT.search(message)):
-        return (await mcp.call_tool("get_risk_briefing", {})).summary
-
-    deal_id = screen_deal(message, screen)
-    if deal_id is None and PLACE.search(message):
-        # "The third one" with nothing there: say so, rather than look up a company called "third one".
+    if pending and pending.state in ("preview", "ask") and YES_BUT.match(msg) and not YES.fullmatch(msg):
         return (
-            "There isn't a deal in that place on the board."
-            if screen is not None and screen.board
-            else "I can't tell which deal that is. Open the pipeline, or say the deal's name."
+            "I can't change the details without the assistant model, which isn't available right now. "
+            "Say yes to go ahead exactly as it is, or no to drop it."
         )
-    query = "" if deal_id else deal_words(message)
-    if not deal_id and len(query) < 2 and screen is not None and screen.open_deal:
-        deal_id = screen.open_deal  # "dig into this" with a deal sheet open
-    if not deal_id and len(query) < 2:
-        query = recent_deal(history)
-    if not deal_id and len(query) < 2:
-        return "Which deal do you mean?"
-    if not deal_id:
-        found = await mcp.call_tool("lookup_deal", {"name_query": query})
-        candidates = (found.structured or {}).get("candidates") or []
-        if not found.ok or not candidates:
-            return found.summary or f"I couldn't find a deal called {query}."
-        if len(candidates) > 1:  # no clear winner: the server's summary asks which; never review a guess
+    if UNDO.search(msg):
+        return "There's nothing I can undo right now. A change can be undone for 30 seconds after you confirm it."
+    if YES.fullmatch(msg):
+        return "There's nothing waiting for a yes right now."
+    if ACK.fullmatch(msg):
+        return "Okay."
+    if declines(msg):
+        if pending and pending.state == "confirmed":
+            return "That's already done. Say undo to reverse it."
+        return "Okay, I've dropped it. Nothing was changed." if pending else "Okay, nothing was changed."
+    if THANKS.fullmatch(msg):
+        return "You're welcome."
+    if HELP.fullmatch(msg):
+        return HELP_TEXT
+    if SMALL_TALK.fullmatch(msg) or (greeting and not msg):
+        return greeting + await turn.aggregate("briefing")
+
+    for kind, pattern in WRITES:
+        if pattern.search(msg):
+            if kind == "stage":
+                return (
+                    "Watchfloor doesn't change a deal's stage: that's done in your CRM, and the next sync "
+                    "picks it up. Nothing was changed."
+                )
+            return (
+                f"{NEEDS_MODEL[kind]} needs the assistant model, which isn't available right now, so "
+                "nothing was changed. I can still answer questions about your deals."
+            )
+    if STANDING.search(msg):
+        return greeting + (await mcp.call_tool("list_standing_orders", {})).summary
+    if PRIORITY.search(msg):
+        return greeting + await turn.priority()
+    return greeting + await _ask(turn)
+
+
+async def _ask(turn: _Turn) -> str:
+    msg = turn.message
+    owner, rest = _without_owner(msg)
+    name = deal_words(rest)
+    kinds = _kinds(rest)
+    agg = _aggregate(rest)
+    seg = _segment(rest)
+    elliptical = bool(ELLIPSIS.match(msg))
+    asks = bool(ASK_DEAL.search(rest) or RESULT.search(rest) or TRIAGE.search(rest) or kinds)
+    last_kinds = [k for k in turn.focus.kind.split(",") if k in DEAL_KINDS]
+
+    async def named(query: str, use: Sequence[str], who: str | None = None) -> str:
+        found = await turn.lookup(query, who)
+        if isinstance(found, ToolCall):
+            return found.summary if found.ok else _lookup_failed(found, query)
+        return await turn.about_deal(found, use) if found else WHICH
+
+    # "The second one": a place in the list just heard, on the board, or last listed.
+    if _place(msg) is not None:
+        deal_id = turn.placed()
+        if deal_id is None:
+            board = turn.screen.board if turn.screen is not None else []
+            if board:
+                return "There isn't a deal in that place on the board."
+            if turn.focus.listed:
+                return "There isn't a deal in that place in the list."
+            return "I can't tell which deal that is. Open the pipeline, or say the deal's name."
+        return await turn.about_deal(deal_id, kinds or ([] if asks else last_kinds))
+
+    # "It", "this deal": a deal the user doesn't name.
+    if (PRONOUN.search(msg) or THIS.search(msg)) and not name and (asks or elliptical):
+        deal_id = turn.referred()
+        if deal_id is None and (query := recent_deal(turn.history)):
+            return await named(query, kinds)
+        if deal_id is None:
+            return WHICH if asks or kinds else FALLBACK
+        return await turn.about_deal(deal_id, kinds)
+
+    # A deal named in words: looked up for real when the question is about a deal, strictly otherwise.
+    # A question about the whole pipeline with a stray word in it ("versus a week ago") is not a lookup.
+    # A name in it counts only when it matches a deal exactly (the agg branch below).
+    pipeline_first = bool(agg) and not owner
+    if name and (owner or asks or elliptical) and not pipeline_first:
+        return await named(name, kinds or ([] if asks else last_kinds), owner)
+    if owner and not name:
+        text = await turn.aggregate("owners", owner=owner, segment=seg)
+        if not turn.owner_hit:  # "Kestrel's deals": no rep of that name has one, so is it a company?
+            found = await turn.lookup(owner, strict=True)
+            if isinstance(found, ToolCall):
+                return found.summary
+            if found is not None:
+                return await turn.about_deal(found, kinds)
+        return text
+    if agg:
+        if name:
+            found = await turn.lookup(name, strict=True)
+            if isinstance(found, ToolCall):
+                return found.summary
+            if found is not None:
+                return await turn.about_deal(
+                    found, kinds or {"compare": ["trend"], "total": ["amount"]}.get(agg, [])
+                )
+        return await turn.aggregate(agg, segment=seg)
+    if GENERAL.search(msg) and not name:
+        return await turn.aggregate("briefing")
+    if seg:
+        again = turn.focus.kind if elliptical and turn.focus.kind in AGG_KINDS else "briefing"
+        return await turn.aggregate(again, segment=seg)
+    if asks and not name:
+        # "What's the next step?", "Why?", "Dig in": the deal this conversation is about, if there is one.
+        deal_id = turn.focus.deal or (turn.screen.open_deal if turn.screen is not None else None)
+        if deal_id is None and (query := recent_deal(turn.history)):
+            return await named(query, kinds)
+        return await turn.about_deal(deal_id, kinds) if deal_id else WHICH
+    if BRIEFING.search(msg):
+        return await turn.aggregate("briefing")
+    if name:
+        found = await turn.lookup(name, strict=True)
+        if isinstance(found, ToolCall):
             return found.summary
-        deal_id = candidates[0]["deal_id"]
-    if RESULT.search(message):
-        call = await mcp.call_tool("get_triage_result", {"deal_id": deal_id})
-    elif TRIAGE.search(message):
-        call = await mcp.call_tool("start_deep_triage", {"deal_id": deal_id})
-    else:
-        call = await mcp.call_tool("explain_deal_risk", {"deal_id": deal_id})
-    return call.summary
+        if found is not None:
+            return await turn.about_deal(found, last_kinds if elliptical else [])
+    if elliptical and _band(msg):
+        again = turn.focus.kind if turn.focus.kind in ("total", "count", "list", "biggest") else "count"
+        return await turn.aggregate(again)
+    return FALLBACK

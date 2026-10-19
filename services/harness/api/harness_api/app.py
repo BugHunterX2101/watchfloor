@@ -45,8 +45,11 @@ from .control import Profile, Screen
 from .headers import SecurityHeaders
 from .limits import Limiter, subject
 from .mcp_http import McpError, McpHttp, RateLimited, Unauthorized
+from .offline import Focus
 from .refresh import Refreshes
 from .session import (
+    FOCUS_COOKIE,
+    FOCUS_TTL_S,
     PENDING_COOKIE,
     PENDING_TTL_S,
     PKCE_COOKIE,
@@ -198,6 +201,17 @@ def create_app(
         elif PENDING_COOKIE in request.cookies:
             resp.delete_cookie(PENDING_COOKIE, path="/")
 
+    def read_focus(request: Request) -> Focus | None:
+        return Focus.from_dict(box.open(request.cookies.get(FOCUS_COOKIE), ttl=FOCUS_TTL_S))
+
+    def keep_focus(request: Request, resp: Response, focus: Focus | None) -> None:
+        if resp.status_code != 200:
+            return
+        if focus is not None and (focus.deal or focus.listed or focus.segment):
+            set_cookie(resp, FOCUS_COOKIE, box.seal(focus.to_dict()), FOCUS_TTL_S)
+        elif FOCUS_COOKIE in request.cookies:
+            resp.delete_cookie(FOCUS_COOKIE, path="/")
+
     def back_to_web(**query: str) -> RedirectResponse:
         sep = "&" if "?" in conf.web_url else "?"
         return RedirectResponse(conf.web_url + (sep + urlencode(query) if query else ""), status_code=303)
@@ -242,6 +256,7 @@ def create_app(
         resp = JSONResponse({"signed_in": False})
         resp.delete_cookie(SESSION_COOKIE, path="/")
         resp.delete_cookie(PENDING_COOKIE, path="/")
+        resp.delete_cookie(FOCUS_COOKIE, path="/")
         return resp
 
     def signed_out() -> Response:
@@ -322,7 +337,8 @@ def create_app(
         assert isinstance(body, ConverseIn)
         history = [(line.role, line.text) for line in body.history]
         pending = read_pending(request)
-        after: dict[str, Pending | None] = {}
+        focus = read_focus(request)
+        after: dict[str, Any] = {}
 
         async def turn(token: str) -> dict[str, Any]:
             result = await run_turn(
@@ -337,12 +353,15 @@ def create_app(
                 screen=body.context,
                 profile=body.profile,
                 unheard=body.unheard,
+                focus=focus,
             )
             after["pending"] = result.pending
+            after["focus"] = result.focus
             return result.public()
 
         resp = await with_session(request, turn, converse_limit)
         keep_pending(request, resp, after.get("pending"))
+        keep_focus(request, resp, after.get("focus"))
         return resp
 
     async def view_tool(request: Request) -> Response:

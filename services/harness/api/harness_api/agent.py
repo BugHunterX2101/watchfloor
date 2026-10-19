@@ -59,7 +59,7 @@ from .control import (
     without_unsupported,
 )
 from .mcp_http import McpError, McpHttp, ToolCall, Unauthorized
-from .offline import offline_turn
+from .offline import Focus, next_focus, offline_answer
 
 log = logging.getLogger(__name__)
 
@@ -223,6 +223,7 @@ class TurnResult:
     pending: Pending | None = None  # for the app's cookie, never sent to the browser
     actions: list[dict[str, Any]] = field(default_factory=list)  # for the page (control.py)
     before: Pending | None = None  # what waited when the turn began (to tell what this turn added)
+    focus: Focus | None = None  # which deals the conversation is about, for the app's cookie
 
     def public(self) -> dict[str, Any]:
         return {
@@ -555,6 +556,7 @@ async def run_turn(
     screen: Screen | None = None,
     profile: Profile | None = None,
     unheard: bool = False,
+    focus: Focus | None = None,
 ) -> TurnResult:
     """``model_factory`` replaces the model chain (tests). ``pending`` comes from the previous turn.
 
@@ -562,7 +564,10 @@ async def run_turn(
     back in ``TurnResult.actions`` for the page to run. ``profile`` is what the browser knows about
     the user (name, time of day, how long they like replies, pinned deals): context, never commands.
     ``unheard``: the user spoke before hearing the previous reply, so this message cannot confirm it.
+    ``focus``: the deals the conversation was about (from the app's cookie); ignored in a new conversation.
     """
+    focus = focus if history else None
+    new_focus: Focus | None = None
     engine = cfg.engine
     if engine is None:
         raise Misconfigured(
@@ -612,10 +617,16 @@ async def run_turn(
                 engine = "offline"
                 state = TurnState()
                 async with asyncio.timeout_at(turn_ends):  # the router answers in the reserve, or the 504
-                    reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
+                    reply, new_focus = await offline_answer(
+                        mcp, message, history, None if unheard else pending, screen, focus
+                    )
         else:
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
-            reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
+            reply, new_focus = await offline_answer(
+                mcp, message, history, None if unheard else pending, screen, focus
+            )
+        if new_focus is None:  # a model answered: what its tools touched is what "it" means next
+            new_focus = next_focus(focus, mcp.calls)
         if engine == "strands" and state.asked is None:
             # The model's own words only. While a change waits for an answer, its question may repeat.
             waiting = pending is not None and pending.state != "confirmed"
@@ -637,6 +648,7 @@ async def run_turn(
             pending=carry,
             actions=state.sink.actions,
             before=pending,
+            focus=new_focus,
         )
     finally:
         usage.log(scope="harness", engine=engine, model=",".join(tried))

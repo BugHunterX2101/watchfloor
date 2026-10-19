@@ -112,6 +112,7 @@ async def build_briefing(ctx: ServiceContext, args: m.BriefingIn) -> m.BriefingO
         week_ago=week_ago(week_day.isoformat(), at_risk, attention, before["at_risk"], before["attention"])
         if before is not None
         else None,
+        segment=segment,
     )
 
 
