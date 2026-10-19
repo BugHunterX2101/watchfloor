@@ -702,3 +702,91 @@ async def test_everything_about_a_deal_adds_the_next_step_and_the_trend() -> Non
     got = await Talk().say("Tell me everything about Kestrel")
     assert "It's an $84K deal in Proposal, owned by Daniel R." in got
     assert "next step on record" in got and "health" in got.split("next step on record")[1]
+
+
+async def test_a_deal_asked_about_with_a_window_says_whether_it_falls_in_it() -> None:
+    t = Talk()
+    assert await t.say("When does Harbor close this month?") == (
+        "Harbor & Pine Logistics is expected to close on Tuesday, November 10. That is not in this month."
+    )
+    assert (await t.say("Does Harbor close next month?")).endswith("That is within next month.")
+
+
+async def test_odd_phrasings_get_the_briefing_not_a_company_lookup() -> None:
+    for q in (
+        "Give me a rundown of my pipeline",
+        "What's the damage?",
+        "Where are we bleeding?",
+        "Anything I should worry about today?",
+        "tell me about my day",
+        "Can you summarize?",
+    ):
+        t = Talk()
+        assert (await t.say(q)).startswith("2 deals are at risk and 5 more are on watch"), q
+        assert t.mcp.names() == ["get_risk_briefing"], q
+
+
+async def test_the_riskiest_deal_is_the_top_of_the_briefing() -> None:
+    for q in (
+        "Which account is in the worst shape?",
+        "Show me the riskiest deal",
+        "Which deal has the lowest health?",
+    ):
+        t = Talk()
+        got = await t.say(q)
+        assert got.startswith(
+            "The riskiest deal is Kestrel Biotech, $84K, owned by Daniel R.: it's at risk, health 29."
+        ), q
+        assert "lookup_deal" not in t.mcp.names(), q
+
+
+async def test_how_long_a_deal_has_been_in_its_band() -> None:
+    t = Talk()
+    assert await t.say("How long has Kestrel been at risk?") == (
+        "Kestrel Biotech has been at risk since Saturday, October 17."
+    )
+    assert (await t.say("And Orbital?")).endswith("on watch since Thursday, October 15.")
+
+
+async def test_the_soonest_closing_deal() -> None:
+    got = await Talk().say("Which deal is closing soonest?")
+    assert got.startswith(
+        "Among the 5 riskiest deals, the soonest to close is Harbor & Pine Logistics, on Tuesday, November 10."
+    )
+
+
+async def test_who_holds_the_most_money_is_added_up_from_the_deals_seen() -> None:
+    got = await Talk().say("Who owns the most at-risk money?")
+    assert got.startswith(
+        "Among the deals I can see, Daniel R. has the most at risk: $84K across 1 deal (Kestrel Biotech)."
+    )
+    got = await Talk().say("Which rep has the most?")
+    assert "Daniel R. has the most at risk or on watch: $115K across 2 deals" in got
+
+
+async def test_questions_it_cannot_answer_are_said_so_not_answered_with_something_else() -> None:
+    for q, said in (
+        ("Which deals have gone quiet?", "I can't filter deals by how long they've been quiet."),
+        ("Any deal without a next step?", "I can't scan every deal for gaps like that."),
+        ("What's the average deal size?", "I don't work out averages."),
+    ):
+        t = Talk()
+        assert (await t.say(q)).startswith(said), q
+        assert t.mcp.names() == [], q
+
+
+async def test_a_forecast_question_says_it_does_not_forecast() -> None:
+    got = await Talk().say("Is Kestrel going to close?")
+    assert got.startswith(
+        "I can't forecast whether a deal will close, but here is where it stands. Kestrel Biotech is At Risk"
+    )
+
+
+async def test_how_much_does_a_rep_have_is_about_the_rep() -> None:
+    got = await Talk().say("How much does Daniel have at risk?")
+    assert got.startswith("Among the 5 riskiest deals, Daniel R. owns Kestrel Biotech")
+
+
+async def test_what_is_happening_with_a_company_is_a_lookup() -> None:
+    got = await Talk().say("What's happening with Harbor?")
+    assert got.startswith("Harbor & Pine Logistics is At Risk")

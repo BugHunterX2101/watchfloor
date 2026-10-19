@@ -45,8 +45,8 @@ if TYPE_CHECKING:
 
 DEAL_ID = re.compile(r"^dl_[0-9A-Za-z]{1,40}$")
 SEGMENTS = ("smb", "mid", "enterprise", "all")
-DEAL_KINDS = ("owner", "stage", "amount", "close", "next", "health", "trend")
-AGG_KINDS = ("total", "count", "compare", "new", "list", "biggest", "closing", "briefing", "over")
+DEAL_KINDS = ("owner", "stage", "amount", "close", "next", "health", "trend", "since")
+AGG_KINDS = ("total", "count", "compare", "new", "list", "biggest", "closing", "briefing", "over", "ranking")
 TURN_KINDS = frozenset(
     {"explain", "detail", "result", "triage", "priority", "owners", *DEAL_KINDS, *AGG_KINDS}
 )
@@ -235,10 +235,17 @@ STANDING = re.compile(
 )
 # "Where do I start?": the briefing's first deal, which the server ranks by band and deal value.
 PRIORITY = re.compile(
-    r"\b(what should i (do|tackle|handle|look at|work on) first|where (do|should) i (start|begin)|most urgent|"
+    r"\b(riskiest|worst|weakest|lowest health|most at[- ]risk(?! (money|dollars|deals))|"
+    r"most likely to (churn|slip|be lost|fall through|not close)|"
+    r"what should i (do|tackle|handle|look at|work on) first|where (do|should) i (start|begin)|most urgent|"
     r"biggest (risk|problem|worry|fire)|top (deal|risk|priority)|first priority|what'?s (my )?(top|first) priority)\b",
     re.IGNORECASE,
 )
+FORECAST = re.compile(
+    r"\b(going to|gonna|will|likely to|chance of|odds of|probability)\b[^?]*\b(close|win|sign|slip|happen|land)\b",
+    re.IGNORECASE,
+)
+SUPERLATIVE = re.compile(r"\b(riskiest|worst|weakest|lowest health|most at[- ]risk|most likely)\b", re.I)
 RESULT = re.compile(
     r"\b(results?|findings?|came back|outcome|(review|triage|it|that) (find|found|say|said|show|turn up|come up with)"
     r"|(review|triage) (done|ready|back|finished|over)|is it (done|finished|back|ready))\b",
@@ -251,7 +258,7 @@ TRIAGE = re.compile(
 ASK_DEAL = re.compile(
     r"\b(why|explain|what'?s wrong|what is wrong|what'?s going on with|in trouble|a problem|tell me (more )?about|"
     r"show me|look up|pull up|details|status of|how is|how'?s|how are|doing|at risk|risky|worried about|"
-    r"concern(ed|s)?)\b",
+    r"concern(ed|s)?|what'?s (happening|up) with|what is (happening|up) with|news (on|about))\b",
     re.IGNORECASE,
 )
 DETAIL = re.compile(
@@ -288,6 +295,7 @@ KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     ("health", re.compile(r"\b(health|score)\b", re.IGNORECASE)),
+    ("since", re.compile(r"\b(since when|how long (has|have|is|was)|for how long)\b", re.IGNORECASE)),
     (
         "trend",
         re.compile(
@@ -330,7 +338,9 @@ LIST = re.compile(
     r"(at risk|on watch)|show (me )?(the |all |my )?deals|name them|which ones|what are they)\b",
     re.IGNORECASE,
 )
+SOONEST = re.compile(r"\b(soonest|earliest|next to close|clos\w* first)\b", re.IGNORECASE)
 CLOSING = re.compile(
+    r"\bsoonest\b|\bearliest\b|\bnext to close\b|\bclos\w* first\b|"
     r"\b(clos(e|es|ing)|due|decid\w*|sign\w*)\b.*\b(this|next) (week|month|quarter)\b|\bclosing soon\b|"
     r"\bclose soon\b|\b(this|next) (week|month|quarter)\b.*\bclos",
     re.IGNORECASE,
@@ -353,6 +363,35 @@ ELLIPSIS = re.compile(r"\s*(and|what about|how about|same for|and what about|wha
 GENERAL = re.compile(
     r"\bhow(?:'s| is| are| does| do)\s+(?:my |the )?(?:everything|things|it all|it looking|all looking)\b",
     re.I,
+)
+OVERVIEW = re.compile(
+    r"\b(run ?down|damage|bleeding|burning|summari[sz]e|summary of|my day|worry|worried|the situation|"
+    r"state of (things|play)|big picture)\b",
+    re.IGNORECASE,
+)
+WHO_MOST = re.compile(
+    r"\b(who|which (rep|owner|person|one))\b[^?]*\b(owns?|has|have|handles?|holds?)\b"
+    r"[^?]*\b(most|biggest|largest|more)\b",
+    re.IGNORECASE,
+)
+UNSUPPORTED: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"\b(gone (quiet|dark|silent)|going (quiet|dark|silent)|stale|ghost\w*|gone cold)\b", re.I
+        ),
+        "I can't filter deals by how long they've been quiet. Ask about one deal and I'll say how long it's "
+        "been since two-way contact.",
+    ),
+    (
+        re.compile(
+            r"\b(without|with no|missing|lacking|lacks?) (a |an )?(next step|close date|owner)\b", re.I
+        ),
+        "I can't scan every deal for gaps like that. Ask about one deal and I'll tell you what's on record.",
+    ),
+    (
+        re.compile(r"\b(average|mean|median)\b", re.I),
+        "I don't work out averages. I can give you the total at risk and on watch, and how many deals are in each.",
+    ),
 )
 WATCH_BAND = re.compile(r"\b(on watch|watch ?list|watched|being watched)\b", re.IGNORECASE)
 RISK_BAND = re.compile(r"\b(at[- ]risk)\b", re.IGNORECASE)
@@ -383,12 +422,16 @@ OWNER = re.compile(
     r"|\b(?P<b>[a-z]+)['’]s (?:deals|accounts|pipeline|book)\b"
     r"|\b(?:deals|accounts) (?:owned by|of|for|belonging to|that belong to|run by|handled by) (?P<c>[a-z]+)\b"
     r"|\b(?:what|which) does (?P<d>[a-z]+) (?:own|have|handle)\b"
-    r"|\bwhat(?:'s| is) (?P<e>[a-z]+) working on\b",
+    r"|\bwhat(?:'s| is) (?P<e>[a-z]+) working on\b"
+    r"|\bhow (?:much|many)\b[^?]*?\bdoes (?P<f>[a-z]+) (?:have|own|hold|handle)\b",
     re.IGNORECASE,
 )
 
 STOP = frozenset(
-    """a an the is are was were be been am at on in of for to with about from by as into me my mine our ours i
+    """riskiest worst weakest lowest highest average mean median day without overdue quiet summarize summarise
+    summary rundown damage bleeding burning worry soonest earliest shape churn likely gone going
+    long happening news
+    a an the is are was were be been am at on in of for to with about from by as into me my mine our ours i
     we you your yours please can could would will should shall may might must do does did done doing have has had
     get got give gives show tell let lets let's want need needs needed
     why what whats what's which who whos who's whom whose when where how hows how's
@@ -718,6 +761,40 @@ def say_owner(data: dict[str, Any], owner: str) -> str:
     )
 
 
+def say_ranking(data: dict[str, Any], band: str | None) -> str:
+    """Whose deals hold the most money, among the deals the briefing lists (a total from their cents)."""
+    seg = _seg_words(data)
+    deals = [
+        d for d in data.get("deals") or [] if isinstance(d, dict) and isinstance(d.get("amount_cents"), int)
+    ]
+    attention = int(data.get("attention_count") or 0)
+    if attention == 0:
+        return f"Nothing{seg} is at risk or on watch right now."
+    pool = [d for d in deals if band is None or d.get("band") == band]
+    if not pool:
+        return "I can't see any amounts to add up. They may be switched off in your briefing settings."
+    by: dict[str, list[dict[str, Any]]] = {}
+    for d in pool:
+        by.setdefault(str(d.get("owner") or "Nobody"), []).append(d)
+    totals = sorted(
+        ((sum(x["amount_cents"] for x in ds), o, ds) for o, ds in by.items()), key=lambda t: -t[0]
+    )
+    top, owner, ds = totals[0]
+    scope = (
+        f" I can see only the top {len(deals)} of the {attention} deals that need attention."
+        if len(deals) < attention
+        else ""
+    )
+    label = BAND_WORDS.get(band or "", "at risk or on watch")
+    names = join_words([str(x.get("account")) for x in ds])
+    if len(totals) > 1 and totals[1][0] == top:
+        return f"{owner} and {totals[1][1]} are level on {label}, at {money_display(top)} each.{scope}"
+    return (
+        f"Among the deals I can see{seg}, {owner} has the most {label}: {money_display(top)} "
+        f"across {plural(len(ds), 'deal')} ({names}).{scope}"
+    )
+
+
 def parse_amount(message: str) -> tuple[str, int] | None:
     """("over" | "under" | "at least", cents) from "over 50K", "under fifty thousand", else None."""
     m = AMOUNT_OVER.search(message)
@@ -808,6 +885,21 @@ def say_closing(data: dict[str, Any], cards: list[dict[str, Any]], message: str)
         return "I can't tell today's date from the briefing, so I can't say what closes when."
     m = WINDOW.search(message)
     word, unit = (m.group(1).lower(), m.group(2).lower()) if m else ("this", "month")
+    if SOONEST.search(message) and not m:
+        firsts = sorted(
+            ((date.fromisoformat(str(c["close_date"])), c) for c in cards if _day(c.get("close_date"))),
+            key=lambda x: x[0],
+        )
+        if firsts:
+            d, c = firsts[0]
+            more = (
+                f" I checked the top {len(cards)} of the {attention} deals that need attention."
+                if len(cards) < attention
+                else ""
+            )
+            who = c.get("account")
+            head = f"Among the {len(cards)} riskiest deals{seg}, the soonest to close is {who}"
+            return f"{head}, on {date_display(d)}.{more}"
     start, end = _window(word, unit, today)
     words = f"{word} {unit}"
     dated: list[tuple[date, dict[str, Any]]] = []
@@ -875,6 +967,15 @@ def say_deal(kinds: Sequence[str], data: dict[str, Any]) -> str:
             out.append(f"{owner_of} health is {risk.get('health')}" + (f", {band}." if band else "."))
         elif k == "trend":
             out.append(_trend(subject, data))
+        elif k == "since":
+            band = BAND_WORDS.get(str(risk.get("band")), "")
+            since = _day(risk.get("band_since"))
+            if band and since:
+                out.append(f"{subject} has been {band} since {since}.")
+            else:
+                out.append(
+                    f"I don't have a date for when {name if first else 'it'} reached its current band."
+                )
     return " ".join(out) or str(data.get("summary") or "")
 
 
@@ -914,7 +1015,7 @@ def say_detail(data: dict[str, Any]) -> str:
     return f"{data.get('summary', '')} It's {', '.join(facts)}.".strip()
 
 
-def say_priority(top: dict[str, Any], data: dict[str, Any]) -> str:
+def say_priority(top: dict[str, Any], data: dict[str, Any], superlative: bool = False) -> str:
     deal, risk = data.get("deal") or {}, data.get("risk") or {}
     name = deal.get("account") or top.get("account")
     amount = f", {deal['amount_display']}" if deal.get("amount_display") else ""
@@ -924,7 +1025,8 @@ def say_priority(top: dict[str, Any], data: dict[str, Any]) -> str:
     step = str(deal.get("next_step") or "").strip().rstrip(".")
     due = _day(deal.get("next_step_date"))
     nxt = f"The next step on record is: {step}" + (f", due {due}." if due else ".") if step else ""
-    head = f"Start with {name}{amount}{owner}: it's {band}, health {risk.get('health', top.get('health'))}."
+    lead = "The riskiest deal is" if superlative else "Start with"
+    head = f"{lead} {name}{amount}{owner}: it's {band}, health {risk.get('health', top.get('health'))}."
     return " ".join(p for p in (head, reasons, nxt) if p)
 
 
@@ -1018,6 +1120,23 @@ class _Turn:
             return say_detail(data)
         return call.summary
 
+    async def close_in_window(self, deal_id: str) -> str:
+        """ "When does Harbor close this month?": the close date, and whether it falls in that window."""
+        answer = await self.about_deal(deal_id, ["close"])
+        m = WINDOW.search(self.message)
+        card = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deal_id})
+        briefing = await self.briefing(limit=1, keep=False)
+        try:
+            today = datetime.fromisoformat(str((briefing.structured or {}).get("generated_at"))).date()
+            closes = date.fromisoformat(str(((card.structured or {}).get("deal") or {}).get("close_date")))
+        except ValueError:
+            return answer
+        if not m:
+            return answer
+        start, end = _window(m.group(1).lower(), m.group(2).lower(), today)
+        words = f"{m.group(1).lower()} {m.group(2).lower()}"
+        return f"{answer} That is {'within' if start <= closes <= end else 'not in'} {words}."
+
     async def aggregate(self, kind: str, *, owner: str | None = None, segment: str | None = None) -> str:
         msg, band = self.message, _band(self.message)
         self.kind = kind
@@ -1048,6 +1167,8 @@ class _Turn:
         if kind == "owners" and owner:
             self.owner_hit = bool(_owned(data, owner))
             return say_owner(data, owner)
+        if kind == "ranking":
+            return say_ranking(data, band)
         if kind == "over":
             amount = parse_amount(msg)
             return say_over(data, band, *amount) if amount else call.summary
@@ -1061,7 +1182,7 @@ class _Turn:
             return say_closing(data, cards, msg)
         return call.summary
 
-    async def priority(self) -> str:
+    async def priority(self, superlative: bool = False) -> str:
         self.kind = "priority"
         self.reset_segment = True
         call = await self.briefing(limit=5, keep=False)
@@ -1071,7 +1192,7 @@ class _Turn:
         explained = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deals[0]["deal_id"]})
         if not explained.ok or not (explained.structured or {}).get("deal"):
             return call.summary
-        return say_priority(deals[0], explained.structured or {})
+        return say_priority(deals[0], explained.structured or {}, superlative)
 
 
 async def offline_answer(
@@ -1160,9 +1281,14 @@ async def _route(turn: _Turn, pending: Pending | None) -> str:
             )
     if STANDING.search(msg):
         return greeting + (await mcp.call_tool("list_standing_orders", {})).summary
+    if WHO_MOST.search(msg):
+        return greeting + await turn.aggregate("ranking")
     if PRIORITY.search(msg):
-        return greeting + await turn.priority()
-    return greeting + await _ask(turn)
+        return greeting + await turn.priority(bool(SUPERLATIVE.search(msg)))
+    reply = await _ask(turn)
+    if FORECAST.search(msg):  # the engine reports where a deal stands; it doesn't predict
+        reply = f"I can't forecast whether a deal will close, but here is where it stands. {reply}"
+    return greeting + reply
 
 
 async def _ask(turn: _Turn) -> str:
@@ -1181,6 +1307,12 @@ async def _ask(turn: _Turn) -> str:
         if isinstance(found, ToolCall):
             return found.summary if found.ok else _lookup_failed(found, query)
         return await turn.about_deal(found, use) if found else WHICH
+
+    # Questions this engine can't answer from a briefing: say so, never answer a different question.
+    if not name:
+        for pattern, text in UNSUPPORTED:
+            if pattern.search(msg):
+                return text
 
     # "The second one": a place in the list just heard, on the board, or last listed.
     if _place(msg) is not None:
@@ -1224,11 +1356,13 @@ async def _ask(turn: _Turn) -> str:
             if isinstance(found, ToolCall):
                 return found.summary
             if found is not None:
+                if agg == "closing" and isinstance(found, str):
+                    return await turn.close_in_window(found)
                 return await turn.about_deal(
                     found, kinds or {"compare": ["trend"], "total": ["amount"]}.get(agg, [])
                 )
         return await turn.aggregate(agg, segment=seg)
-    if GENERAL.search(msg) and not name:
+    if (GENERAL.search(msg) or OVERVIEW.search(msg)) and not name:
         return await turn.aggregate("briefing")
     if seg:
         again = turn.focus.kind if elliptical and turn.focus.kind in AGG_KINDS else "briefing"
