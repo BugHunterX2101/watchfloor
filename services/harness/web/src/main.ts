@@ -40,6 +40,8 @@ import { browserEars, canListen, listenOnce, speak, stopListening, stopSpeaking,
 import {
   clearSkyline,
   forgetEverything,
+  learn,
+  lessons,
   loadSkyline,
   onSettings,
   pinnedLabels,
@@ -52,12 +54,13 @@ import {
   type ThemeChoice,
 } from "./store";
 import { clearTrace, pendingTrace, showTrace } from "./trace";
-import { NEEDS_YES } from "./voice/actions";
+import { NEEDS_YES, type AppAction } from "./voice/actions";
 import { removeByVoice, run as runAction, type Host, type Outcome } from "./voice/commander";
 import { mountDock } from "./voice/dock";
 import { boardOf, profileOf } from "./voice/context";
-import { HELP_TEXT, interpretAll, isAnswer, stripWake, type Context, type Intent } from "./voice/grammar";
+import { helpText, interpretAll, isAnswer, stripWake, type Context, type Intent } from "./voice/grammar";
 import { createHandsFree, type HandsFree } from "./voice/handsfree";
+import { applyLessons } from "./voice/lessons";
 import { asksSomething, speakable } from "./voice/text";
 import { compare, snapshot, type Snapshot } from "./voice/watcher";
 
@@ -440,7 +443,7 @@ async function send(message: string, opts: { unheard?: boolean } = {}): Promise<
   try {
     const turn = await converse(text, history, {
       context: screenState(),
-      profile: profileOf(settings(), pinnedLabels(), new Date()),
+      profile: profileOf(settings(), pinnedLabels(), new Date(), lessons()),
       unheard: opts.unheard,
     });
     waiting = turn.awaiting?.fresh ? turn.awaiting : null;
@@ -454,6 +457,11 @@ async function send(message: string, opts: { unheard?: boolean } = {}): Promise<
     showTrace(calls, turn.calls, elapsed);
     recordTurn("Turn", turn.calls, elapsed);
     for (const call of turn.calls) earconFor(call.tool, call.ok);
+    // A standing order the assistant saved or removed shows on the Orders page at once, so a spoken "remove the
+    // first rule" next is about what is really there.
+    if (turn.calls.some((c) => c.ok && (c.tool === "set_standing_order" || c.tool === "remove_standing_order"))) {
+      orders.reload();
+    }
     for (const call of turn.calls) {
       if (call.tool === "start_deep_triage" && call.ok && typeof call.arguments.deal_id === "string") {
         watchReview(call.arguments.deal_id);
@@ -535,6 +543,7 @@ function grammarContext(): Context {
     dialog: dialogKind(),
     confirming: false,
     deals: pipeline.deals().map((d) => ({ id: d.deal_id, account: d.account, name: d.name })),
+    board: pipeline.shown().map((d) => d.deal_id),
     rules: orders.rules().map((r) => ({ id: r.rule_id, description: r.description })),
     openDealId: pipeline.openDealId(),
     awaiting: liveWaiting() !== null,
@@ -600,12 +609,19 @@ async function declineWaiting(said: string): Promise<void> {
 /** Several commands in one sentence, run in order, answered in one breath. */
 async function runTogether(said: string, intents: Intent[]): Promise<void> {
   stopSpeaking();
+  // "Only at-risk, biggest first" is one change to the board, answered once (not one sentence per half).
+  const acts: AppAction[] = [];
+  for (const i of intents) {
+    if (i.kind !== "action") continue;
+    const prev = acts.at(-1);
+    if (prev?.type === "pipeline_view" && i.action.type === "pipeline_view") acts[acts.length - 1] = { ...prev, ...i.action };
+    else acts.push(i.action);
+  }
   await local(said, async () => {
     const parts: string[] = [];
     let spoken = false;
-    for (const i of intents) {
-      if (i.kind !== "action") continue;
-      const out = await runAction(i.action, host);
+    for (const act of acts) {
+      const out = await runAction(act, host);
       if (out.say) parts.push(out.say);
       spoken ||= out.content;
     }
@@ -614,8 +630,15 @@ async function runTogether(said: string, intents: Intent[]): Promise<void> {
 }
 
 async function handleInput(raw: string, opts: { unheard?: boolean } = {}): Promise<void> {
-  const text = raw.trim();
+  // A mishearing the user corrected before is put right before anything reads the words, and the
+  // transcript says so: the page never quietly acts on words the user did not say.
+  const fixed = applyLessons(raw.trim(), lessons());
+  const text = fixed.text.trim();
   if (!text) return;
+  if (fixed.used.length) {
+    const what = fixed.used.map((l) => `“${l.heard}” as ${l.meant}`).join(", ");
+    addLine("system", `Taking ${what}, as you taught me. Settings lists what I've learned.`);
+  }
   const intents = interpretAll(text, grammarContext());
   const intent = intents[0];
   const heard = stripWake(text).text || text;
@@ -655,7 +678,7 @@ async function handleInput(raw: string, opts: { unheard?: boolean } = {}): Promi
       return;
     case "help":
       stopSpeaking();
-      await local(heard, async () => ({ say: HELP_TEXT, content: true }));
+      await local(heard, async () => ({ say: helpText(current()), content: true }));
       return;
     case "rest":
       stopSpeaking();
@@ -1196,6 +1219,11 @@ const host: Host = {
     });
   },
   announce,
+  learn(heard, meant) {
+    const ok = learn({ heard, meant });
+    if (ok) addLine("system", `Learned: “${heard}” means ${meant}. You can remove it in Settings.`);
+    return ok;
+  },
 };
 
 onRoute((route) => {

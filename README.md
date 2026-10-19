@@ -16,7 +16,7 @@ and the next step. Nothing changes until you say yes. Then change your mind, and
 ![TypeScript](https://img.shields.io/badge/web-TypeScript%20%2B%20Vite-3178C6)
 ![Postgres](https://img.shields.io/badge/postgres-16%20%2B%20RLS-336791)
 ![IaC](https://img.shields.io/badge/infra-AWS%20CDK%20(Python)-FF9900)
-![Tests](https://img.shields.io/badge/tests-583%20passing-2EA44F)
+![Tests](https://img.shields.io/badge/tests-816%20passing-2EA44F)
 
 [Try it](#try-it) · [Architecture](#architecture) · [Repository map](#repository-map) · [Run it locally](#run-it-locally) ·
 [Decisions](#decisions-that-shape-it) · [Docs](#documentation)
@@ -53,7 +53,7 @@ It is three things that fit together:
 |---|---|---|
 | **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, standing orders, log an update) and six read-only tools for the triage agents. | [`services/mcp_server`](services/mcp_server) |
 | **2. A triage backend** | Deterministic, explainable risk scoring (RIGS) kept fresh in Postgres, a transactional outbox, standing orders that run in the background, and a team of Strands agents (a Lead and four specialists) for a deep review, behind a deterministic output gate. | [`packages/core`](packages/core) · [`services/workers`](services/workers) · [`services/agents`](services/agents) |
-| **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 29 page actions, and a companion layer that lets you change your mind mid-sentence. | [`services/harness`](services/harness) |
+| **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 30 page actions, and a companion layer that lets you change your mind mid-sentence and learns the names it mishears. | [`services/harness`](services/harness) |
 
 **Path B.** The Alexa+ add-on toolkit was closed to our AWS account
 ([friction log entry 4](docs/friction-log.md)), so this entry is a *simulated* Alexa+ experience, as
@@ -72,6 +72,11 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
   executes it. A spoken "yes" is never inferred from the same turn that asked — [ADR-003](docs/adr/0003-two-tool-confirmation.md).
 - **Models propose, code decides.** Agent output passes a deterministic gate (evidence, people, actions,
   wording) before it can leave the container — [ADR-012](docs/adr/0012-lead-draft-and-output-gate.md).
+- **The model words the answer; it never supplies the facts.** Totals and the week-over-week comparison
+  are computed on the server. Every number, month, weekday and relative date in a spoken reply is
+  checked in code against that turn's tool results and the user's own words. A guess is sent back once,
+  then cut, and the assistant says it couldn't check rather than make one up. What a "yes" saves is
+  read back from the held arguments, not the model's paraphrase — [ADR-031](docs/adr/0031-learning-from-corrections.md).
 - **Failure is visible and recoverable.** Side effects go through a transactional outbox with backoff
   and a dead state; deep reviews time out cleanly; every change can be undone for 30 seconds — [ADR-008](docs/adr/0008-transactional-outbox.md), [ADR-021](docs/adr/0021-undo-and-more-time.md).
 - **Trust the data, not the text.** CRM free text is stored as data and shown to models inside
@@ -109,6 +114,8 @@ team (Lumenridge) and its deals, so nothing you do reaches a real customer.
 |---|---|
 | "What needs my attention today?" | `get_risk_briefing`: the ranked at-risk deals, and any standing orders that fired since last time |
 | "Why is Kestrel at risk?" | `lookup_deal` → `explain_deal_risk`: health, the four factors, the top reasons with evidence, a 14-day trend |
+| "How much is at risk?" / "Better or worse than last week?" | Totals over every open deal and a comparison with the snapshot seven days back, both computed on the server and said as given |
+| "How is castle bio doing?" … "No, I said Kestrel" | The correction is learned (names only, never numbers), so the same mishearing is fixed next time; listed and removable in Settings |
 | "Dig into Kestrel" … "Is the review finished?" | `start_deep_triage` → a Lead and four specialists work for ~20 s; the page reads the result out when it lands |
 | "Post a heads-up about Kestrel to the team" … "yes" | `propose_action` (preview) → `confirm_action`; "undo" takes it back for 30 s |
 | "Make that Friday" / "no, Harbor and Pine" / "never mind" | The pending change is replaced, redirected or dropped: **what you said last wins** |
@@ -542,6 +549,8 @@ flowchart LR
   GUARD --> G1["Writes held until a later-turn yes"]
   GUARD --> G2["Sign-out, forget data, clear activity<br/>ask in the page first"]
   GUARD --> G3["Only allow-listed view tools<br/>from the page"]
+  GUARD --> G4["Every number and date spoken<br/>checked against this turn's tools"]
+  GUARD --> G5["A held write only with<br/>numbers the user said"]
 ```
 
 ### 15. Watching the board
@@ -825,8 +834,8 @@ watchfloor/
 │       ├── api/                 # Starlette API; its own uv project
 │       │   ├── harness_api/
 │       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/view
-│       │   │   ├── agent.py                   # a turn: pending change · model chain · tools
-│       │   │   ├── control.py                 # control_app: the 29 page actions, validated
+│       │   │   ├── agent.py                   # a turn: pending change · model chain · tools · one second look at an unsupported number
+│       │   │   ├── control.py                 # control_app: the 30 page actions, validated · exact read-backs · grounding of numbers and dates
 │       │   │   ├── offline.py                 # the keyword router when no model can answer
 │       │   │   ├── mcp_http.py · session.py · refresh.py · pkce.py
 │       │   │   ├── limits.py · headers.py · config.py
@@ -846,8 +855,9 @@ watchfloor/
 │           │       ├── grammar.ts · commander.ts  # exact spoken commands → actions
 │           │       ├── actions.ts                 # the shared action vocabulary
 │           │       ├── context.ts · watcher.ts    # what the page tells the model · the board watcher
+│           │       ├── lessons.ts                 # corrections learned from the user (names only)
 │           │       └── dock.ts · text.ts
-│           └── test/                              # logic · voice · handsfree · companion (node --test)
+│           └── test/                              # logic · voice · handsfree · companion · precision · lessons (node --test)
 ├── db/
 │   ├── migrate.py
 │   ├── migrations/              # 0001_init · 0002_rls · 0003_auth_schema · 0004_roles_grants · 0005_undo · 0006_least_privilege
@@ -870,7 +880,7 @@ watchfloor/
 │   └── load/                    # Locust profile
 ├── docs/
 │   ├── PRD.md · DESIGN.md · TECHNICAL.md · DEPLOYMENT.md · SECURITY.md
-│   ├── adr/                     # 29 architecture decision records
+│   ├── adr/                     # 31 architecture decision records
 │   ├── implementation-notes.md · friction-log.md · feature-requests.md
 │   ├── brand/                   # logo, lockups, social card, colour tokens
 │   └── perf/                    # EXPLAIN plans for the hot queries
@@ -884,7 +894,7 @@ container each ships carries only what it needs ([ADR-011](docs/adr/0011-agents-
 
 ## Decisions that shape it
 
-Twenty-nine records in [`docs/adr`](docs/adr). The ones that matter most:
+Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
 
 | Decision | Why | ADR |
 |---|---|---|
@@ -905,6 +915,8 @@ Twenty-nine records in [`docs/adr`](docs/adr). The ones that matter most:
 | Voice-only control of every page | Hands full, eyes elsewhere | [027](docs/adr/0027-voice-only-control.md) |
 | Hands-free is a conversation | Nobody should tap a mic twice | [028](docs/adr/0028-hands-free-conversation.md) |
 | A companion, not a command line | Change your mind, be known, be told the board | [029](docs/adr/0029-voice-companion.md) |
+| A command must account for the whole sentence | Half a sentence must never run silently | [030](docs/adr/0030-voice-precision.md) |
+| Totals from the server, read-backs from code, corrections learned | The model words the answer; it never does the sums or decides what a yes saves | [031](docs/adr/0031-learning-from-corrections.md) |
 
 ---
 
@@ -976,12 +988,12 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 
 | Suite | Count | Covers |
 |---|---:|---|
-| Root (`pytest`) | 445 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
-| Harness API | 117 | OAuth flow, a full turn, pending changes, the unheard guard, dismissal, page-action validation, hardening, views |
-| Harness web | 98 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, the board watcher, pure logic |
+| Root (`pytest`) | 448 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
+| Harness API | 181 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router reading the screen |
+| Harness web | 113 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic |
 | Triage agents | 36 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
 | Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
-| **Total** | **705** | |
+| **Total** | **816** | |
 
 ```bash
 make test          # unit + protocol conformance
@@ -1047,6 +1059,10 @@ Honest limits of the voice experience:
   removes the old one, each step confirmed on its own.
 - Reading the board in the background marks the briefing as seen; this is disclosed in
   [ADR-029](docs/adr/0029-voice-companion.md).
+- The code checks every number and date the assistant says, but not facts without one: a made-up reason
+  or a wrong stage is held back only by the prompt and the same-turn tool rule. How often a model breaks
+  that is measured by live runs (one model, one script so far), as recorded in
+  [ADR-031](docs/adr/0031-learning-from-corrections.md).
 
 Honest limits of the security work ([docs/SECURITY.md](docs/SECURITY.md) has the full register):
 
@@ -1075,7 +1091,7 @@ way are in the [friction log](docs/friction-log.md) and [feature requests](docs/
 | [Technical](docs/TECHNICAL.md) | Every file, diagram, command, runbook and checklist |
 | [Deployment](docs/DEPLOYMENT.md) | Bootstrap, first deploy, secrets, domains, demo operations on AWS |
 | [Security](docs/SECURITY.md) | What was found and fixed, each with its test; what is accepted; what is not verified |
-| [ADRs](docs/adr) | The 29 decisions and their alternatives |
+| [ADRs](docs/adr) | The 31 decisions and their alternatives |
 | [Implementation notes](docs/implementation-notes.md) | Where the build departs from the specs |
 | [Friction log](docs/friction-log.md) · [Feature requests](docs/feature-requests.md) | What the platforms made hard, and what we'd ask for |
 | [Brand](docs/brand/README.md) | The mark, the lockups, the colours |

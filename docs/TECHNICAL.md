@@ -888,7 +888,7 @@ watchfloor/
 │               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone
 │               ├── voice/                  # run everything by voice (ADR-027)
-│               │   ├── actions.ts          #   the 29 page actions, checked on arrival (mirrors control.py)
+│               │   ├── actions.ts          #   the 30 page actions, checked on arrival (mirrors control.py)
 │               │   ├── grammar.ts          #   spoken commands that need no model; wake word; fuzzy deal and rule names
 │               │   ├── handsfree.ts        #   wake word, conversation window, talk-over, "that's all", auto-off (injected clock and recogniser; ADR-028)
 │               │   ├── context.ts          #   what the assistant is told about the person and the board (ADR-029)

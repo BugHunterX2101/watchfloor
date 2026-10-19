@@ -37,9 +37,9 @@ const SCENARIOS: Scenario[] = [
 // model needed) except the last group, which goes to the assistant. voice/grammar.ts is the source.
 const SAY: [string, string[]][] = [
   ["Move around", ["Go to the pipeline", "Open standing orders", "Show activity", "Open the guide", "Go home", "Go back"]],
-  ["Work the board", ["Show only at-risk deals", "Sort by amount", "Show the top three", "Show enterprise deals", "Open Kestrel", "Pin Kestrel"]],
+  ["Work the board", ["Show only at-risk deals", "Sort by amount", "Show the top three", "Show enterprise deals", "Clear filters", "Open Kestrel", "Open the second one", "Pin the first deal"]],
   ["Look and sound", ["Dark mode", "Speak slower", "Change the voice", "Mute", "Reduce motion", "Call me Priya"]],
-  ["Run the session", ["Stop", "Repeat that", "Read this page", "Remove the first rule", "Clear the conversation", "Sign me out"]],
+  ["Run the session", ["What can I say here?", "Stop", "Repeat that", "Read this page", "Remove the first rule", "Clear the conversation", "Sign me out"]],
   ["Ask and act", ["What needs my attention today?", "What should I do first?", "Show me Harbor and Pine", "Create a follow-up task for the owner of Kestrel", "Flag deals over fifty thousand with no reply for a week"]],
 ];
 
@@ -128,7 +128,8 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       h("li", null, "Talk over it, or say “stop”, to interrupt. Say “that's all” when you are finished, or “stop listening” to turn hands-free off."),
       h("li", null, "When a deep review finishes it tells you out loud, without being asked. About once a minute it also looks at your board and tells you if a deal slips to at risk, drops sharply, recovers, or a standing order triggers (that look reads your briefing, so it counts as seen; say “stop interrupting me” to quiet it)."),
       h("li", null, "Anything that signs you out, clears data or changes your orders is read back first and waits for your yes. Change your mind at any point: say “make it forty” to change a detail, or “no” or “cancel that” to drop it. If you speak while it is still working, it takes that up as soon as it has finished, and it never treats a yes said before you heard the question as your answer."),
-      h("li", null, "Say “keep it short” or “more detail” to set how long answers are, and tell it your name in Settings, or just say “call me …”."),
+      h("li", null, "If it mishears a name, correct it (“no, I said Kestrel”). It redoes the request and remembers the correction in this browser, so the same mishearing is put right next time; Settings lists what it has learned, and each can be removed. Numbers and yes or no are never learned: those are always read back."),
+      h("li", null, "Say “keep it short” or “more detail from now on” to set how long answers are (a plain “more detail” is a follow-up question about the last answer), and tell it your name in Settings, or just say “call me …”. “What can I say here?” lists what works on the page you are on."),
       h("li", null, "Hands-free switches itself off after five minutes without a request."),
     ),
     h(

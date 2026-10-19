@@ -31,6 +31,9 @@ export interface Context {
   /** The page has asked the user a question out loud and is waiting for yes or no. */
   confirming: boolean;
   deals: readonly DealRef[];
+  /** The ids of the deals on the board, in the order the user sees them ("the second one" means the
+   *  second of these). When absent, `deals` is taken to be in that order. */
+  board?: readonly string[];
   rules: readonly RuleRef[];
   /** The deal whose sheet is open. */
   openDealId: string | null;
@@ -98,8 +101,10 @@ const NO =
 
 // Dropping a change the assistant has just read back and is waiting on. Narrower than NO on purpose:
 // "wait" and "hold on" ask for more time, and "stop" stops the voice; neither declines the change.
-const DECLINE =
-  /^(?:no(?:\s+(?:thanks|thank\s+you|dont|do\s+not|leave\s+it|not\s+now))?|nope|nah|negative|not\s+now|cancel(?:\s+(?:that|it|this|the\s+(?:change|order|rule|update|action|task)))?|never\s*mind(?:\s+(?:that|it))?|forget\s+(?:it|that)|drop\s+(?:it|that)|scrap\s+(?:it|that)|dont\s+(?:do\s+(?:it|that)|bother|save\s+(?:it|that))|do\s+not\s+(?:do\s+(?:it|that)|save\s+(?:it|that)))$/;
+// One phrase or two together ("no, never mind", "never mind, leave it"), as people say them.
+const DECLINE_ONE =
+  "(?:no(?:\\s+(?:thanks|thank\\s+you|dont|do\\s+not|leave\\s+it|not\\s+now))?|nope|nah|negative|not\\s+now|cancel(?:\\s+(?:that|it|this|the\\s+(?:change|order|rule|update|action|task|draft|email)))?|never\\s*mind(?:\\s+(?:that|it))?|forget\\s+(?:about\\s+)?(?:it|that)|drop\\s+(?:it|that)|scrap\\s+(?:it|that)|skip\\s+(?:it|that)|leave\\s+it|dont\\s+(?:do\\s+(?:it|that)|bother|save\\s+(?:it|that)|worry\\s+about\\s+it)|do\\s+not\\s+(?:do\\s+(?:it|that)|save\\s+(?:it|that)))";
+const DECLINE = new RegExp(`^(?:(?:actually|okay|ok)\\s+)?${DECLINE_ONE}(?:\\s+${DECLINE_ONE})?(?:\\s+thanks)?$`);
 
 /** A bare yes or no (to a question on the screen or one just asked aloud). Held back while the
  *  assistant is still working: a "yes" said before the question was heard is not an answer to it. */
@@ -118,8 +123,8 @@ const REST =
 
 const PAGE_WORDS: [PageName, string][] = [
   ["watch", "watch|home|main|conversation|chat|assistant|talk|start"],
-  ["pipeline", "pipeline|board|risk\\s+board|deal\\s+board|deals|risk\\s+briefing|briefing\\s+board|pipeline\\s+board"],
-  ["orders", "orders|standing\\s+orders|standing\\s+rules|rules|alerts|alert\\s+rules"],
+  ["pipeline", "pipeline|pipe\\s+line|dashboard|board|risk\\s+board|deal\\s+board|deals|risk\\s+briefing|briefing\\s+board|pipeline\\s+board"],
+  ["orders", "orders?|standing\\s+orders?|standing\\s+rules?|rules?|alerts?|alert\\s+rules?"],
   ["activity", "activity|activity\\s+log|log|history|trace|tool\\s+calls|metrics|usage"],
   ["guide", "guide|help|help\\s+page|user\\s+guide|tutorial|instructions|how\\s+it\\s+works|shortcuts|keyboard\\s+shortcuts"],
 ];
@@ -131,8 +136,18 @@ const NAV = PAGE_WORDS.map(([name, words]) => ({
   named: new RegExp(`^(?:the\\s+)?(?:${words})\\s+(?:page|screen|tab)$`),
 }));
 
+// A page named on its own is a request to go there. Only the names that mean nothing else: "watch"
+// (a risk band), "home", "start" and "help" are left to the commands and to the assistant.
+const BARE_PAGE: [RegExp, PageName][] = [
+  [/^(?:pipeline|pipe\s+line)$/, "pipeline"],
+  [/^(?:orders?|standing\s+orders?)$/, "orders"],
+  [/^activity$/, "activity"],
+  [/^guide$/, "guide"],
+];
+
 function pageFrom(u: string): PageName | null {
   for (const n of NAV) if (n.verbed.test(u) || n.named.test(u)) return n.name;
+  for (const [re, name] of BARE_PAGE) if (re.test(u)) return name;
   if (/^(?:go\s+|take\s+me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?home(?:\s+page)?$/.test(u)) return "watch";
   if (/^(?:go\s+)?(?:back|return)\s+to\s+(?:the\s+)?(?:watch|conversation|main|chat)(?:\s+page|\s+screen)?$/.test(u)) return "watch";
   return null;
@@ -187,6 +202,22 @@ export function resolveDeal(query: string, deals: readonly DealRef[]): DealMatch
   if (!scored.length) return { deal: null, ambiguous: [] };
   const close = scored.filter((s) => s.score >= scored[0].score - 0.06);
   return close.length === 1 ? { deal: scored[0].deal, ambiguous: [] } : { deal: null, ambiguous: close.map((s) => s.deal) };
+}
+
+const POSITION =
+  /^(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|top|last|bottom)(?:\s+(?:one|deal|account))?$|^(?:deal\s+)?(?:number|no)\s+(one|two|three|four|five|[1-5])$/;
+const POSITION_N: Record<string, number> = { first: 1, "1st": 1, top: 1, second: 2, "2nd": 2, third: 3, "3rd": 3, fourth: 4, "4th": 4, fifth: 5, "5th": 5, last: -1, bottom: -1 };
+
+/** "The second one" as the deal in that place on the board. undefined: not a place at all (a name,
+ *  say); null: a place, but nothing is there (the board is empty or shorter). */
+export function dealAt(phrase: string, ctx: Pick<Context, "deals" | "board">): DealRef | null | undefined {
+  const m = POSITION.exec(phrase);
+  if (!m) return undefined;
+  const n = m[1] ? POSITION_N[m[1]] : toCount(m[2]);
+  if (!n) return null;
+  const byId = new Map(ctx.deals.map((d) => [d.id, d]));
+  const ordered = ctx.board?.length ? ctx.board.map((id) => byId.get(id)).filter((d): d is DealRef => !!d) : [...ctx.deals];
+  return (n === -1 ? ordered[ordered.length - 1] : ordered[n - 1]) ?? null;
 }
 
 const RULE_STOP = new Set(["the", "a", "an", "my", "that", "this", "standing", "order", "orders", "rule", "rules", "alert", "alerts", "about", "for", "on", "called", "named", "one", "number", "of", "with", "to"]);
@@ -249,6 +280,7 @@ const SEGMENT_WORDS: Record<string, SegmentName> = {
   "small businesses": "smb",
   "mid market": "mid",
   midmarket: "mid",
+  "s m b": "smb", // recognition spells an acronym out letter by letter
 };
 const SEGMENT_NAMED: Record<string, SegmentName> = { small: "smb", mid: "mid", medium: "mid", all: "all", every: "all", default: "default" };
 const VIEW_VERB = /^(?:show|display|list|filter(?:\s+by|\s+to|\s+on)?|see|give|only|just|focus\s+on|view|switch\s+to|use)\b\s*(.*)$/;
@@ -256,29 +288,54 @@ const VIEW_FILLER = new Set(["the", "me", "my", "only", "just", "deals", "deal",
 
 /** What is left of "show me only the at-risk deals" once the verb and filler words are gone. */
 function viewPhrase(u: string): string | null {
-  const m = VIEW_VERB.exec(u);
-  return m ? m[1].split(" ").filter((w) => w && !VIEW_FILLER.has(w)).join(" ") : null;
+  // "at risk deals only" is "only at risk deals": the word may come last.
+  const body = VIEW_VERB.exec(u)?.[1] ?? /^(.+)\s+only$/.exec(u)?.[1];
+  return body === undefined ? null : body.split(" ").filter((w) => w && !VIEW_FILLER.has(w)).join(" ");
 }
 
-const SORT_WORDS: [RegExp, SortName][] = [
-  [/\b(?:urgency|urgent|priority)\b/, "urgency"],
-  [/\bhealth\b/, "health"],
-  [/\b(?:amount|value|size|money|largest|biggest|bigger|worth)\b/, "amount"],
-  [/\b(?:name|alphabet\w*)\b/, "name"],
+// What may follow "sort by": the whole phrase must be a sort key. A phrase with anything else in it
+// ("amount and show only at risk", "health then open Kestrel") is not a sort command: the rest of the
+// sentence would be dropped without a word, so it goes on to the compound splitter or the assistant.
+const SORT_PHRASES: [RegExp, SortName][] = [
+  [/^(?:the\s+)?(?:urgency|urgent|priority|risk)$/, "urgency"],
+  [/^(?:the\s+)?health(?:\s+score)?$/, "health"],
+  [/^(?:the\s+)?(?:amount|value|size|money|worth|(?:deal|dollar)\s+(?:size|value|amount)|deal\s+worth)$/, "amount"],
+  [/^(?:the\s+)?(?:name|(?:account|company)\s+name|alphabet|alphabetical(?:ly)?(?:\s+order)?)$/, "name"],
 ];
+const SORT_VERB = "(?:sort|order|rank|arrange)(?:\\s+the)?(?:\\s+(?:board|deals|list|them|it|pipeline))?";
 
 function sortFrom(u: string): SortName | null {
-  const m = /^(?:sort|order|rank|arrange)(?:\s+the)?(?:\s+(?:board|deals|list|them|it|pipeline))?\s+by\s+(.+)$/.exec(u);
-  const phrase = m ? m[1] : /^(?:most\s+urgent|largest|biggest|lowest\s+health|sickest|alphabetical)\s+first$/.test(u) ? u : null;
-  if (!phrase) return null;
-  if (/^lowest\s+health|^sickest/.test(phrase)) return "health";
-  for (const [re, key] of SORT_WORDS) if (re.test(phrase)) return key;
-  return null;
+  const by = new RegExp(`^${SORT_VERB}\\s+by\\s+(.+)$`).exec(u);
+  if (by) {
+    for (const [re, key] of SORT_PHRASES) if (re.test(by[1])) return key;
+    return null;
+  }
+  if (new RegExp(`^${SORT_VERB}\\s+alphabetical(?:ly)?$`).test(u)) return "name";
+  const first = /^(?:the\s+)?(most\s+urgent|largest|biggest|highest(?:\s+(?:value|amount))?|lowest\s+health|sickest|alphabetical)(?:\s+deals?)?\s+first$/.exec(u);
+  if (!first) return null;
+  const w = first[1];
+  return /^most\s+urgent/.test(w) ? "urgency" : /health|sickest/.test(w) ? "health" : w === "alphabetical" ? "name" : "amount";
 }
 
 const DEVICE_SIZES: Record<string, DeviceName> = { "5": "compact", five: "compact", "8": "standard", eight: "standard", "15": "large", fifteen: "large" };
 const MOTION = "(?:animations?|motion)";
 const THEME_VERB = "(?:switch|turn|change|set|go|use|enable|activate|put)";
+
+// "Call me back when the review is done" is a request, not a name. A name is one to three words, none
+// of which is a word that starts a sentence or a time: anything else is left to the assistant, because
+// what is saved here is spoken back in every greeting.
+const NOT_A_NAME = new Set(
+  `a an and or but so if when whenever then than that this it its you me i we they them up down out over
+  back later after before once soon now again please about on at in to for with from by tomorrow tonight
+  today tonight next first anything something everything nothing whatever whoever when what why how`.split(/\s+/),
+);
+
+export function plausibleName(text: string): string | null {
+  const words = text.trim().split(/\s+/);
+  if (!words[0] || words.length > 3) return null;
+  const ok = words.every((w) => /^\p{L}[\p{L}'’.-]*$/u.test(w) && !NOT_A_NAME.has(w.toLowerCase()));
+  return ok ? words.join(" ") : null;
+}
 
 type Rule = (u: string, ctx: Context, raw: string) => Intent | null;
 
@@ -308,7 +365,7 @@ const RULES: Rule[] = [
       ? act({ type: "read_page" })
       : null,
   (u) =>
-    /^(?:help|help\s+me|what\s+can\s+i\s+say|what\s+can\s+you\s+do|what\s+do\s+i\s+say|commands|show\s+commands|voice\s+commands|how\s+do\s+i\s+use\s+(?:this|you))$/.test(u)
+    /^(?:help|help\s+me|what\s+can\s+i\s+say(?:\s+(?:here|on\s+this\s+page))?|what\s+can\s+you\s+do(?:\s+here)?|what\s+do\s+i\s+say|commands|show\s+commands|voice\s+commands|how\s+do\s+i\s+use\s+(?:this|you))$/.test(u)
       ? { kind: "help" }
       : null,
 
@@ -374,6 +431,15 @@ const RULES: Rule[] = [
     const word = m[1];
     return act({ type: "set_theme", theme: word === "dark" || word === "night" ? "dark" : word === "light" || word === "day" ? "light" : "auto" });
   },
+  // A complaint about the screen or the pace is a request for the obvious fix.
+  (u) => {
+    const m = /^(?:(?:its|this\s+is|the\s+screen\s+is)\s+)?too\s+(bright|dark)$/.exec(u);
+    return m ? act({ type: "set_theme", theme: m[1] === "bright" ? "dark" : "light" }) : null;
+  },
+  (u) => {
+    const m = /^(?:(?:youre|you\s+are|you)\s+(?:talking|speaking|going|talk|speak)\s+)?too\s+(fast|quickly|slow|slowly)$/.exec(u);
+    return m ? act({ type: "set_speech_rate", step: m[1].startsWith("fast") || m[1] === "quickly" ? "slower" : "faster" }) : null;
+  },
   (u) =>
     /^(?:mute|be\s+silent|silence\s+replies|stop\s+reading(?:\s+replies|\s+aloud)?|turn\s+off(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud|reading\s+aloud)|dont\s+(?:read|speak)(?:\s+replies|\s+aloud)?|no\s+(?:voice|sound))$/.test(u)
       ? act({ type: "set_read_aloud", on: false })
@@ -408,12 +474,13 @@ const RULES: Rule[] = [
   (u) =>
     /^(?:change|switch|next|different|another|try\s+(?:a\s+)?(?:different|another|new)|use\s+(?:a\s+)?(?:different|another|new))(?:\s+(?:the|your))?\s+voice$|^next\s+voice$/.test(u)
       ? act({ type: "change_voice", step: "next" })
-      : /^(?:previous|last)\s+voice$/.test(u)
+      : /^(?:(?:try|use|go\s+to|switch\s+to)\s+)?(?:the\s+)?(?:previous|last)\s+voice$/.test(u)
         ? act({ type: "change_voice", step: "previous" })
         : null,
   (_u, _ctx, raw) => {
     const m = /^\s*(?:you\s+can\s+)?(?:call\s+me|my\s+name\s+is|address\s+me\s+as)\s+(.{1,40}?)[\s.!]*$/i.exec(raw);
-    return m ? act({ type: "set_name", name: m[1] }) : null;
+    const name = m ? plausibleName(m[1]) : null;
+    return name ? act({ type: "set_name", name }) : null;
   },
   // how long the replies are
   (u) =>
@@ -451,14 +518,18 @@ const RULES: Rule[] = [
   (u) => {
     const phrase = viewPhrase(u);
     if (phrase !== null && phrase in BAND_WORDS) return view({ band: BAND_WORDS[phrase] });
-    return /^(?:clear|reset|remove)\s+the\s+filter$/.test(u) ? view({ band: "all" }) : null;
+    if (/^(?:clear|reset|remove)\s+the\s+filter$/.test(u)) return view({ band: "all" });
+    // Plural, or the whole view: every filter goes, the segment as well as the band.
+    return /^(?:clear|reset|remove)(?:\s+(?:the|all|my))?\s+filters$|^reset\s+the\s+(?:board|view|pipeline)$/.test(u)
+      ? view({ band: "all", segment: "default" })
+      : null;
   },
   (u) => {
     const sort = sortFrom(u);
     return sort ? view({ sort }) : null;
   },
   (u) => {
-    const m = /^(?:(?:show|load|give|list|get)(?:\s+me)?(?:\s+the)?\s+)?(?:top\s+|first\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})(?:\s+deals?|\s+items?|\s+accounts?)?$/.exec(u);
+    const m = /^(?:only\s+)?(?:(?:show|load|give|list|get)(?:\s+me)?(?:\s+the)?\s+)?(?:top\s+|first\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})(?:\s+deals?|\s+items?|\s+accounts?)?$/.exec(u);
     if (!m || !/\b(?:show|load|give|list|get|top|first|deals?)\b/.test(u)) return null;
     const n = toCount(m[1]);
     return n && n >= 1 ? view({ limit: Math.min(5, n) }) : null;
@@ -473,12 +544,16 @@ const RULES: Rule[] = [
       const open = ctx.deals.find((d) => d.id === ctx.openDealId);
       return open ? act({ type: "pin_deal", deal_id: open.id, deal_name: open.account, on }) : null;
     }
+    const at = dealAt(m[2], ctx);
+    if (at !== undefined) return at ? act({ type: "pin_deal", deal_id: at.id, deal_name: at.account, on }) : null;
     const hit = resolveDeal(m[2], ctx.deals);
     return hit.deal ? act({ type: "pin_deal", deal_id: hit.deal.id, deal_name: hit.deal.account, on }) : null;
   },
   (u, ctx) => {
     const m = /^(?:open|show\s+me|show|pull\s+up|bring\s+up|look\s+at|zoom\s+in\s+on|details?\s+(?:for|on|of))\s+(?:the\s+)?(.+?)(?:\s+(?:deal|details|sheet|card|account))?$/.exec(u);
     if (!m) return null;
+    const at = dealAt(m[1], ctx);
+    if (at !== undefined) return at ? act({ type: "open_deal", deal_id: at.id, deal_name: at.account }) : null;
     const hit = resolveDeal(m[1], ctx.deals);
     return hit.deal ? act({ type: "open_deal", deal_id: hit.deal.id, deal_name: hit.deal.account }) : null;
   },
@@ -486,7 +561,10 @@ const RULES: Rule[] = [
   // a standing order, named in words
   (u) => {
     const m = /^(?:remove|delete|cancel|stop|turn\s+off|get\s+rid\s+of|drop)(?:\s+(?:the|my|that|this))?\s+(?:(.*?)\s+)?(?:standing\s+)?(?:orders?|rules?|alerts?)(?:\s+(.*))?$/.exec(u);
-    return m ? { kind: "remove_rule", which: `${m[1] ?? ""} ${m[2] ?? ""}`.replace(/\bstanding\b/g, "").replace(/\s+/g, " ").trim() } : null;
+    if (!m) return null;
+    const which = `${m[1] ?? ""} ${m[2] ?? ""}`.replace(/\bstanding\b/g, "").replace(/\s+/g, " ").trim();
+    // "Remove the first rule and add one for ...": a second request is not part of the description.
+    return /\b(?:and|then|also|but|plus)\b/.test(which) ? null : { kind: "remove_rule", which };
   },
 ];
 
@@ -526,6 +604,23 @@ export function interpretAll(raw: string, ctx: Context): Intent[] {
   const intents = parts.map((p) => interpret(p, ctx));
   const ok = intents.every((i) => i.kind === "action" && !ASKS_USER.has(i.action.type));
   return ok ? intents : [whole];
+}
+
+const PAGE_HELP: Record<PageName, string> = {
+  watch: "On Watch, ask about your pipeline: what needs my attention, why is a deal at risk, dig into a deal, or save a standing order.",
+  pipeline:
+    "On the Pipeline you can say: show only at-risk deals, show enterprise, sort by amount, show the top three, open the first deal, or open a deal by name, then pin it.",
+  orders: "On Orders you can say: remove the first rule, or remove the rule about a deal. To add one, tell me what to watch for.",
+  activity: "On Activity you can say: show only errors, show only the changes, show all calls, or clear the log.",
+  guide: "On the Guide you can say: read this page, scroll down, or open settings.",
+};
+
+/** What to say next, for the page the user is on, followed by what works everywhere. */
+export function helpText(page: PageName): string {
+  return `${PAGE_HELP[page]} Anywhere, you can say: go to pipeline, orders or activity; dark mode; speak slower; read this page; repeat that; stop. ` +
+    "Say keep it short or more detail from now on to set how long my answers are. " +
+    "If I'm waiting on a change, say no or cancel that, or tell me what to change. " +
+    "In hands-free mode, just keep talking; say that's all when you're done.";
 }
 
 export const HELP_TEXT =

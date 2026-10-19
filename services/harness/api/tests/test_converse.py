@@ -81,6 +81,44 @@ async def test_offline_follow_up_uses_the_deal_named_before(client: httpx.AsyncC
     assert mcp.names()[-1] == "start_deep_triage"
 
 
+async def test_offline_reads_this_deal_and_places_on_the_board_from_the_screen(
+    client: httpx.AsyncClient, mcp: FakeMcp
+) -> None:
+    """The page's own ids settle "this" and "the first one": no name is looked up, and none is guessed."""
+    await sign_in(client)
+    board = [
+        {"id": "dl_K", "name": "Kestrel Biotech", "band": "at_risk", "health": 29},
+        {"id": HARBOR, "name": "Harbor & Pine", "band": "watch", "health": 50},
+    ]
+    screen = {"page": "pipeline", "dialog": "deal", "open_deal": HARBOR, "board": board}
+
+    await client.post("/converse", json={"message": "Dig into this.", "context": screen})
+    assert mcp.calls[-1] == ("start_deep_triage", {"deal_id": HARBOR})
+
+    await client.post("/converse", json={"message": "Why is the first one at risk?", "context": screen})
+    assert mcp.calls[-1] == ("explain_deal_risk", {"deal_id": "dl_K"})
+    await client.post("/converse", json={"message": "Why is the second deal at risk?", "context": screen})
+    assert mcp.calls[-1] == ("explain_deal_risk", {"deal_id": HARBOR})
+    assert "lookup_deal" not in mcp.names()
+
+    # A deal named in words still wins over the open sheet.
+    await client.post("/converse", json={"message": "Why is Harbor & Pine at risk?", "context": screen})
+    assert mcp.calls[-2] == ("lookup_deal", {"name_query": "Harbor & Pine"})
+
+    # A place with nothing in it is said, not turned into a company called "third one".
+    before = len(mcp.calls)
+    r = await client.post("/converse", json={"message": "Why is the third one at risk?", "context": screen})
+    assert r.json()["reply"] == "There isn't a deal in that place on the board."
+    assert len(mcp.calls) == before
+    r = await client.post("/converse", json={"message": "Why is the first one at risk?"})
+    assert "can't tell which deal" in r.json()["reply"] and len(mcp.calls) == before
+
+    # No sheet open and no name: still asked, as before.
+    no_sheet = {"page": "pipeline", "board": board}
+    r = await client.post("/converse", json={"message": "Why is it at risk?", "context": no_sheet})
+    assert r.json()["reply"] == "Which deal do you mean?"
+
+
 async def test_long_history_lines_are_clipped_not_refused(client: httpx.AsyncClient) -> None:
     """One long model reply must not turn every later turn into a 400."""
     await sign_in(client)
@@ -362,6 +400,14 @@ def _model_app(
 
 
 PROPOSE = ("propose_action", {"deal_id": HARBOR})
+ASKED_35 = (
+    "To be exact, I'd save a standing order that flags any open deal whose health is 35 or lower. "
+    "Should I save it?"
+)
+SAID_35 = [
+    {"role": "user", "text": "Watch for deals under health 35."},
+    {"role": "assistant", "text": ASKED_35},
+]
 
 
 async def test_a_spoken_yes_confirms_the_preview_of_the_turn_before(
@@ -565,10 +611,13 @@ async def test_a_standing_order_is_saved_only_after_a_yes_in_a_later_turn(
     async with _model_app(tmp_path, auth, mcp, [same_turn, wrong, yes, again]) as c:
         await sign_in(c)
         r = await c.post("/converse", json={"message": "Watch for deals under health 35."})
-        assert mcp.names() == [] and "Not saved yet" in r.json()["reply"]  # asking twice in a turn is no yes
+        assert mcp.names() == []  # asking twice in a turn is no yes
+        # what the user hears is built from the held arguments, not the model's paraphrase of them
+        assert r.json()["reply"] == ASKED_35
         assert r.cookies.get("wf_h_pending")
 
-        await c.post("/converse", json={"message": "Yes."})  # but the model came back with other numbers
+        # a yes with a change in it: the new rule is asked again, not saved
+        await c.post("/converse", json={"message": "Yes, but at health fifty."})
         assert mcp.names() == []
 
         r = await c.post("/converse", json={"message": "Yes, go ahead."})
@@ -580,8 +629,9 @@ async def test_a_standing_order_is_saved_only_after_a_yes_in_a_later_turn(
         )
         assert "wf_h_pending" not in c.cookies
 
-        r = await c.post("/converse", json={"message": "Do it again."})  # a yes is good for one save
-        assert mcp.names() == ["set_standing_order"] and "Not saved yet" in r.json()["reply"]
+        fifty = [{"role": "user", "text": "Yes, but at health fifty."}]
+        r = await c.post("/converse", json={"message": "Do it again.", "history": fifty})  # one yes, one save
+        assert mcp.names() == ["set_standing_order"] and r.json()["reply"].endswith("Should I save it?")
 
 
 async def test_a_held_write_is_dropped_when_the_user_moves_on(
@@ -595,8 +645,130 @@ async def test_a_held_write_is_dropped_when_the_user_moves_on(
         assert c.cookies.get("wf_h_pending")
         await c.post("/converse", json={"message": "Actually, what needs my attention?"})
         assert "wf_h_pending" not in c.cookies
-        r = await c.post("/converse", json={"message": "Yes."})  # too late: nothing was waiting
-        assert mcp.names() == ["get_risk_briefing"] and "Not saved yet" in r.json()["reply"]
+        r = await c.post("/converse", json={"message": "Yes.", "history": SAID_35})  # too late: nothing waits
+        assert mcp.names() == ["get_risk_briefing"] and r.json()["reply"] == ASKED_35
+
+
+async def test_a_spoken_no_drops_the_held_write_whatever_the_model_does(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """ "No, never mind" ends it in code: a model that answers without dropping it cannot keep it alive."""
+    rule = ("set_standing_order", {"min_score": 65})
+    models = [StepsModel(rule), ScriptedModel("get_risk_briefing"), StepsModel(rule)]
+    async with _model_app(tmp_path, auth, mcp, models) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        assert c.cookies.get("wf_h_pending")
+        r = await c.post("/converse", json={"message": "No, never mind."})
+        assert "wf_h_pending" not in c.cookies and r.json()["awaiting"] is None
+        r = await c.post("/converse", json={"message": "Yes.", "history": SAID_35})  # nothing waits: no save
+        assert "set_standing_order" not in mcp.names() and r.json()["reply"] == ASKED_35
+
+
+async def test_a_write_with_a_number_the_user_never_said_is_refused(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A live model turned "deals over a hundred thousand" into a briefing limit of 5: refused, not asked."""
+    guessed = ("set_standing_order", {"min_amount_usd": 100000, "quiet_days": 5})
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(guessed)]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Watch for deals over a hundred thousand."})
+        assert mcp.names() == [] and r.json()["awaiting"] is None
+        assert "wf_h_pending" not in c.cookies
+        assert "never said 5 for quiet_days" in r.json()["reply"]  # the model was told why
+
+
+class GuessingModel(ScriptedModel):
+    """Answers from memory, with no tool call. Told to check, it reads the briefing, unless ``stubborn``."""
+
+    def __init__(self, guess: str, *, stubborn: bool = False) -> None:
+        super().__init__("get_risk_briefing")
+        self.guess, self.stubborn = guess, stubborn
+        self.notes: list[str] = []
+
+    async def stream(self, messages, *a, **k):  # type: ignore[override]
+        last = messages[-1]["content"]
+        said = next((b["text"] for b in last if "text" in b), "")
+        yield {"messageStart": {"role": "assistant"}}
+        if said.startswith("(A check"):
+            self.notes.append(said)
+        if said.startswith("(A check") and not self.stubborn:
+            yield {
+                "contentBlockStart": {
+                    "start": {"toolUse": {"toolUseId": "t_check", "name": "get_risk_briefing"}}
+                }
+            }
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        text = self.guess
+        if any("toolResult" in b for b in last):
+            text = json.loads(last[0]["toolResult"]["content"][0]["text"])["summary"]
+        yield {"contentBlockDelta": {"delta": {"text": text}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+async def test_a_fact_no_tool_gave_is_looked_up_before_it_is_said(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    """A live model said "health is 28, quiet for fourteen days" after a failed lookup; the tools said 29, 16."""
+    model = GuessingModel("Kestrel Biotech is at risk at 28, quiet for fourteen days.")
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "How is Kestrel doing?"})
+    assert r.json()["reply"] == BRIEFING and mcp.calls == [("get_risk_briefing", {})]
+    assert len(model.notes) == 1 and '"14", "28"' in model.notes[0]
+
+
+async def test_a_fact_still_unsupported_after_a_second_look_is_not_said(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    guess = "Kestrel Biotech needs you today. Its health is 28, and it closes next Tuesday."
+    model = GuessingModel(guess, stubborn=True)
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "How is Kestrel doing?"})
+    assert r.json()["reply"] == "Kestrel Biotech needs you today." and len(model.notes) == 1
+
+
+async def test_a_reply_using_only_what_the_user_said_needs_no_second_look(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    model = GuessingModel("Fifty thousand is a sensible floor for a standing order.")
+    async with _model_app(tmp_path, auth, mcp, [model]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "Is fifty thousand a good floor?"})
+    assert r.json()["reply"].startswith("Fifty thousand") and model.notes == [] and mcp.calls == []
+
+
+async def test_a_name_is_learned_from_a_correction_never_from_a_guess(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    learn = ("control_app", {"action": "remember", "heard": "castle bio", "meant": "Kestrel Biotech"})
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(learn), StepsModel(learn)]) as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "How is castle bio doing?"})
+        assert r.json()["actions"] == [] and "Not remembered" in r.json()["reply"]
+        r = await c.post("/converse", json={"message": "No, I said Kestrel, not castle bio."})
+        assert r.json()["actions"] == [
+            {"type": "remember", "heard": "castle bio", "meant": "Kestrel Biotech"}
+        ]
+
+
+async def test_a_correction_is_not_taken_for_a_no(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:
+    """ "No, make it forty" changes the held rule; it is the model's to redo, not a decline."""
+    rule = ("set_standing_order", {"min_score": 65})
+    fixed = ("set_standing_order", {"min_score": 60})
+    async with _model_app(tmp_path, auth, mcp, [StepsModel(rule), StepsModel(fixed), StepsModel(fixed)]) as c:
+        await sign_in(c)
+        await c.post("/converse", json={"message": "Watch for deals under health 35."})
+        r = await c.post("/converse", json={"message": "No, make it forty."})
+        assert r.json()["reply"] == ASKED_35.replace("35", "40") and c.cookies.get("wf_h_pending")
+        r = await c.post("/converse", json={"message": "Yes."})
+        assert mcp.calls == [("set_standing_order", {"min_score": 60})]
+        assert r.json()["reply"].startswith("Saved.")
 
 
 async def test_the_offline_engine_answers_where_do_i_start_with_the_top_deal(
@@ -695,6 +867,7 @@ async def test_the_model_is_told_who_it_is_talking_to(tmp_path: Path, auth: Fake
         "part": "evening",
         "style": "brief",
         "pins": ["Kestrel Biotech"],
+        "lessons": [{"heard": "castle bio", "meant": "Kestrel Biotech"}],
     }
     board = [{"id": "dl_K", "name": "Kestrel Biotech", "band": "at_risk", "health": 38}]
     async with _model_app(tmp_path, auth, mcp, [model]) as c:
@@ -711,5 +884,6 @@ async def test_the_model_is_told_who_it_is_talking_to(tmp_path: Path, auth: Fake
         assert 'their name is "Priya"' in model.prompts[0] and "Friday evening" in model.prompts[0]
         assert '"Kestrel Biotech"' in model.prompts[0] and "short answers" in model.prompts[0]
         assert '1. "Kestrel Biotech" (deal_id dl_K, at risk, health 38)' in model.prompts[0]
+        assert '"castle bio" means "Kestrel Biotech"' in model.prompts[0]
         bad = await c.post("/converse", json={"message": "hi", "profile": {"style": "rude"}})
         assert bad.status_code == 400

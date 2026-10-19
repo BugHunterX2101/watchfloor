@@ -47,6 +47,8 @@ export interface Host {
   confirm(options: ConfirmOptions, yes: () => Promise<string> | string): void;
   /** Say something that was not a reply to a request (the end of a confirmation, say). */
   announce(text: string): void;
+  /** Keep a correction the user taught (voice/lessons.ts); false when it is not one the page learns. */
+  learn(heard: string, meant: string): boolean;
 }
 
 export interface Outcome {
@@ -219,6 +221,12 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
     case "clear_conversation":
       h.clearConversation();
       return said("Cleared the conversation.");
+    case "remember":
+      return said(
+        h.learn(a.heard, a.meant)
+          ? `Noted: when I hear “${a.heard}”, I'll take it as ${a.meant}.`
+          : "I can't keep that one: I only learn names and phrases, never numbers or yes and no.",
+      );
 
     case "sign_out":
       if (!h.signedIn()) return said("You're not signed in.");
@@ -231,7 +239,7 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
         h,
         {
           title: "Forget everything this browser remembers about you?",
-          body: "Your name, voice and motion choices, recent questions and pinned deals are removed. Your account and data are not touched.",
+          body: "Your name, voice and motion choices, recent questions, pinned deals and the corrections I learned are removed. Your account and data are not touched.",
           confirm: "Forget",
           danger: true,
         },

@@ -3,7 +3,7 @@
 
 import { h } from "./dom";
 import { speak, stopSpeaking, voices } from "./speech";
-import { forgetEverything, settings, update, type Motion, type ReplyStyle } from "./store";
+import { forgetEverything, lessons, settings, unlearn, update, type Motion, type ReplyStyle } from "./store";
 
 const MOTIONS: [Motion, string][] = [
   ["auto", "Follow my system"],
@@ -119,6 +119,25 @@ export function mountSettings(host: SettingsHost): { open(): void } {
     const floor = h("input", { id: "set-scene", type: "checkbox", checked: s.scene });
     floor.addEventListener("change", () => update({ scene: floor.checked }));
 
+    // Corrections the user taught by voice (voice/lessons.ts): shown so they can see and undo what was learned.
+    const learned = h("ul", { class: "learned", "aria-labelledby": "set-learned-label" });
+    const paintLearned = (): void => {
+      const list = lessons();
+      learned.replaceChildren(
+        ...(list.length
+          ? list.map((l) => {
+              const remove = h("button", { type: "button", class: "btn btn-quiet", "aria-label": `Forget “${l.heard}”` }, "Forget");
+              remove.addEventListener("click", () => {
+                unlearn(l.heard);
+                paintLearned();
+              });
+              return h("li", { class: "learned-item" }, h("span", {}, `“${l.heard}” means ${l.meant}`), remove);
+            })
+          : [h("li", { class: "help" }, "Nothing yet. Correct a name I misheard (“no, I said Kestrel”) and I'll remember it.")]),
+      );
+    };
+    paintLearned();
+
     const forget = h("button", { type: "button", class: "btn btn-quiet danger-text" }, "Forget everything in this browser");
     const close = h("button", { type: "button", class: "icon-btn close", "aria-label": "Close" }, "✕");
 
@@ -192,6 +211,13 @@ export function mountSettings(host: SettingsHost): { open(): void } {
           "Show the 3D floor behind the page",
           "After a briefing your deals stand on it as glowing columns, taller the lower their health. Calm holds it still.",
           floor,
+        ),
+        h(
+          "div",
+          { class: "set-row" },
+          h("span", { class: "set-label", id: "set-learned-label" }, "What I've learned from your corrections"),
+          learned,
+          h("p", { class: "help" }, "Applied before I act on what I hear. Names and phrases only: never numbers, yes or no."),
         ),
         h("div", { class: "sheet-actions left" }, forget),
       ),

@@ -13,8 +13,10 @@ DESCRIPTIONS: dict[str, str] = {
         "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. "
         "Returns up to 5 open deals ranked by risk band and deal value, each with health (0-100, higher is "
         "healthier), band, amount, owner, the strongest risk reason, and whether it is new since the user's "
-        "last briefing. Returns an all-clear summary when nothing is at risk. Say health, not the internal "
-        "risk score."
+        "last briefing. Also returns the total amount at risk and on watch across every such deal (not only "
+        "the ones listed) and, when there is a snapshot, the same counts seven days ago: use those for totals "
+        "and comparisons rather than adding up or guessing. Returns an all-clear summary when nothing is at "
+        "risk. Say health, not the internal risk score."
     ),
     "explain_deal_risk": (
         "Use when the user asks why a specific deal is at risk, how a deal is doing, or what is wrong with a "
@@ -24,8 +26,8 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "lookup_deal": (
         "Use to find a deal's deal_id when the user names a company or deal and you do not have its id yet. "
-        "Returns up to 3 matching open deals with names, amounts and owners so you can confirm which one the "
-        "user means."
+        "Returns up to 3 matching open deals with names, amounts, owners, stage, expected close date and next "
+        "step so you can confirm which one the user means."
     ),
     "start_deep_triage": (
         "Use when the user asks to dig into, investigate, analyze, or get a plan for a specific deal. Starts a "

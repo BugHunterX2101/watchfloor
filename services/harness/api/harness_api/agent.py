@@ -38,6 +38,7 @@ from .control import (
     ASK_NOTE,
     CONTROL_DESCRIPTION,
     GATED_WRITES,
+    Grounds,
     Profile,
     Screen,
     TurnState,
@@ -45,10 +46,17 @@ from .control import (
     control_result,
     control_schema,
     deadline,
+    declines,
     describe_write,
     fingerprint,
+    may_learn,
     profile_note,
     screen_note,
+    spoken_write,
+    tidy_reply,
+    unsaid_numbers,
+    unsupported_note,
+    without_unsupported,
 )
 from .mcp_http import McpError, McpHttp, ToolCall, Unauthorized
 from .offline import offline_turn
@@ -59,6 +67,7 @@ PROMPTS = Path(__file__).resolve().parent / "prompts"
 TURN_TIMEOUT_S = 25.0  # under API Gateway's 30 s limit, so a slow turn gets our 504, not the gateway's
 UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6
+RECHECK_MIN_S = 6.0  # time a second look needs; with less left, unsupported sentences are just dropped
 MAX_HISTORY = 12
 MAX_TOKENS = 1024  # room for Nova's <thinking> before a tool call; the prompt keeps replies short
 GEMINI_MAX_TOKENS = 2048  # Gemini counts any thinking against the output budget
@@ -255,6 +264,29 @@ class _Guard:
     issued: set[str] = field(default_factory=set)  # tokens of previews made in this turn
     ask: Pending | None = None  # a direct write the user was asked about in an earlier turn
     state: TurnState = field(default_factory=TurnState)
+    message: str = ""  # what the user said this turn
+    earlier: list[str] = field(default_factory=list)  # their last few messages before it
+    last_reply: str = ""  # what they were answering
+    said: list[str] = field(default_factory=list)  # what control_app answered this turn, a fact source too
+
+    def answers(self, tool: str, arguments: dict[str, Any]) -> bool:
+        """The write the user was asked about in an earlier turn, with the same arguments."""
+        fp = fingerprint(tool, arguments)
+        return self.ask is not None and self.ask.token == fp and fp not in self.issued
+
+    def unsaid(self, tool: str, arguments: dict[str, Any]) -> str | None:
+        """Why a write is refused before it is even held: a number in it the user never said."""
+        if self.answers(tool, arguments):
+            return None
+        missing = unsaid_numbers(tool, arguments, [self.message, *self.earlier])
+        if not missing:
+            return None
+        return (
+            f"Not saved and not asked: the user never said {', '.join(missing)}. Use only numbers they "
+            "said. If this tool can't do what they asked (briefings can't be limited by deal amount, "
+            "say), tell them in one sentence and offer the nearest real option; otherwise ask them for "
+            "the number."
+        )
 
     def refuse_confirm(self, token: Any) -> str | None:
         if token in self.issued:
@@ -270,7 +302,7 @@ class _Guard:
         (one use), so a model that asks and "confirms" in the same breath is held too.
         """
         fp = fingerprint(tool, arguments)
-        if self.ask is not None and self.ask.token == fp and fp not in self.issued:
+        if self.answers(tool, arguments):
             self.ask = None
             return None
         self.issued.add(fp)
@@ -285,6 +317,7 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
 
     async def run(tool_use: dict[str, Any], **_: Any) -> dict[str, Any]:
         def result(status: str, text: str) -> dict[str, Any]:
+            guard.said.append(text)  # what the model was told, so repeating it is never "unsupported"
             return {"toolUseId": tool_use["toolUseId"], "status": status, "content": [{"text": text}]}
 
         arguments = dict(tool_use.get("input") or {})
@@ -293,6 +326,9 @@ def mcp_tool(mcp: McpHttp, spec: dict[str, Any], guard: _Guard) -> Any:
         ):
             log.warning("confirm_action refused before reaching the server: %s", refusal[:40])
             return result("error", refusal)
+        if name in GATED_WRITES and (unsaid := guard.unsaid(name, arguments)):
+            log.info("%s refused: a number the user never said", name)
+            return result("error", unsaid)
         if name in GATED_WRITES and (held := guard.hold_write(name, arguments)):
             log.info("%s held for the user's yes", name)
             return result("success", json.dumps({"summary": held, "status": "needs_confirmation"}))
@@ -326,11 +362,16 @@ def control_tool(guard: _Guard) -> Any:
     async def run(tool_use: dict[str, Any], **_: Any) -> dict[str, Any]:
         def result(status: str, payload: dict[str, Any]) -> dict[str, Any]:
             text = json.dumps(payload, ensure_ascii=False)
+            guard.said.append(text)
             return {"toolUseId": tool_use["toolUseId"], "status": status, "content": [{"text": text}]}
 
         act = clean(tool_use.get("input"))
         if isinstance(act, str):
             return result("error", {"summary": act})
+        if act["type"] == "remember" and (
+            why := may_learn(act["heard"], guard.message, guard.earlier, guard.last_reply)
+        ):
+            return result("error", {"summary": why})
         if (full := guard.state.sink.add(act)) is not None:
             return result("error", {"summary": full})
         return result("success", control_result(act))
@@ -427,6 +468,9 @@ async def strands_turn(
         pending_token=preview.token if preview else None,
         ask=answerable if answerable and answerable.state == "ask" else None,
         state=state if state is not None else TurnState(),
+        message=message,
+        earlier=[text for role, text in history if role == "user"][-4:],
+        last_reply=next((text for role, text in reversed(history) if role == "assistant"), ""),
     )
     tools = [mcp_tool(mcp, spec, guard) for spec in await mcp.list_tools()]
     tools.append(control_tool(guard))
@@ -447,16 +491,49 @@ async def strands_turn(
         # model fails at once and the offline engine answers (run_turn).
         retry_strategy=None,
     )
+    loop = asyncio.get_running_loop()
+    ends = loop.time() + TURN_TIMEOUT_S
+    first = len(mcp.calls)
     try:
         result = await asyncio.wait_for(
             agent.invoke_async(message, limits={"turns": MAX_TURNS}), TURN_TIMEOUT_S
         )
+        reply = strip_reasoning(str(result)) or NO_REPLY
+
+        def missing_from(text: str) -> list[str]:
+            return _unsupported(text, mcp.calls[first:], [message, *guard.earlier, prompt, *guard.said])
+
+        # Every number and date said must come from this turn (control.Grounds). One chance to look it
+        # up; then the sentence goes rather than a guess. Not after a write: a redo could repeat it.
+        missing = missing_from(reply)
+        if missing and not any(c.ok and mcp.writes(c.tool) for c in mcp.calls[first:]):
+            log.info("reply stated %d unsupported item(s); asking the model to check", len(missing))
+            if ends - loop.time() > RECHECK_MIN_S:
+                try:
+                    result = await asyncio.wait_for(
+                        agent.invoke_async(unsupported_note(missing), limits={"turns": MAX_TURNS}),
+                        ends - loop.time(),
+                    )
+                    reply = strip_reasoning(str(result)) or reply
+                    missing = missing_from(reply)
+                except Exception as exc:  # the first answer stands, minus what it could not support
+                    log.warning("the second look failed (%s)", type(exc).__name__)
+            if missing:
+                reply = without_unsupported(reply, missing)
     finally:  # a failed or slow model still spent tokens
         if usage is not None:
             usage.add(agent.event_loop_metrics)
     if guard.unauthorized:
         raise Unauthorized("token rejected during the turn")
-    return strip_reasoning(str(result)) or NO_REPLY
+    return reply
+
+
+def _unsupported(reply: str, calls: list[ToolCall], texts: list[str]) -> list[str]:
+    """What the reply states that neither these tool calls (results and arguments) nor texts support."""
+    values: list[Any] = []
+    for c in calls:
+        values += [c.arguments, c.structured, c.text] if c.ok else [c.arguments]
+    return Grounds.of(texts, values).unsupported(reply)
 
 
 async def run_turn(
@@ -528,22 +605,46 @@ async def run_turn(
             if reply is None:
                 engine = "offline"
                 state = TurnState()
-                reply = await offline_turn(mcp, message, history, None if unheard else pending)
+                reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
         else:
             await mcp.list_tools()  # learns which tools have a ui:// view, like the agent path
-            reply = await offline_turn(mcp, message, history, None if unheard else pending)
+            reply = await offline_turn(mcp, message, history, None if unheard else pending, screen)
+        if engine == "strands" and state.asked is None:
+            # The model's own words only. While a change waits for an answer, its question may repeat.
+            waiting = pending is not None and pending.state != "confirmed"
+            said = [] if waiting else [text for role, text in history if role == "assistant"][-3:]
+            reply = tidy_reply(reply, message, said)
+        if state.asked is not None:
+            # The question is built from exactly what a yes would save, not from the model's paraphrase.
+            exact = spoken_write(state.asked.tool, state.asked.args, _listed_rules(mcp.calls))
+            if exact:
+                reply = exact
+        carry = next_pending(pending, mcp.calls, state.asked)
+        if carry is pending and pending is not None and pending.state != "confirmed" and declines(message):
+            carry = None  # "no" or "never mind": dropped here, whatever the model said
         return TurnResult(
             reply=reply,
             engine=engine,
             calls=mcp.calls,
             ui=await _view(mcp, ui_cache),
-            pending=next_pending(pending, mcp.calls, state.asked),
+            pending=carry,
             actions=state.sink.actions,
             before=pending,
         )
     finally:
         usage.log(scope="harness", engine=engine, model=",".join(tried))
         await mcp.aclose()
+
+
+def _listed_rules(calls: list[ToolCall]) -> dict[str, str]:
+    """rule_id → description, from this turn's list_standing_orders results."""
+    out: dict[str, str] = {}
+    for c in calls:
+        if c.ok and c.tool == "list_standing_orders" and isinstance(c.structured, dict):
+            for rule in c.structured.get("rules") or []:
+                if isinstance(rule, dict) and isinstance(rule.get("rule_id"), str):
+                    out[rule["rule_id"]] = str(rule.get("description") or "")
+    return out
 
 
 async def _view(mcp: McpHttp, cache: dict[str, tuple[float, str]] | None = None) -> dict[str, str] | None:

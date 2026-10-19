@@ -32,7 +32,12 @@ export interface ProfileInput {
   style: "brief" | "normal" | "detailed";
 }
 
-export function profileOf(s: ProfileInput, pinned: readonly string[], now: Date): Profile {
+export function profileOf(
+  s: ProfileInput,
+  pinned: readonly string[],
+  now: Date,
+  taught: readonly { heard: string; meant: string }[] = [],
+): Profile {
   const profile: Profile = {
     day: DAYS[now.getDay()],
     part: partOfDay(now.getHours()),
@@ -42,6 +47,8 @@ export function profileOf(s: ProfileInput, pinned: readonly string[], now: Date)
   if (name) profile.name = name;
   const pins = pinned.map((p) => p.replace(/\s+/g, " ").trim().slice(0, 60)).filter(Boolean).slice(0, 5);
   if (pins.length) profile.pins = pins;
+  const lessons = taught.slice(0, 8).map((l) => ({ heard: l.heard, meant: l.meant }));
+  if (lessons.length) profile.lessons = lessons;
   return profile;
 }
 

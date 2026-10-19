@@ -67,6 +67,8 @@ export interface Profile {
   part?: "morning" | "afternoon" | "evening" | "night";
   style?: "brief" | "normal" | "detailed";
   pins?: string[];
+  /** Corrections the user taught (voice/lessons.ts): heard → meant. */
+  lessons?: { heard: string; meant: string }[];
 }
 
 /** What the page tells the assistant about itself: fixed words only (the server rejects anything else). */

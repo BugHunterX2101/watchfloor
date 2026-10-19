@@ -4,7 +4,9 @@
 // everything passes through parseAction before it runs, so what arrives from the network is checked
 // here again and a malformed or unknown request is dropped, never half-run.
 //
-// Kept free of the DOM and of other modules so `npm test` can run it directly.
+// Kept free of the DOM so `npm test` can run it directly.
+
+import { parseLesson } from "./lessons.ts";
 
 export const ACTION_NAMES = [
   "navigate",
@@ -36,6 +38,7 @@ export const ACTION_NAMES = [
   "clear_conversation",
   "sign_out",
   "forget_data",
+  "remember",
 ] as const;
 
 export type ActionName = (typeof ACTION_NAMES)[number];
@@ -91,7 +94,8 @@ export type AppAction =
   | { type: "scroll"; direction: ScrollName }
   | { type: "clear_conversation" }
   | { type: "sign_out" }
-  | { type: "forget_data" };
+  | { type: "forget_data" }
+  | { type: "remember"; heard: string; meant: string };
 
 /** The most page changes one turn may make (the server stops at the same number). */
 export const MAX_ACTIONS = 4;
@@ -191,6 +195,10 @@ export function parseAction(raw: unknown): AppAction | null {
     case "scroll": {
       const direction = oneOf(raw.direction, SCROLLS);
       return direction ? { type: "scroll", direction } : null;
+    }
+    case "remember": {
+      const lesson = parseLesson(raw);
+      return lesson ? { type: "remember", ...lesson } : null;
     }
     case "close_dialog":
     case "open_settings":

@@ -191,7 +191,7 @@ async def find_by_name(
     return await conn.fetch(
         """SELECT * FROM (
              SELECT d.id AS deal_id, d.name, a.name AS account, d.amount_cents, d.stage::text AS stage,
-                    u.display_name AS owner,
+                    d.close_date, d.next_step, u.display_name AS owner,
                     greatest(word_similarity($1, regexp_replace(lower(a.name), '\\s*&\\s*', ' and ', 'g')),
                              word_similarity($1, regexp_replace(lower(d.name), '\\s*&\\s*', ' and ', 'g')),
                              CASE WHEN regexp_replace(lower(a.name), '\\s*&\\s*', ' and ', 'g')

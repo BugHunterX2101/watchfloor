@@ -92,6 +92,8 @@ async def build_briefing(ctx: ServiceContext, args: m.BriefingIn) -> m.BriefingO
         parts.append(f"Top risk: {top.account}{amount}. {_first_sentence(top.top_reason)}")
         summary = " ".join(parts)
 
+    week_day = ctx.today - timedelta(days=7)
+    before = await scores.counts_on(conn, day=week_day, segment=segment)
     return m.BriefingOut(
         summary=summary,
         all_clear=attention == 0,
@@ -100,6 +102,48 @@ async def build_briefing(ctx: ServiceContext, args: m.BriefingIn) -> m.BriefingO
         attention_count=attention,
         triggered_rules=triggered,
         deals=deals_out,
+        at_risk_count=at_risk,
+        at_risk_amount_display=money_display(counts["at_risk_cents"])
+        if include_amounts and at_risk
+        else None,
+        watch_amount_display=money_display(counts["watch_cents"])
+        if include_amounts and attention > at_risk
+        else None,
+        week_ago=week_ago(week_day.isoformat(), at_risk, attention, before["at_risk"], before["attention"])
+        if before is not None
+        else None,
+    )
+
+
+def _change(now: int, then: int) -> str:
+    if now == then:
+        return "no change"
+    return f"up {now - then}" if now > then else f"down {then - now}"
+
+
+def week_ago(day: str, at_risk: int, attention: int, then_at_risk: int, then_attention: int) -> Any:
+    """Last week's counts with the comparison spelled out, so the answer is never worked out by a model."""
+    if at_risk == then_at_risk and attention == then_attention:
+        verdict = "About the same as a week ago."
+    elif at_risk >= then_at_risk and attention >= then_attention:
+        verdict = "Worse than a week ago."
+    elif at_risk <= then_at_risk and attention <= then_attention:
+        verdict = "Better than a week ago."
+    elif at_risk > then_at_risk:
+        verdict = "Mixed: more deals are at risk, but fewer need attention overall."
+    else:
+        verdict = "Mixed: fewer deals are at risk, but more need attention overall."
+    comparison = (
+        f"{verdict} At risk: {at_risk} now, {then_at_risk} a week ago ({_change(at_risk, then_at_risk)}). "
+        f"At risk or on watch: {attention} now, {then_attention} a week ago "
+        f"({_change(attention, then_attention)})."
+    )
+    return m.WeekAgo(
+        day=day,
+        at_risk=then_at_risk,
+        attention=then_attention,
+        watch=then_attention - then_at_risk,
+        comparison=comparison,
     )
 
 
@@ -214,12 +258,15 @@ async def lookup_deal(ctx: ServiceContext, args: m.LookupIn) -> m.LookupOut:
             owner=short_name(r["owner"]),
             stage=stage_label(r["stage"]),
             match_score=round(float(r["match_score"]), 2),
+            close_date_display=date_display(r["close_date"]) if r["close_date"] else None,
+            next_step=r["next_step"] or None,
         )
         for r in rows
     ]
     if len(cands) == 1:
         c = cands[0]
-        summary = f"Found {c.name}: {c.amount_display}, {c.stage}, owned by {c.owner}."
+        closes = f", expected to close {c.close_date_display}" if c.close_date_display else ""
+        summary = f"Found {c.name}: {c.amount_display}, {c.stage}, owned by {c.owner}{closes}."
     else:
         options = "; ".join(f"{c.name} ({c.amount_display}, {c.owner})" for c in cands)
         summary = f"I found {len(cands)} matching deals: {options}. Which one do you mean?"

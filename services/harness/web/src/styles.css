@@ -3130,6 +3130,22 @@ dialog.sheet::backdrop {
   gap: 12px;
 }
 
+.learned {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.learned-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+
 .range {
   flex: 1 1 180px;
   min-height: 44px;

@@ -106,6 +106,8 @@ async def attention_counts(
     return await conn.fetchrow(
         """SELECT count(*) FILTER (WHERE rs.band IN ('at_risk', 'watch')) AS attention,
                   count(*) FILTER (WHERE rs.band = 'at_risk') AS at_risk,
+                  COALESCE(sum(d.amount_cents) FILTER (WHERE rs.band = 'at_risk'), 0)::bigint AS at_risk_cents,
+                  COALESCE(sum(d.amount_cents) FILTER (WHERE rs.band = 'watch'), 0)::bigint AS watch_cents,
                   count(*) FILTER (WHERE rs.band IN ('at_risk', 'watch')
                                    AND rs.band_since > COALESCE($2::timestamptz, '-infinity')) AS new_count,
                   max(rs.computed_at) AS computed_at
@@ -115,6 +117,24 @@ async def attention_counts(
            WHERE d.stage NOT IN ('won', 'lost') AND ($1::text IS NULL OR a.segment = $1)""",
         segment,
         since,
+    )
+
+
+async def counts_on(conn: asyncpg.Connection, *, day: date, segment: str | None) -> asyncpg.Record | None:
+    """The bands as the daily snapshot recorded them on ``day``, or None when there is no snapshot
+    for that day, so a comparison is only ever made against real data. A segment with nothing in it that
+    day counts as zero, not as missing: the snapshot existed."""
+    return await conn.fetchrow(
+        """SELECT count(*) FILTER (WHERE s.band IN ('at_risk', 'watch')
+                                   AND ($2::text IS NULL OR a.segment = $2)) AS attention,
+                  count(*) FILTER (WHERE s.band = 'at_risk' AND ($2::text IS NULL OR a.segment = $2)) AS at_risk
+           FROM risk_score_daily s
+           JOIN deals d    ON d.id = s.deal_id
+           JOIN accounts a ON a.id = d.account_id
+           WHERE s.day = $1
+           HAVING count(*) > 0""",
+        day,
+        segment,
     )
 
 

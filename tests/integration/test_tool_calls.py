@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 import asyncpg
 import httpx
 import pytest
 from watchfloor_core.db import ws_tx
+from watchfloor_core.speech import money_display
 
 from tests.conftest import FROZEN_NOW, HARBOR, KESTREL, OWNER_URL, TokenFactory
 from tests.mcp_client import Mcp
@@ -20,6 +22,61 @@ async def test_briefing_leads_with_the_demo_board(seeded: str, mcp: Mcp) -> None
     assert briefing["deals"][0]["health"] == 29, "people see health: 100 minus the RIGS risk (ADR-020)"
     assert briefing["all_clear"] is False
     assert len(briefing["summary"].split()) <= 60
+
+
+async def test_briefing_totals_cover_every_deal_not_only_the_ones_listed(seeded: str, mcp: Mcp) -> None:
+    """ "How much is at risk?" is answered from the server's sum, never from the model adding up a list."""
+    async with ws_tx(seeded) as conn:
+        rows = await conn.fetch(
+            """SELECT rs.band, d.amount_cents FROM risk_scores rs JOIN deals d ON d.id = rs.deal_id
+               WHERE d.stage NOT IN ('won', 'lost')"""
+        )
+    at_risk = [r["amount_cents"] for r in rows if r["band"] == "at_risk"]
+    watch = [r["amount_cents"] for r in rows if r["band"] == "watch"]
+    briefing = await mcp.ok("get_risk_briefing", {"limit": 1})
+    assert len(briefing["deals"]) == 1 and briefing["at_risk_count"] == len(at_risk) > 1
+    assert briefing["at_risk_amount_display"] == money_display(sum(at_risk))
+    assert briefing["watch_amount_display"] == (money_display(sum(watch)) if watch else None)
+
+
+async def test_briefing_compares_with_the_snapshot_a_week_ago(seeded: str, mcp: Mcp) -> None:
+    week_day = FROZEN_NOW.astimezone(ZoneInfo("America/Los_Angeles")).date() - timedelta(days=7)
+    async with ws_tx(seeded) as conn:
+        kept = await conn.fetch(
+            "SELECT deal_id, day, workspace_id, score, band FROM risk_score_daily WHERE day = $1", week_day
+        )
+    briefing = await mcp.ok("get_risk_briefing", {})
+    week = briefing.get("week_ago")
+    assert kept, "the seed keeps a fortnight of daily snapshots"
+    then_at_risk = sum(b["band"] == "at_risk" for b in kept)
+    then_attention = sum(b["band"] in ("at_risk", "watch") for b in kept)
+    assert {k: week[k] for k in ("day", "at_risk", "attention", "watch")} == {
+        "day": week_day.isoformat(),
+        "at_risk": then_at_risk,
+        "attention": then_attention,
+        "watch": then_attention - then_at_risk,
+    }
+    # The spoken comparison carries both counts, now and then, from the same numbers.
+    now_at_risk, now_attention = briefing["at_risk_count"], briefing["attention_count"]
+    assert f"At risk: {now_at_risk} now, {then_at_risk} a week ago" in week["comparison"]
+    assert f"At risk or on watch: {now_attention} now, {then_attention} a week ago" in week["comparison"]
+    async with ws_tx(seeded) as conn:
+        await conn.execute("DELETE FROM risk_score_daily WHERE day = $1", week_day)
+    try:
+        assert (await mcp.ok("get_risk_briefing", {})).get("week_ago") is None, "no snapshot: no comparison"
+    finally:  # the other tests share this seed and read a fortnight of trend
+        async with ws_tx(seeded) as conn:
+            await conn.executemany(
+                "INSERT INTO risk_score_daily (deal_id, day, workspace_id, score, band) VALUES ($1, $2, $3, $4, $5)",
+                [tuple(r) for r in kept],
+            )
+
+
+async def test_lookup_says_when_the_deal_is_expected_to_close(seeded: str, mcp: Mcp) -> None:
+    found = await mcp.ok("lookup_deal", {"name_query": "Kestrel"})
+    (kestrel,) = [c for c in found["candidates"] if c["deal_id"] == KESTREL]
+    assert kestrel["close_date_display"]
+    assert f"expected to close {kestrel['close_date_display']}" in found["summary"]
 
 
 async def test_explain_returns_rigs_breakdown(seeded: str, mcp: Mcp) -> None:

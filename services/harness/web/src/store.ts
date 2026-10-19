@@ -4,6 +4,7 @@
 // forgets on reload (private windows, thumbnail capture).
 
 import { pushRecent, togglePin, type SkylineDeal } from "./logic";
+import { addLesson, dropLesson, parseLesson, type Lesson } from "./voice/lessons";
 
 export type ThemeChoice = "auto" | "light" | "dark";
 export type DeviceChoice = "fit" | "compact" | "standard" | "large";
@@ -46,6 +47,7 @@ const RECENT_KEY = "wf.recent";
 const PINS_KEY = "wf.pins";
 const PIN_NAMES_KEY = "wf.pinnames";
 const SKYLINE_KEY = "wf.skyline";
+const LESSONS_KEY = "wf.lessons";
 
 function get(key: string): string | null {
   try {
@@ -219,9 +221,32 @@ export function clearSkyline(): void {
   drop(SKYLINE_KEY);
 }
 
+/** The corrections the user taught (voice/lessons.ts), newest first; each re-checked as it is read. */
+export function lessons(): Lesson[] {
+  try {
+    const v: unknown = JSON.parse(get(LESSONS_KEY) ?? "[]");
+    if (!Array.isArray(v)) return [];
+    return v.map(parseLesson).filter((l): l is Lesson => l !== null).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+/** Keeps a correction; false when it is not one the page will learn (a number, a yes or no). */
+export function learn(raw: { heard: string; meant: string }): boolean {
+  const lesson = parseLesson(raw);
+  if (!lesson) return false;
+  put(LESSONS_KEY, JSON.stringify(addLesson(lessons(), lesson)));
+  return true;
+}
+
+export function unlearn(heard: string): void {
+  put(LESSONS_KEY, JSON.stringify(dropLesson(lessons(), heard)));
+}
+
 /** Everything this page keeps in the browser, gone. The current settings fall back to the defaults. */
 export function forgetEverything(): void {
-  for (const k of [KEY, LEGACY_THEME, RECENT_KEY, PINS_KEY, PIN_NAMES_KEY, SKYLINE_KEY]) drop(k);
+  for (const k of [KEY, LEGACY_THEME, RECENT_KEY, PINS_KEY, PIN_NAMES_KEY, SKYLINE_KEY, LESSONS_KEY]) drop(k);
   const before = current;
   current = { ...DEFAULTS };
   const changed = (Object.keys(current) as (keyof Settings)[]).filter((k) => current[k] !== before[k]);

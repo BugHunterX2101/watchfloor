@@ -281,6 +281,15 @@ class TriggeredRule(_Out):
     deal_ids: list[str]
 
 
+class WeekAgo(_Out):
+    day: str
+    at_risk: int
+    attention: int  # at risk or on watch
+    watch: int = 0
+    # Said as is: the change in both counts and the direction, so no model reads "attention" as "watch".
+    comparison: str = ""
+
+
 class BriefingOut(_Out):
     summary: str
     all_clear: bool
@@ -289,6 +298,12 @@ class BriefingOut(_Out):
     attention_count: int
     triggered_rules: list[TriggeredRule]
     deals: Annotated[list[BriefingDeal], Field(max_length=5)]
+    # Totals over every deal in the band, not only the ones listed, so a total is never added up by hand.
+    at_risk_count: int = 0
+    at_risk_amount_display: str | None = None
+    watch_amount_display: str | None = None
+    # The same counts from the daily snapshot seven days ago; absent when there is none to compare with.
+    week_ago: WeekAgo | None = None
 
 
 class DealCard(_Out):
@@ -350,6 +365,8 @@ class Candidate(_Out):
     owner: str
     stage: str
     match_score: float
+    close_date_display: str | None = None
+    next_step: str | None = None
 
 
 class LookupOut(_Out):

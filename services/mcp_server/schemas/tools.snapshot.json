@@ -636,7 +636,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. Returns up to 5 open deals ranked by risk band and deal value, each with health (0-100, higher is healthier), band, amount, owner, the strongest risk reason, and whether it is new since the user's last briefing. Returns an all-clear summary when nothing is at risk. Say health, not the internal risk score.",
+      "description": "Use when the user asks what needs attention, what is at risk, or for a pipeline briefing or update. Returns up to 5 open deals ranked by risk band and deal value, each with health (0-100, higher is healthier), band, amount, owner, the strongest risk reason, and whether it is new since the user's last briefing. Also returns the total amount at risk and on watch across every such deal (not only the ones listed) and, when there is a snapshot, the same counts seven days ago: use those for totals and comparisons rather than adding up or guessing. Returns an all-clear summary when nothing is at risk. Say health, not the internal risk score.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -665,6 +665,13 @@
         "properties": {
           "all_clear": {
             "type": "boolean"
+          },
+          "at_risk_amount_display": {
+            "type": "string"
+          },
+          "at_risk_count": {
+            "default": 0,
+            "type": "integer"
           },
           "attention_count": {
             "type": "integer"
@@ -772,6 +779,37 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "watch_amount_display": {
+            "type": "string"
+          },
+          "week_ago": {
+            "additionalProperties": false,
+            "properties": {
+              "at_risk": {
+                "type": "integer"
+              },
+              "attention": {
+                "type": "integer"
+              },
+              "comparison": {
+                "default": "",
+                "type": "string"
+              },
+              "day": {
+                "type": "string"
+              },
+              "watch": {
+                "default": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "day",
+              "at_risk",
+              "attention"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -1013,7 +1051,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Use to find a deal's deal_id when the user names a company or deal and you do not have its id yet. Returns up to 3 matching open deals with names, amounts and owners so you can confirm which one the user means.",
+      "description": "Use to find a deal's deal_id when the user names a company or deal and you do not have its id yet. Returns up to 3 matching open deals with names, amounts, owners, stage, expected close date and next step so you can confirm which one the user means.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1048,6 +1086,9 @@
                 "amount_display": {
                   "type": "string"
                 },
+                "close_date_display": {
+                  "type": "string"
+                },
                 "deal_id": {
                   "type": "string"
                 },
@@ -1055,6 +1096,9 @@
                   "type": "number"
                 },
                 "name": {
+                  "type": "string"
+                },
+                "next_step": {
                   "type": "string"
                 },
                 "owner": {
