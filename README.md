@@ -16,7 +16,7 @@ and the next step. Nothing changes until you say yes. Then change your mind, and
 ![TypeScript](https://img.shields.io/badge/web-TypeScript%20%2B%20Vite-3178C6)
 ![Postgres](https://img.shields.io/badge/postgres-16%20%2B%20RLS-336791)
 ![IaC](https://img.shields.io/badge/infra-AWS%20CDK%20(Python)-FF9900)
-![Tests](https://img.shields.io/badge/tests-816%20passing-2EA44F)
+![Tests](https://img.shields.io/badge/tests-889%20passing-2EA44F)
 
 [Try it](#try-it) · [Architecture](#architecture) · [Repository map](#repository-map) · [Run it locally](#run-it-locally) ·
 [Decisions](#decisions-that-shape-it) · [Docs](#documentation)
@@ -51,7 +51,7 @@ It is three things that fit together:
 
 | | What | Where |
 |---|---|---|
-| **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, standing orders, log an update) and six read-only tools for the triage agents. | [`services/mcp_server`](services/mcp_server) |
+| **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, standing orders, log an update) and six read-only tools for the triage agents (`explain_deal_risk` is in both sets: 19 distinct tools). | [`services/mcp_server`](services/mcp_server) |
 | **2. A triage backend** | Deterministic, explainable risk scoring (RIGS) kept fresh in Postgres, a transactional outbox, standing orders that run in the background, and a team of Strands agents (a Lead and four specialists) for a deep review, behind a deterministic output gate. | [`packages/core`](packages/core) · [`services/workers`](services/workers) · [`services/agents`](services/agents) |
 | **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 30 page actions, and a companion layer that lets you change your mind mid-sentence and learns the names it mishears. | [`services/harness`](services/harness) |
 
@@ -73,9 +73,10 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
 - **Models propose, code decides.** Agent output passes a deterministic gate (evidence, people, actions,
   wording) before it can leave the container — [ADR-012](docs/adr/0012-lead-draft-and-output-gate.md).
 - **The model words the answer; it never supplies the facts.** Totals and the week-over-week comparison
-  are computed on the server. Every number, month, weekday and relative date in a spoken reply is
-  checked in code against that turn's tool results and the user's own words. A guess is sent back once,
-  then cut, and the assistant says it couldn't check rather than make one up. What a "yes" saves is
+  are computed on the server. Every number above one, and every month, weekday and relative date, in
+  a spoken reply is checked in code against that turn's tool results and the user's own words. A
+  guess is sent back once, then cut, and the assistant says it couldn't check rather than make one
+  up. What a "yes" saves is
   read back from the held arguments, not the model's paraphrase — [ADR-031](docs/adr/0031-learning-from-corrections.md).
 - **Failure is visible and recoverable.** Side effects go through a transactional outbox with backoff
   and a dead state; deep reviews time out cleanly; every change can be undone for 30 seconds — [ADR-008](docs/adr/0008-transactional-outbox.md), [ADR-021](docs/adr/0021-undo-and-more-time.md).
@@ -87,10 +88,11 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
 
 ## Try it
 
-> **Status, 2026-10-17: the hosted dev environment is down.** AWS has blocked all compute on the
-> account (Lambda from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are
-> refused too, [friction log entry 11](docs/friction-log.md)), so the hosted links answer with
-> errors until AWS Support lifts it. Everything works the same on your machine: see
+> **Status: the hosted dev environment is down.** AWS has blocked all compute on the account
+> (Lambda from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are refused too,
+> [friction log entry 11](docs/friction-log.md)), so the hosted links answer with errors until AWS
+> Support lifts it (the harness, privacy and terms links below all still returned HTTP 500 when
+> checked on 2026-10-20). Everything works the same on your machine: see
 > [Run it locally](#run-it-locally) and open <http://localhost:8082>.
 
 1. Open the hosted harness at <https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/> and select
@@ -579,10 +581,10 @@ flowchart TD
 
 ### 16. Data model
 
-Eighteen tables in `public` and five in `auth`, every business table scoped by workspace with
-row-level security forced on, under separate `wf_app`, `wf_auth` and `wf_readonly` roles that cannot
-bypass it ([TECHNICAL.md §9.2](docs/TECHNICAL.md); rules and preferences live here too,
-[ADR-005](docs/adr/0005-postgres-rules-and-prefs.md)). The app role is also cut back to what it needs:
+Eighteen tables in `public` (plus the migrator's own ledger) and five in `auth`. Sixteen hold tenant
+data, each scoped by workspace with row-level security forced on, under separate `wf_app`,
+`wf_auth` and `wf_readonly` roles that cannot bypass it ([TECHNICAL.md §9.2](docs/TECHNICAL.md); rules
+and preferences live here too, [ADR-005](docs/adr/0005-postgres-rules-and-prefs.md)). The app role is also cut back to what it needs:
 it cannot rewrite `workspaces` or `schema_migrations`, and the audit log is append-only, with deletes
 allowed only past the 7-day retention policy (migration `0006_least_privilege.sql`). The compact view:
 
@@ -699,7 +701,7 @@ flowchart TB
         WK["workers<br/>dispatcher · watcher · sweeper · canary"]
       end
       RDS[("RDS PostgreSQL 16<br/>db.t4g.micro · encrypted · TLS only")]
-      NAT["fck-nat · t4g.nano"]
+      NAT["fck-nat · t4g.micro"]
     end
     subgraph MANAGED["Managed services"]
       SQ["SQS jobs + outbox<br/>each with a DLQ"]
@@ -734,13 +736,16 @@ flowchart TB
 
 ### 20. Infrastructure as code
 
-Eight CDK stacks per environment. `Agents` is built before `Async` because the dispatcher needs the
-runtime's address; `Mcp` reaches `Auth` and the queues through fixed URLs, so a send before the
-queues exist only logs and the sweeper republishes the outbox row.
+Eight CDK stacks per environment, of which seven deploy today: `Agents` (AgentCore) is created only
+when AgentCore is in use, and the account refuses it
+([ADR-023](docs/adr/0023-gemini-when-bedrock-cannot-run.md)), so deep reviews run beside the workers
+instead. When it is on, `Agents` is built before `Async` because the dispatcher needs the runtime's
+address; `Mcp` reaches `Auth` and the queues through fixed URLs, so a send before the queues exist
+only logs and the sweeper republishes the outbox row.
 
 ```mermaid
 flowchart LR
-  NET["net<br/>VPC · NAT · endpoints"] --> DATA["data<br/>RDS · secrets · KMS"]
+  NET["net<br/>VPC · NAT · S3 endpoint"] --> DATA["data<br/>RDS · secrets · KMS"]
   NET --> AUTH["auth<br/>auth server · signing key"]
   DATA --> AUTH
   NET --> MCP["mcp<br/>MCP server · HTTP API"]
@@ -773,7 +778,7 @@ flowchart LR
 ```
 
 > The decision that put us on Path B, and what would flip it, is diagrammed in
-> [TECHNICAL.md §4.17](docs/TECHNICAL.md); the full spec-level set (23 more views) is in §4.
+> [TECHNICAL.md §4.17](docs/TECHNICAL.md); the spec-level set of 17 views is in §4.
 
 ---
 
@@ -817,13 +822,13 @@ watchfloor/
 │   │   ├── mcp_server/
 │   │   │   ├── app.py · server.py · session.py · context.py · resources.py · wellknown.py
 │   │   │   ├── middleware/                    # edge_guard · auth · version · ratelimit · telemetry
-│   │   │   └── tools/                         # briefing · explain · lookup · triage · actions · updates · rules · prefs · agent_read · snapshot
+│   │   │   └── tools/                         # briefing · explain · lookup · triage · actions · updates · rules · prefs · agent_read · descriptions · snapshot
 │   │   ├── schemas/tools.snapshot.json        # the pinned tool schemas (CI fails if they drift)
 │   │   └── ui/                                # MCP Apps views: Board · Detail · Confirm (Preact, single-file HTML)
 │   ├── auth_server/             # OAuth 2.1 authorization server (PKCE S256, RFC 8414 / 9728)
-│   │   └── auth_server/         # app · authorize · token · revoke · jwks · signer · clients · storage · seeder · templates
+│   │   └── auth_server/         # app · authorize · token · revoke · jwks · signer · clients · storage · seeder · tickets · legal · metadata · templates · static (add-on assets)
 │   ├── workers/                 # everything that runs without a request
-│   │   └── workers/             # dispatcher · watcher · sweeper · canary · outbox_publisher · job_tokens · drafts · slack · migrator · service
+│   │   └── workers/             # dispatcher · watcher · sweeper · canary · outbox_publisher · job_tokens · drafts · slack · migrator · service · runtime · agentcore_client · memory_events
 │   ├── agents/                  # deep triage; its own uv project (ADR-011)
 │   │   ├── Dockerfile
 │   │   ├── agents/              # lead · runner · gate · data_tools · memory · offline · models · main · handler
@@ -833,7 +838,7 @@ watchfloor/
 │   └── harness/                 # simulated Alexa+ (Path B)
 │       ├── api/                 # Starlette API; its own uv project
 │       │   ├── harness_api/
-│       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/view
+│       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/view · /api/session · /api/logout · /healthz
 │       │   │   ├── agent.py                   # a turn: pending change · model chain · tools · one second look at an unsupported number
 │       │   │   ├── control.py                 # control_app: the 30 page actions, validated · exact read-backs · grounding of numbers and dates
 │       │   │   ├── offline.py                 # the keyword router when no model can answer
@@ -870,11 +875,11 @@ watchfloor/
 │   │   ├── config.py · common.py
 │   │   └── stacks/              # net · data · auth · mcp · agents · async_ · harness · ops
 │   └── tests/                   # config validation and synth assertions
-├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · load_baseline · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill
+├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · load_baseline · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill · addon_assets (the Alexa+ listing page)
 ├── tests/
 │   ├── unit/                    # RIGS golden and property tests, tokens, envelopes, rate limits, docs sync …
 │   ├── conformance/             # protocol: transport · edge · tools/list · output schemas · PRM · service token
-│   ├── integration/             # against real Postgres: tools, auth server, confirm guard, undo, workers, migrator, seeder, DB and delivery faults, restore drill
+│   ├── integration/             # against real Postgres: tools, auth server, confirm guard, undo, workers, migrator, seeder, DB and delivery faults, restore drill, offline answers checked against SQL
 │   ├── security/                # agent scope · token replay · tenant isolation · races · DB privileges · edge guard · log hygiene · committed secrets · CI security config
 │   ├── evals/                   # golden triage set, utterance sheet, scoring
 │   └── load/                    # Locust profile
@@ -922,15 +927,15 @@ Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
 
 ## Run it locally
 
-You need Python 3.12, [uv](https://docs.astral.sh/uv/), Docker, Node 20+, and `make` (Git Bash works
-on Windows).
+You need Python 3.12 (the projects pin `>=3.12,<3.13`), [uv](https://docs.astral.sh/uv/), Docker,
+Node 20.19+ (the web builds use Vite 8; CI runs Node 24), and `make` (Git Bash works on Windows).
 
 ```bash
 make bootstrap                  # Python projects (workspace, agents, harness) + both web builds
 cp .env.example .env            # local placeholders only
 make db-up                      # Postgres 16 on 127.0.0.1:55432
 make migrate                    # schema, row-level security, roles
-make seed                       # Lumenridge workspace: Kestrel 71 · Harbor & Pine 66 · Orbital 58
+make seed                       # Lumenridge workspace; risk scores Kestrel 71 · Harbor & Pine 66 · Orbital 58
 make dev-keys                   # local ES256 signing key in .secrets/ (gitignored)
 WF_DEMO_PASSWORD='choose-12+-chars' make auth-bootstrap   # OAuth clients + demo logins
 make dev                        # MCP :8080 · auth :8081 · harness :8082 · agent :8083 · workers
@@ -999,12 +1004,12 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 
 | Suite | Count | Covers |
 |---|---:|---|
-| Root (`pytest`) | 454 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill) |
-| Harness API | 245 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router reading the screen |
+| Root (`pytest`) | 456 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill, the offline router's answers checked against SQL) |
+| Harness API | 245 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router (specific answers, follow-ups, plain refusals, reading the screen) |
 | Harness web | 113 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic |
-| Triage agents | 36 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
+| Triage agents | 37 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
 | Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
-| **Total** | **886** | |
+| **Total** | **889** | |
 
 ```bash
 make test          # unit + protocol conformance
@@ -1014,9 +1019,10 @@ make lint          # ruff check + format
 
 Beyond unit tests:
 
-- **Browser end-to-end scripts** drive the real harness in headless Edge: sign-in, every page, a
-  full approve/undo, failure paths, accessibility checks, a phone viewport, and scripted hands-free
-  speech against the running stack.
+- **Browser end-to-end runs** drove the real harness in headless Edge during development: sign-in,
+  every page, a full approve/undo, failure paths, an axe accessibility pass, a phone viewport, and
+  scripted hands-free speech against the running stack. Those throwaway scripts are not in this
+  repository, so this is a manual result, not a check CI repeats.
 - **Against a running stack:** `make conformance-remote` (15 protocol checks over HTTPS),
   `make latency` (p95 ≤ 150 ms, p99 ≤ 300 ms per read tool), `make evals` (40 driver and 10
   prompt-injection deep reviews), and a Locust load profile.
@@ -1032,7 +1038,8 @@ deterministic guards around it, not by the model itself.
 
 ## Deploy
 
-Eight CDK stacks per environment (`dev`, `demo`) in `us-east-1`. Pushes to `main` deploy `dev`;
+Eight CDK stacks per environment (`dev`, `demo`) in `us-east-1`, seven of them deployed while AgentCore
+is refused. Pushes to `main` deploy `dev`;
 `v*.*.*` tags deploy `demo`. Highlights:
 
 - **Credits only.** On an AWS Free plan account the models are Amazon Nova (on demand, paid from

@@ -65,3 +65,30 @@ def test_the_architecture_diagrams_are_present_and_closed() -> None:
     for i, block in enumerate(blocks, 1):
         assert block.lstrip().startswith(DIAGRAMS), f"diagram {i} starts with {block.splitlines()[0]!r}"
     assert README.count("```") % 2 == 0, "a code fence in the README is not closed"
+
+
+def test_the_test_counts_agree_with_each_other() -> None:
+    """The badge, the suite rows and the total say one number (they once read 816, 886 and 887)."""
+    badge = re.search(r"badge/tests-(\d+)%20passing", README)
+    assert badge, "the README has no tests badge"
+    start = README.index("## Testing and quality")
+    rows = re.findall(r"^\| (?!\*\*)[^|]+\| (\d+) \|", README[start:], re.M)
+    total = re.search(r"^\| \*\*Total\*\* \| \*\*(\d+)\*\* \|", README[start:], re.M)
+    assert total and len(rows) == 5, "the suite table changed shape: update this test"
+    assert sum(map(int, rows)) == int(total.group(1)) == int(badge.group(1)), (
+        rows,
+        total.group(1),
+        badge.group(1),
+    )
+
+
+def test_the_tool_counts_match_the_pinned_snapshot() -> None:
+    """The README says how many tools there are; the snapshot is what ships."""
+    import json
+
+    snap = json.loads((ROOT / "services/mcp_server/schemas/tools.snapshot.json").read_text(encoding="utf-8"))
+    user, agent = len(snap["user"]), len(snap["agent"])
+    assert f"{user} user tools · {agent} agent tools" in README
+    assert f"{user} user tools, {agent} agent tools" in README
+    distinct = len({t["name"] for t in snap["user"] + snap["agent"]})
+    assert f"{distinct} distinct tools" in README
