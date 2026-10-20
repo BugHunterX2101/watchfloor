@@ -92,17 +92,24 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
 > (Lambda from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are refused too,
 > [friction log entry 11](docs/friction-log.md)), so the hosted links answer with errors until AWS
 > Support lifts it (the harness, privacy and terms links below all still returned HTTP 500 when
-> checked on 2026-10-20). Everything works the same on your machine: see
-> [Run it locally](#run-it-locally) and open <http://localhost:8082>.
+> checked on 2026-10-20 and again on 2026-10-21; the Lambda API itself answers
+> `AccessDeniedException`). That is the account block, not a fault in the app.
+
+**Works now: run it on your machine** (no AWS and no model needed). The commands are under
+[Run it locally](#run-it-locally); then open <http://localhost:8082>, select **Sign in**, and sign in
+as `priya@lumenridge.example` with the `WF_DEMO_PASSWORD` you chose.
+
+**Hosted, once AWS restores it:**
 
 1. Open the hosted harness at <https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/> and select
    **Sign in**. That runs the real OAuth flow (PKCE) against Watchfloor's auth server.
 2. Sign in as `priya@lumenridge.example`. The password is in the Devpost testing instructions; it is
    never in this repository.
-3. Ask in your own words (below), or turn on **Hands-free** and just talk.
 
-Every tool call, with its latency, is listed beside the conversation. The data is a synthetic sales
-team (Lumenridge) and its deals, so nothing you do reaches a real customer.
+Either way, ask in your own words ([What you can say](#what-you-can-say)), or turn on
+**Hands-free** and just talk. Every tool call, with its latency, is listed beside the conversation.
+The data is a synthetic sales team (Lumenridge) and its deals, so nothing you do reaches a real
+customer.
 [Privacy](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/privacy) ·
 [Terms](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/terms)
 
