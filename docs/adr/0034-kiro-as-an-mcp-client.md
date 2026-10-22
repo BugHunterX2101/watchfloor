@@ -53,8 +53,8 @@ harness.
 
 **Configuration ships as examples, not code** (`integrations/kiro/`): `mcp.json` for Kiro, the entry
 for Kiro Crew's agent file, the `oauth_endpoints.json` entry its consent-URL gate needs, and a
-digest skill. They follow Kiro's and Kiro Crew's documentation and are marked untested: running them
-needs a Kiro plan.
+digest skill. They follow Kiro's and Kiro Crew's documentation and were tried once on 2026-10-23
+(see Evidence); running them needs a Kiro plan, whose credits each turn spends.
 
 **No AWS.** Nothing in this path calls AWS. On Render, `WF_POLLY_VOICE` is to be unset, so
 `/api/speak` answers 404 and the page speaks with the browser's voice (ADR-033's fallback). The CDK
@@ -65,8 +65,13 @@ would be counter-offered that.
 
 - **A 401 still has no `WWW-Authenticate`** (constraint C3, for Alexa+). Kiro Crew's guide says
   `kiro-cli` runs OAuth itself after a 401, and both protected-resource paths are served, with
-  `resource` equal to `WF_RESOURCE_URI`. Whether `kiro-cli` finds them without the header has not
-  been tried against this server.
+  `resource` equal to `WF_RESOURCE_URI`. `kiro-cli` 2.31.1 found the sign-in without the header
+  (2026-10-23), so this held for that version; a later release could change it.
+- **One process may hold the callback port.** `wf-kiro`'s redirect URI is fixed at port 7778, so a
+  second Kiro process started while another waits for sign-in fails to bind it and does not load the
+  server. It surfaces only as the agent saying it has no such tool.
+- **Not yet observed:** a scheduled digest running, and a Slack post. Slack was not connected; the
+  agent reported a dashboard notification instead.
 - A client that speaks only `2025-06-18` and is counter-offered `2025-11-25` (where an operator
   narrows the list) will disconnect. That is why `2025-06-18` is allowed, not only counter-offered.
 - A deployment that sets `WF_PROTOCOL_VERSIONS` explicitly keeps its own list; Render's must be
@@ -79,5 +84,10 @@ would be counter-offered that.
   `2025-03-26` and `2099-01-01` offers end on `2025-11-25` and are served.
 - `tests/integration/test_auth_server.py`: `wf-kiro` links, gets `watchfloor.read` only, sees no write
   tool, and is refused `watchfloor.write`.
+- A live run against the Render deployment on 2026-10-23: sign-in as `wf-kiro` granted
+  `watchfloor.read` only; `initialize` at `2025-06-18` was agreed and `tools/list` showed 8 read tools and
+  no write tool; `confirm_action` was refused as unknown; `2025-11-25` and `2024-11-05` offers ended on
+  `2025-11-25`. Then `kiro-cli` 2.31.1 and the Kiro Crew desktop app (Windows) each ran
+  `get_risk_briefing` and returned the same three deals, and Kiro Crew accepted a "5 PM UTC" schedule.
 - Sources: kiro.dev/docs/mcp/configuration; github.com/kirodotdev/KiroCrew (`docs/architecture/mcp.md`,
   `docs/guides/connecting-remote-oauth-mcp-server.md`, `docs/guides/slack-setup.md`, `skills/README.md`).
