@@ -3,9 +3,10 @@
 Examples for using Watchfloor's MCP server from [Kiro](https://kiro.dev) and
 [Kiro Crew](https://github.com/kirodotdev/KiroCrew) ([ADR-034](../../docs/adr/0034-kiro-as-an-mcp-client.md)).
 
-> **Untested.** These follow Kiro's and Kiro Crew's documentation (October 2026), but nobody has run
-> them against Watchfloor yet: that needs `kiro-cli login` and a Kiro plan, whose credits each turn
-> spends. Nothing here uses AWS.
+> **Tested once, on 2026-10-23.** `kiro-cli` 2.31.1 (bundled with the Kiro Crew desktop app
+> on Windows) signed in to the live server as `wf-kiro` with no `WWW-Authenticate` hint, listed the
+> read-only tools and ran `get_risk_briefing` (about 0.09 credits). Not yet tried: the Kiro Crew
+> app's own chat, Slack and scheduled digests. Nothing here uses AWS.
 
 What Kiro gets is **read-only**: the `wf-kiro` client may only hold `watchfloor.read`. It can look up
 deals, read the risk briefing, explain a score, start a deep triage and propose an action. It cannot
@@ -62,6 +63,10 @@ is not documented, so check where it lands before relying on it.
 
 ## Known risks
 
+- Only one Kiro process can hold the sign-in callback port (7778) at a time. A second `kiro-cli`
+  or Kiro Crew process started while another waits for sign-in fails with "Only one usage of each
+  socket address" and the server silently does not load. Finish or close the first one. `kiro-cli
+  mcp add` has no OAuth options, so write `mcp.json` by hand.
 - Watchfloor's 401 carries no `WWW-Authenticate` header (Alexa+ cannot take one). Kiro should find
   the sign-in through `/.well-known/oauth-protected-resource`, which is served, but this is unverified.
   If sign-in never starts, check that URL first.
