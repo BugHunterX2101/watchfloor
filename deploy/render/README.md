@@ -29,7 +29,11 @@ Set on the service, never in the repo:
   `Ruth`) with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` for an IAM user allowed
   `polly:SynthesizeSpeech` and nothing else. `WF_POLLY_DAILY_CHARS` caps the characters a UTC day
   (default 30,000; audio and word timings count twice); `WF_POLLY_REGION` overrides `AWS_REGION`.
-  Unset `WF_POLLY_VOICE` to turn it off: the browser's own voice speaks.
+  Unset `WF_POLLY_VOICE` to turn it off: the browser's own voice speaks. This deployment runs without
+  AWS (ADR-034), so it is unset.
+- `WF_PROTOCOL_VERSIONS=2025-06-18,2025-11-25` (or leave it unset for that default): Alexa+ speaks
+  2025-11-25, Kiro and Kiro Crew 2025-06-18 (ADR-034). Every boot also registers the read-only `wf-kiro`
+  client; its setup is in [`integrations/kiro`](../../integrations/kiro/README.md).
 
 `WF_ENV=local` keeps the file signer available and runs the workers in-process; the https issuer still
 makes every cookie Secure. Behind Caddy every caller shares one address, so the auth server's per-address

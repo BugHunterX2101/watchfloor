@@ -882,6 +882,7 @@ watchfloor/
 │   │   ├── config.py · common.py
 │   │   └── stacks/              # net · data · auth · mcp · agents · async_ · harness · ops
 │   └── tests/                   # config validation and synth assertions
+├── integrations/                # kiro/: Kiro and Kiro Crew client config (ADR-034)
 ├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · load_baseline · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill · addon_assets (the Alexa+ listing page)
 ├── tests/
 │   ├── unit/                    # RIGS golden and property tests, tokens, envelopes, rate limits, docs sync …
@@ -906,7 +907,7 @@ container each ships carries only what it needs ([ADR-011](docs/adr/0011-agents-
 
 ## Decisions that shape it
 
-Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
+Thirty-four records in [`docs/adr`](docs/adr). The ones that matter most:
 
 | Decision | Why | ADR |
 |---|---|---|
@@ -931,6 +932,7 @@ Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
 | Totals from the server, read-backs from code, corrections learned | The model words the answer; it never does the sums or decides what a yes saves | [031](docs/adr/0031-learning-from-corrections.md) |
 | A night scope instead of a 3D orb and floor | Every fact must survive without colour, motion or sight | [032](docs/adr/0032-the-night-scope.md) |
 | The recogniser's runner-up guesses; Amazon Polly reads replies | Hear what was said, and say it in a voice worth hearing | [033](docs/adr/0033-hearing-alternatives-and-polly-voice.md) |
+| Kiro and Kiro Crew as read-only MCP clients, no AWS | Agents can triage and draft; only a person confirms a change | [034](docs/adr/0034-kiro-as-an-mcp-client.md) |
 
 ---
 

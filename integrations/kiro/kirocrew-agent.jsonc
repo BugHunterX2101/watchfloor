@@ -1,0 +1,17 @@
+// Merge into ~/.kiro/agents/kirocrew.json; keep everything already there.
+// Kiro Crew reads this file as JSONC. Untested against Watchfloor (ADR-034).
+{
+  "includeMcpJson": false, // pinned by Kiro Crew: the entry must live here, not only in ~/.kiro/settings/mcp.json
+  "mcpServers": {
+    "watchfloor": {
+      "url": "https://watchfloor.onrender.com/mcp",
+      "oauth": {
+        "clientId": "wf-kiro",
+        "redirectUri": "http://127.0.0.1:7778/oauth/callback",
+        "oauthScopes": ["watchfloor.read"]
+      }
+    }
+  },
+  // Add the ref to "tools" only. Never to "allowedTools": that auto-approves every call and skips the governance hooks.
+  "tools": ["@watchfloor"]
+}

@@ -1,0 +1,5 @@
+{
+  "additional_authorization_endpoints": [
+    { "host": "watchfloor.onrender.com", "path": "/authorize" }
+  ]
+}

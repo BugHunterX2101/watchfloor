@@ -3,7 +3,7 @@
     uv run python -m auth_server.clients --password '<demo password>' \
         --alexa-redirect-uri https://pitangui.amazon.com/api/skill/link/XXXX
 
-Runs as the database owner: upserts the three clients and an Argon2id login
+Runs as the database owner: upserts the four clients and an Argon2id login
 for every user in the workspace. Generated client secrets are printed once;
 pass WF_ALEXA_CLIENT_SECRET / WF_DISPATCHER_CLIENT_SECRET to pin them instead.
 """
@@ -23,6 +23,7 @@ from argon2 import PasswordHasher
 ALEXA = "wf-alexa"
 HARNESS = "wf-harness"
 DISPATCHER = "wf-dispatcher"
+KIRO = "wf-kiro"  # Kiro / Kiro Crew as an MCP client (ADR-034)
 USER_SCOPES = ("watchfloor.read", "watchfloor.write")
 SERVICE_SCOPE = "mcp:service"  # Alexa+ Tier 1 (context.SERVICE_SCOPE)
 
@@ -44,8 +45,14 @@ class ClientSpec:
         return self.auth_method != "none"
 
 
+# Kiro only accepts an http loopback redirect with an explicit port; its mcp.json pins this one.
+KIRO_REDIRECT_URIS = ("http://127.0.0.1:7778/oauth/callback", "http://localhost:7778/oauth/callback")
+
+
 def default_clients(
-    alexa_redirect_uris: tuple[str, ...] = (), harness_redirect_uris: tuple[str, ...] = ()
+    alexa_redirect_uris: tuple[str, ...] = (),
+    harness_redirect_uris: tuple[str, ...] = (),
+    kiro_redirect_uris: tuple[str, ...] = (),
 ) -> list[ClientSpec]:
     return [
         # Account linking (authorization_code + PKCE), plus Alexa+ Tier 1: client_credentials for an
@@ -76,6 +83,17 @@ def default_clients(
             ("watchfloor.agent.read",),
             (),
             "WF_DISPATCHER_CLIENT_SECRET",
+        ),
+        # Kiro IDE and Kiro Crew: a public PKCE client (the IDE cannot hold a secret), read-only on
+        # purpose. Its agents can triage and draft, but every write stays with a person who holds
+        # watchfloor.write through Alexa+ or the harness and confirms it there.
+        ClientSpec(
+            KIRO,
+            "Kiro",
+            ("authorization_code", "refresh_token"),
+            "none",
+            ("watchfloor.read",),
+            kiro_redirect_uris or KIRO_REDIRECT_URIS,
         ),
     ]
 
@@ -144,6 +162,7 @@ async def bootstrap(
     password: str,
     alexa_redirect_uris: tuple[str, ...] = (),
     harness_redirect_uris: tuple[str, ...] = (),
+    kiro_redirect_uris: tuple[str, ...] = (),
     client_secrets: dict[str, str] | None = None,
     logins: dict[str, str] | None = None,
 ) -> dict[str, str]:
@@ -157,7 +176,7 @@ async def bootstrap(
     conn = await asyncpg.connect(owner_url)
     try:
         async with conn.transaction():
-            for spec in default_clients(alexa_redirect_uris, harness_redirect_uris):
+            for spec in default_clients(alexa_redirect_uris, harness_redirect_uris, kiro_redirect_uris):
                 secret = pinned.get(spec.client_id) or (
                     os.environ.get(spec.secret_env) if spec.secret_env else None
                 )
@@ -187,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--alexa-redirect-uri", action="append", default=[])
     ap.add_argument("--harness-redirect-uri", action="append", default=[])
+    ap.add_argument("--kiro-redirect-uri", action="append", default=[])
     opts = ap.parse_args(argv)
     if not opts.password or len(opts.password) < 12:
         print("a --password (or WF_DEMO_PASSWORD) of at least 12 characters is required", file=sys.stderr)
@@ -198,9 +218,10 @@ def main(argv: list[str] | None = None) -> int:
             password=opts.password,
             alexa_redirect_uris=tuple(opts.alexa_redirect_uri),
             harness_redirect_uris=tuple(opts.harness_redirect_uri),
+            kiro_redirect_uris=tuple(opts.kiro_redirect_uri),
         )
     )
-    print(f"provisioned clients {ALEXA}, {HARNESS}, {DISPATCHER} and logins for {opts.workspace}")
+    print(f"provisioned clients {ALEXA}, {HARNESS}, {DISPATCHER}, {KIRO} and logins for {opts.workspace}")
     for client_id, secret in generated.items():
         print(f"  new secret for {client_id} (shown once, store it now): {secret}")
     return 0

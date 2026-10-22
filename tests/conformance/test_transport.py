@@ -55,6 +55,44 @@ async def test_cf06_unsupported_protocol_version_is_400(mcp: Mcp) -> None:
     assert r.status_code == 400
 
 
+def _initialize(version: str) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": version,
+            "capabilities": {},
+            "clientInfo": {"name": "kiro", "version": "x"},
+        },
+    }
+
+
+async def test_a_2025_06_18_client_keeps_its_version_after_initialize(mcp: Mcp) -> None:
+    """Kiro offers 2025-06-18 (ADR-034): the server agrees, then serves requests carrying that header."""
+    r = await mcp.client.post("/mcp", json=_initialize("2025-06-18"), headers=_without_version(mcp))
+    assert r.status_code == 200
+    assert r.json()["result"]["protocolVersion"] == "2025-06-18"
+    r = await mcp.post(
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, **{"MCP-Protocol-Version": "2025-06-18"}
+    )
+    assert r.status_code == 200
+    assert r.json()["result"]["tools"]
+
+
+async def test_initialize_with_an_unallowed_version_gets_a_version_the_gate_accepts(mcp: Mcp) -> None:
+    """The SDK echoes any revision it knows (2024-11-05 too); the gate makes it counter-offer an allowed one."""
+    for offered in ("2024-11-05", "2025-03-26", "2099-01-01"):
+        r = await mcp.client.post("/mcp", json=_initialize(offered), headers=_without_version(mcp))
+        assert r.status_code == 200, offered
+        agreed = r.json()["result"]["protocolVersion"]
+        assert agreed == PROTOCOL_VERSION, offered
+        r = await mcp.post(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, **{"MCP-Protocol-Version": agreed}
+        )
+        assert r.status_code == 200, offered
+
+
 async def test_cf07_accept_without_event_stream_is_406(mcp: Mcp) -> None:
     r = await mcp.post({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, Accept="application/json")
     assert r.status_code == 406

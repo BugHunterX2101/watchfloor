@@ -40,7 +40,8 @@ class Settings(BaseModel):
     # (x-wf-host = $context.domainName; a client's own value is overwritten), not in Host.
     host_header: str = "host"
     allowed_origins: frozenset[str] = frozenset()
-    protocol_versions: frozenset[str] = frozenset({"2025-11-25"})
+    # 2025-11-25 is what Alexa+ speaks; 2025-06-18 is what Kiro and other MCP clients still offer (ADR-034).
+    protocol_versions: frozenset[str] = frozenset({"2025-06-18", "2025-11-25"})
     jobs_queue_url: str | None = None
     outbox_queue_url: str | None = None
     demo_mode: bool = False
@@ -100,7 +101,7 @@ def _from_env() -> Settings:
         allowed_hosts=_csv("WF_ALLOWED_HOSTS", "localhost,127.0.0.1"),
         host_header=(e("WF_HOST_HEADER") or "host").strip().lower(),
         allowed_origins=_csv("WF_ALLOWED_ORIGINS"),
-        protocol_versions=_csv("WF_PROTOCOL_VERSIONS", "2025-11-25"),
+        protocol_versions=_csv("WF_PROTOCOL_VERSIONS", "2025-06-18,2025-11-25"),
         jobs_queue_url=e("WF_JOBS_QUEUE_URL"),
         outbox_queue_url=e("WF_OUTBOX_QUEUE_URL"),
         demo_mode=_bool("WF_DEMO_MODE"),
