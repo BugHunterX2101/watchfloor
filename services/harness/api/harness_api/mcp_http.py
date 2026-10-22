@@ -26,6 +26,10 @@ class McpError(Exception):
     """A transport or JSON-RPC error (not a tool error: those come back as results)."""
 
 
+class InvalidParams(McpError):
+    """JSON-RPC -32602: the caller's arguments (or an unknown tool) were refused. Not an outage."""
+
+
 class RateLimited(McpError):
     """The MCP server's per-user limit (HTTP 429): busy, not down. ``retry_after`` is in seconds."""
 
@@ -123,7 +127,8 @@ class McpHttp:
         if "error" in body:
             err = body["error"]
             message = err.get("message") if isinstance(err, dict) else None
-            raise McpError(f"{method}: {message if isinstance(message, str) else 'error'}")
+            text = f"{method}: {message if isinstance(message, str) else 'error'}"
+            raise (InvalidParams if isinstance(err, dict) and err.get("code") == -32602 else McpError)(text)
         result = body.get("result")
         if not isinstance(result, dict):
             raise McpError(f"{method}: no result")

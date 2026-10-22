@@ -79,3 +79,16 @@ mini challenge names the Strands SDK among the AWS services that qualify.
 - `start_deep_triage` is offered where `agents_enabled` is on and Bedrock or a Gemini model is.
 - Once AWS enables AgentCore, `agents_host: agentcore` (with `models_enabled: true`) moves the
   agents back to the runtime.
+
+## Note (2026-10-22): the alias is slow, and the fast pinned model has almost no free allowance
+
+Timed on 2026-10-22 with a one-tool prompt (three calls each, same key): `gemini-flash-lite-latest`
+answered in 12 to 22 s (once a 503 "high demand" after 52 s); `gemini-2.5-flash-lite` in about 2 s,
+`gemini-2.5-flash` about 3 s, `gemini-3.1-flash-lite` 4 to 9 s, `gemini-3.5-flash-lite` 11 to 20 s. A
+voice turn whose model runs out of its share falls back to the offline router, so with the alias a
+turn can take over 20 s before the router answers.
+
+Pinning `gemini-2.5-flash-lite` is not the fix on the Free plan: its free tier allowed 20 requests a
+day on this key (`generate_content_free_tier_requests`, limit 20), about ten turns. The alias stays
+the default. Check the per-model limits in AI Studio before pinning another model, and prefer a paid
+key or Bedrock where a voice turn has to stay fast.

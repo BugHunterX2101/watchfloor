@@ -1,6 +1,6 @@
 # ADR-026: Harness pages, a 3D orb and local personalisation
 
-- **Status:** Accepted (2026-10-17)
+- **Status:** Accepted (2026-10-17). The 3D orb and the watch floor were replaced by the night scope ([ADR-032](0032-the-night-scope.md)); the pages and personalisation stand.
 - **Refines:** ADR-017 (visual design), ADR-018 (interaction details); DESIGN.md §17 (harness page)
 
 ## Context

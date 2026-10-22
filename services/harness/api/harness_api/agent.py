@@ -504,7 +504,7 @@ async def strands_turn(
     first = len(mcp.calls)
     try:
         result = await asyncio.wait_for(agent.invoke_async(message, limits={"turns": MAX_TURNS}), budget)
-        reply = strip_reasoning(str(result)) or NO_REPLY
+        reply = strip_reasoning(str(result)) or silent_reply(mcp.calls[first:], guard.state.sink.actions)
 
         def missing_from(text: str) -> list[str]:
             return _unsupported(text, mcp.calls[first:], [message, *guard.earlier, prompt, *guard.said])
@@ -532,6 +532,16 @@ async def strands_turn(
     if guard.unauthorized:
         raise Unauthorized("token rejected during the turn")
     return reply
+
+
+def silent_reply(calls: list[ToolCall], actions: list[dict[str, Any]]) -> str:
+    """What to say when the model did the work and then ended its turn without a word (Gemini can stop
+    with an empty message after a tool result): the last tool's own summary, which the server wrote from
+    the data, so it is grounded; else a plain "Done." for page changes; else NO_REPLY."""
+    for call in reversed(calls):
+        if call.summary:
+            return call.summary
+    return "Done." if actions else NO_REPLY
 
 
 def _unsupported(reply: str, calls: list[ToolCall], texts: list[str]) -> list[str]:

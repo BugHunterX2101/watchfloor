@@ -49,7 +49,7 @@ import { mountPlot } from "./plot";
 import { current, initRouter, navigate, onRoute, parseHash, setBadge, type Route } from "./router";
 import { mountSettings } from "./settings";
 import { earcon, earconFor, setSounds } from "./sound";
-import { browserEars, canListen, listenOnce, speak, stopListening, stopSpeaking, voices } from "./speech";
+import { browserEars, canListen, listenOnce, setHeardChooser, speak, stopListening, stopSpeaking, voices } from "./speech";
 import {
   clearPlot,
   forgetEverything,
@@ -71,7 +71,7 @@ import { NEEDS_YES, type AppAction } from "./voice/actions";
 import { removeByVoice, run as runAction, type Host, type Outcome } from "./voice/commander";
 import { mountDock } from "./voice/dock";
 import { boardOf, profileOf } from "./voice/context";
-import { helpText, interpretAll, isAnswer, stripWake, type Context, type Intent } from "./voice/grammar";
+import { helpText, interpretAll, isAnswer, pickHeard, stripWake, type Context, type Intent } from "./voice/grammar";
 import { createHandsFree, type HandsFree } from "./voice/handsfree";
 import { applyLessons } from "./voice/lessons";
 import { asksSomething, speakable } from "./voice/text";
@@ -641,6 +641,9 @@ function grammarContext(): Context {
     awaiting: liveWaiting() !== null,
   };
 }
+
+// Of the recognizer's guesses, the one that is a command or names a deal on the page.
+setHeardChooser((alternatives) => pickHeard(alternatives, grammarContext()));
 
 /** What the assistant is told about the screen with every message (fixed words only). */
 function screenState(): Screen {

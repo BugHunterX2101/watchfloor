@@ -166,7 +166,11 @@ function significant(text: string): string[] {
 function wordScore(q: string, c: string): number {
   if (q === c) return 1;
   if (phonetic(q) === phonetic(c)) return 0.95;
-  return similarity(phonetic(q), phonetic(c)) >= 0.8 || similarity(q, c) >= 0.8 ? 0.85 : 0;
+  if (similarity(phonetic(q), phonetic(c)) >= 0.8 || similarity(q, c) >= 0.8) return 0.85;
+  // A clipped word ("bio" for Biotech, "harb" for Harbor) and a long word misheard as another
+  // ("castle" for Kestrel): weaker, so it takes a second word that fits to carry a match.
+  if (q.length >= 3 && c.length > q.length && c.startsWith(q)) return 0.85;
+  return q.length >= 5 && c.length >= 5 && similarity(phonetic(q), phonetic(c)) >= 0.7 ? 0.8 : 0;
 }
 
 /** How well a spoken name fits a deal: every spoken word must find a word of the account or deal name. */
@@ -379,9 +383,9 @@ const RULES: Rule[] = [
       ? act({ type: "hands_free", on: true })
       : null,
   (u) =>
-    /^(?:(?:turn\s+on|enable|require|use)(?:\s+the)?\s+wake\s+word|only\s+(?:listen\s+)?when\s+i\s+say\s+watch\s?floor)$/.test(u)
+    /^(?:(?:turn\s+on|enable|require|use)(?:\s+the)?\s+wake\s+word|turn(?:\s+the)?\s+wake\s+word\s+on|(?:start\s+)?(?:listen(?:ing)?|wait(?:ing)?)\s+(?:only\s+)?for(?:\s+the)?\s+wake\s+word|only\s+(?:listen\s+)?when\s+i\s+say\s+watch\s?floor)$/.test(u)
       ? act({ type: "wake_word", on: true })
-      : /^(?:(?:turn\s+off|disable|dont\s+(?:require|need|use)|no)(?:\s+the)?\s+wake\s+word|always\s+listen|listen\s+all\s+the\s+time)$/.test(u)
+      : /^(?:(?:turn\s+off|disable|dont\s+(?:require|need|use)|no)(?:\s+the)?\s+wake\s+word|turn(?:\s+the)?\s+wake\s+word\s+off|always\s+listen|listen\s+all\s+the\s+time)$/.test(u)
         ? act({ type: "wake_word", on: false })
         : null,
 
@@ -409,7 +413,8 @@ const RULES: Rule[] = [
       ? act({ type: "open_settings" })
       : null,
   (u) =>
-    /^(?:refresh|reload|update|renew|check\s+again)(?:\s+(?:this|the))?(?:\s+(?:page|board|pipeline|list|orders|briefing|activity))?$/.test(u)
+    /^(?:refresh|reload|update|renew|check\s+again)(?:\s+(?:this|the))?(?:\s+(?:page|board|pipeline|list|orders|briefing|activity))?$/.test(u) ||
+    /^take\s+(?:a\s+)?(?:fresh|new|another|second)\s+look(?:\s+at\s+(?:the|this|my)\s+(?:page|board|pipeline|list))?$/.test(u)
       ? act({ type: "refresh" })
       : null,
   (u) => {
@@ -441,14 +446,15 @@ const RULES: Rule[] = [
     return m ? act({ type: "set_speech_rate", step: m[1].startsWith("fast") || m[1] === "quickly" ? "slower" : "faster" }) : null;
   },
   (u) =>
-    /^(?:mute|be\s+silent|silence\s+replies|stop\s+reading(?:\s+replies|\s+aloud)?|turn\s+off(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud|reading\s+aloud)|dont\s+(?:read|speak)(?:\s+replies|\s+aloud)?|no\s+(?:voice|sound))$/.test(u)
+    /^(?:mute|be\s+silent|silence\s+replies|stop\s+reading(?:\s+replies|\s+aloud)?|turn\s+off(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud|reading\s+aloud)|turn(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud)\s+off|dont\s+(?:read|speak)(?:\s+replies|\s+aloud)?|no\s+(?:voice|sound))$/.test(u)
       ? act({ type: "set_read_aloud", on: false })
-      : /^(?:unmute|turn\s+on(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud)|read(?:\s+replies)?\s+aloud|speak\s+(?:replies|again)|start\s+(?:reading|speaking))$/.test(u)
+      : /^(?:unmute|turn\s+on(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud)|turn(?:\s+the)?\s+(?:voice|sound|sounds|speech|read\s+aloud)\s+(?:back\s+)?on|read(?:\s+replies)?\s+aloud|speak\s+(?:replies|again)|start\s+(?:reading|speaking))$/.test(u)
         ? act({ type: "set_read_aloud", on: true })
         : null,
   (u) => {
-    const m = /^(?:speak|talk|read|go)\s+(?:a\s+(?:little|bit)\s+)?(slower|faster|more\s+slowly|more\s+quickly)$|^(slow\s+down|speed\s+up)$/.exec(u);
-    if (m) return act({ type: "set_speech_rate", step: /slow/.test(m[1] ?? m[2]) ? "slower" : "faster" });
+    const m =
+      /^(?:speak|talk|read|go)\s+(?:a\s+(?:little|bit)\s+)?(slower|faster|more\s+slowly|more\s+quickly)$|^(slow\s+down|speed\s+up)(?:\s+(?:your|the))?(?:\s+(?:voice|speech|talking|speaking|reading))?(?:\s+a\s+(?:little|bit))?$|^(slow|speed)\s+(?:your\s+|the\s+)?(?:voice|speech)\s+(?:down|up)(?:\s+a\s+(?:little|bit))?$/.exec(u);
+    if (m) return act({ type: "set_speech_rate", step: /slow/.test(m[1] ?? m[2] ?? m[3]) ? "slower" : "faster" });
     return /^(?:speak|talk)\s+(?:at\s+)?(?:normal|default)\s+speed$|^normal\s+speed$/.test(u) ? act({ type: "set_speech_rate", rate: 1.05 }) : null;
   },
   (u) =>
@@ -487,7 +493,9 @@ const RULES: Rule[] = [
   (u) =>
     /^(?:keep\s+(?:it|answers|replies|your\s+answers|them)\s+(?:short|brief|quick)|short(?:er)?\s+(?:answers|replies)|be\s+(?:brief|short|concise|quicker)|brief(?:\s+(?:mode|answers|replies))?|concise(?:\s+(?:mode|answers))?|less\s+detail|(?:just\s+)?the\s+(?:headline|headlines|short\s+version|gist)|too\s+(?:long|wordy))$/.test(u)
       ? act({ type: "set_style", style: "brief" })
-      : /^(?:more\s+detail\s+from\s+now\s+on|detailed\s+(?:answers|replies|mode)|(?:give\s+me\s+)?longer\s+(?:answers|replies)|be\s+(?:more\s+)?(?:detailed|thorough)|give\s+me\s+(?:the\s+)?(?:full|detailed)\s+(?:answers|replies|story)\s*(?:from\s+now\s+on)?)$/.test(u)
+      : /^make\s+(?:your\s+|the\s+|my\s+)?(?:answers|replies|responses|them|it)\s+(?:shorter|briefer|short|brief|more\s+concise)$/.test(u)
+        ? act({ type: "set_style", style: "brief" })
+      : /^make\s+(?:your\s+|the\s+|my\s+)?(?:answers|replies|responses|them|it)\s+(?:longer|more\s+detailed|detailed)$|^(?:more\s+detail\s+from\s+now\s+on|detailed\s+(?:answers|replies|mode)|(?:give\s+me\s+)?longer\s+(?:answers|replies)|be\s+(?:more\s+)?(?:detailed|thorough)|give\s+me\s+(?:the\s+)?(?:full|detailed)\s+(?:answers|replies|story)\s*(?:from\s+now\s+on)?)$/.test(u)
         ? act({ type: "set_style", style: "detailed" })
         : /^(?:normal|default|usual|standard|regular)\s+(?:length|answers|replies|mode)$|^back\s+to\s+normal\s+(?:length|answers|replies)$/.test(u)
           ? act({ type: "set_style", style: "normal" })
@@ -502,9 +510,11 @@ const RULES: Rule[] = [
 
   // the Activity page
   (u, ctx) => {
-    const m = /^(?:show|filter|list|see)(?:\s+me)?(?:\s+only)?(?:\s+the)?\s+(all|writes|errors|failures|failed|changes)(?:\s+calls)?(?:\s+only)?$/.exec(u);
-    if (!m || (m[1] === "all" && ctx.page !== "activity")) return null;
-    return act({ type: "activity_view", filter: m[1] === "all" ? "all" : m[1] === "writes" || m[1] === "changes" ? "writes" : "errors" });
+    // "Show me activity for errors only" names the page too: it opens Activity and filters it.
+    const m =
+      /^(?:show|filter|list|see)(?:\s+me)?(?:\s+(?:the\s+)?(activity)(?:\s+(?:log|page))?(?:\s+(?:for|with|to))?)?(?:\s+only)?(?:\s+the)?\s+(all|writes|errors|failures|failed|changes)(?:\s+calls)?(?:\s+only)?$/.exec(u);
+    if (!m || (m[2] === "all" && !m[1] && ctx.page !== "activity")) return null;
+    return act({ type: "activity_view", filter: m[2] === "all" ? "all" : m[2] === "writes" || m[2] === "changes" ? "writes" : "errors" });
   },
 
   // the Pipeline board
@@ -605,6 +615,33 @@ export function interpretAll(raw: string, ctx: Context): Intent[] {
   const intents = parts.map((p) => interpret(p, ctx));
   const ok = intents.every((i) => i.kind === "action" && !ASKS_USER.has(i.action.type));
   return ok ? intents : [whole];
+}
+
+/** Whether the words name a deal the page knows, in a run of one to three of them. */
+function namesDeal(text: string, deals: readonly DealRef[]): boolean {
+  const words = significant(text);
+  for (let len = 1; len <= 3; len++) {
+    for (let i = 0; i + len <= words.length; i++) {
+      const hit = resolveDeal(words.slice(i, i + len).join(" "), deals);
+      if (hit.deal || hit.ambiguous.length) return true;
+    }
+  }
+  return false;
+}
+
+/** Which of the recognizer's guesses (best first) the user said. Its best guess stands unless it
+ *  means nothing here and a close runner-up is a command or names a deal on the page: recognition
+ *  hears "open castle bio" for "open Kestrel Biotech", or "watch for" for "Watchfloor". Only a
+ *  near-identical guess may win, so a question is never swapped for a different command. */
+export function pickHeard(alternatives: readonly string[], ctx: Context): string {
+  const top = alternatives[0] ?? "";
+  if (alternatives.length < 2) return top;
+  const command = (t: string): boolean => interpretAll(t, ctx)[0].kind !== "model";
+  if (command(top)) return top;
+  const near = alternatives.slice(1).filter((t) => t.trim() && similarity(norm(top), norm(t)) >= 0.6);
+  const better = near.find(command);
+  if (better) return better;
+  return namesDeal(top, ctx.deals) ? top : (near.find((t) => namesDeal(t, ctx.deals)) ?? top);
 }
 
 const PAGE_HELP: Record<PageName, string> = {

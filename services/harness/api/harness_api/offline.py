@@ -161,7 +161,8 @@ WRITES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "rule_remove",
         re.compile(
-            r"\b(stop watching|remove|delete|cancel|turn off|drop|get rid of)\b.*\b(rules?|standing orders?|alerts?)\b",
+            r"\b(stop watching|remove|delete|cancel|turn off|drop|get rid of)\b.*\b(rules?|standing orders?|alerts?)\b"
+            r"|\bstop (alerting|notifying|pinging|warning|flagging)\b|\bno more (alerts|notifications)\b",
             re.IGNORECASE,
         ),
     ),
@@ -200,7 +201,13 @@ WRITES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?!me\b|us\b)[a-z']+\s+to\s+\w+)|\b(create|add|make|set up|assign|open) (a |an )?(task|to-?do|"
             r"reminder)\b|\bremind (me|\w+) to\b|\breassign\b|\bhand (it|this|that|\w+) (over )?to\b|\bnotify "
             r"(the )?(channel|team|slack)\b|\bpost (it |this )?(to|in|on) (slack|the channel)\b|\bbook (a |the )?"
-            r"(call|meeting)\b",
+            r"(call|meeting)\b"
+            # "move the Harbor deal over to Maya", "give Kestrel to Daniel": a new owner (not a close date)
+            r"|\b(move|transfer|give|switch)\b(?![^?]*\bclose\b)[^?]*\b(deal|account|it|this one|that one)\b"
+            r"[^?]*\b(over )?to [a-z]+\b|\b(move|transfer|give)\b(?![^?]*\bclose\b)[^?]*\bover to\b"
+            # "tell the team in slack that…", "let the channel know…"
+            r"|\b(tell|let|message|ping|alert|update) (the |my )?(team|channel|everyone|room)\b"
+            r"|\b(in|on|to) slack\b",
             re.IGNORECASE,
         ),
     ),
@@ -216,11 +223,16 @@ WRITES: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"\bis now (worth )?\$?\d|\bis now (\w+ )?(thousand|million|k)\b|\bnow worth\b|\b(change|update|set) "
             r"the (amount|close date|next step)\b|\blog (an? )?(update|note|call|meeting)\b|\bpush(ed)? the close\b|"
-            r"\bmove the close date\b|\bthe next step is\b|\bthey (agreed|signed|said)\b",
+            r"\bmove the close date\b|\bthe next step is\b|\bthey (agreed|signed|said)\b"
+            # "push the Kestrel close date to the end of November", "change the Orbital amount to 65K"
+            r"|\b(push|move|pull|bump|slip|delay|change|update|set)\b[^?]*\bclose date\b[^?]*\b(to|back|out|by)\b"
+            r"|\b(change|update|set|bump|raise|lower|increase|decrease|drop)\b[^?]*\b(amount|value|deal size)\b"
+            r"[^?]*\b(to|by)\b",
             re.IGNORECASE,
         ),
     ),
 )
+ASKING = re.compile(r"\s*(when|why|who|what|how|did|does|do|was|were|has|have|is|are)\b", re.IGNORECASE)
 NEEDS_MODEL = {
     "rule_remove": "Removing a standing order",
     "prefs": "Changing your briefing settings",
@@ -345,7 +357,19 @@ CLOSING = re.compile(
     r"\bclose soon\b|\b(this|next) (week|month|quarter)\b.*\bclos",
     re.IGNORECASE,
 )
+CLOSE_WORD = re.compile(r"\b(clos(e|es|ing)|due|decid\w*|sign\w*)\b", re.IGNORECASE)
 WINDOW = re.compile(r"\b(this|next) (week|month|quarter)\b", re.IGNORECASE)
+MONTHS = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)  # fmt: skip
+# "before November", "by the end of November", "in December": a window named by a month.
+MONTH_WINDOW = re.compile(
+    r"\b(before|by|until|till|ahead of|in|during|end of)\s+(?:the\s+end\s+of\s+)?(?:the\s+)?"
+    r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
+    r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
 BRIEFING = re.compile(
     r"\b(attention|brief(ing)?|what'?s (going on|happening|up)|overview|summary|catch me up|on fire|fires?|"
     r"how('s| is| are) (my |the )?(pipeline|deals|things|everything)|status|what'?s at risk|anything at risk|"
@@ -563,7 +587,7 @@ def _top_n(message: str) -> int:
 
 def _aggregate(message: str) -> str | None:
     """The question about the whole pipeline (or a segment of it), if this is one."""
-    if CLOSING.search(message):
+    if CLOSING.search(message) or (CLOSE_WORD.search(message) and MONTH_WINDOW.search(message)):
         return "closing"
     if COMPARE.search(message):
         return "compare"
@@ -874,6 +898,25 @@ def _window(word: str, unit: str, today: date) -> tuple[date, date]:
     return first, date(year + (q == 3), (3 * q + 3) % 12 + 1, 1) - timedelta(days=1)
 
 
+def _month_window(message: str, today: date) -> tuple[date, date, str] | None:
+    """The window a named month gives, at its next occurrence (this month counts): "before November" runs
+    from today to the day before it starts; "by" or "until" to its last day; "in" or "during" is the month."""
+    m = MONTH_WINDOW.search(message)
+    if m is None:
+        return None
+    word = m.group(1).lower()
+    month = next(i for i, name in enumerate(MONTHS, 1) if name.startswith(m.group(2).lower()[:3]))
+    year = today.year + (month < today.month)
+    first = date(year, month, 1)
+    last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    name = f"{MONTHS[month - 1].capitalize()}{'' if year == today.year else f' {year}'}"
+    if word in ("before", "ahead of"):
+        return today, first - timedelta(days=1), f"before {name}"
+    if word in ("in", "during"):
+        return max(first, today), last, f"in {name}"
+    return today, last, f"by the end of {name}"
+
+
 def say_closing(data: dict[str, Any], cards: list[dict[str, Any]], message: str) -> str:
     seg = _seg_words(data)
     attention = int(data.get("attention_count") or 0)
@@ -900,8 +943,9 @@ def say_closing(data: dict[str, Any], cards: list[dict[str, Any]], message: str)
             who = c.get("account")
             head = f"Among the {len(cards)} riskiest deals{seg}, the soonest to close is {who}"
             return f"{head}, on {date_display(d)}.{more}"
-    start, end = _window(word, unit, today)
-    words = f"{word} {unit}"
+    named = None if m else _month_window(message, today)
+    start, end = (named[0], named[1]) if named else _window(word, unit, today)
+    words = named[2] if named else f"{word} {unit}"
     dated: list[tuple[date, dict[str, Any]]] = []
     for c in cards:
         try:
@@ -1269,6 +1313,8 @@ async def _route(turn: _Turn, pending: Pending | None) -> str:
         return greeting + await turn.aggregate("briefing")
 
     for kind, pattern in WRITES:
+        if kind == "update" and ASKING.match(msg):
+            continue  # "when did they push the close date?" asks about an update; it doesn't make one
         if pattern.search(msg):
             if kind == "stage":
                 return (

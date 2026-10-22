@@ -882,8 +882,7 @@ watchfloor/
 │               ├── guide.ts · settings.ts  # scenarios, keyboard, what is kept; name, voice, motion
 │               ├── store.ts                # what the browser remembers (localStorage, guarded)
 │               ├── logic.ts                # pure helpers and API-result parsers (unit-tested)
-│               ├── orb3d.ts                # the 3D orb: a point-sphere on a 2D canvas, no library
-│               ├── scene3d.ts              # the 3D watch floor behind the page; your deals stand on it as columns
+│               ├── plot.ts                 # the pipeline as contacts on a scope: health is range, stage is bearing (ADR-032)
 │               ├── dom.ts                  # h() builder (text only), toasts, confirm dialog
 │               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone
@@ -897,7 +896,7 @@ watchfloor/
 │               │   ├── dock.ts             #   the on-screen state of hands-free, on every page
 │               │   └── text.ts             #   norm, phonetic fold, edit distance, speakable(), echo check
 │               ├── captions.ts             # live captions synced to the voice
-│               ├── orb.ts · sound.ts       # voice state and earcons (Web Audio, no files)
+│               ├── orb.ts · sound.ts       # voice state (the lamp) and earcons (Web Audio, no files)
 │               ├── apphost.ts              # sandboxed iframe host for ui:// resources
 │               ├── trace.ts                # per-turn trace panel: one span per tool call
 │               ├── icons.ts · styles.css

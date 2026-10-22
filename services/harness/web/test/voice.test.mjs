@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ACTION_NAMES, MAX_ACTIONS, NEEDS_YES, parseAction, parseActions } from "../src/voice/actions.ts";
-import { hasWake, interpret, resolveDeal, resolveRule, stripWake } from "../src/voice/grammar.ts";
+import { hasWake, interpret, pickHeard, resolveDeal, resolveRule, stripWake } from "../src/voice/grammar.ts";
 import { asksSomething, isEcho, levenshtein, norm, ordinal, phonetic, similarity, speakable, toCount } from "../src/voice/text.ts";
 
 const deals = [
@@ -377,4 +377,45 @@ test("asksSomething: a reply that ends on a question waits for the answer", () =
   assert.equal(asksSomething("Kestrel is at risk. Health thirty eight."), false);
   assert.equal(asksSomething("Which deal do you mean? I only found one."), false);
   assert.equal(asksSomething(""), false);
+});
+
+test("the everyday ways of asking for a setting, as people word them", () => {
+  assert.deepEqual(action("turn the sound off"), { type: "set_read_aloud", on: false });
+  assert.deepEqual(action("turn the voice back on"), { type: "set_read_aloud", on: true });
+  assert.deepEqual(action("make your answers shorter"), { type: "set_style", style: "brief" });
+  assert.deepEqual(action("make the replies more detailed"), { type: "set_style", style: "detailed" });
+  assert.deepEqual(action("start listening for the wake word"), { type: "wake_word", on: true });
+  assert.deepEqual(action("turn the wake word off"), { type: "wake_word", on: false });
+  assert.deepEqual(action("slow down your voice a bit"), { type: "set_speech_rate", step: "slower" });
+  assert.deepEqual(action("speed your voice up a little"), { type: "set_speech_rate", step: "faster" });
+  assert.deepEqual(action("take a fresh look at the board"), { type: "refresh" });
+  // naming the page as well opens it, filtered, from anywhere
+  assert.deepEqual(action("show me activity for errors only"), { type: "activity_view", filter: "errors" });
+  assert.deepEqual(action("show the activity log with all calls"), { type: "activity_view", filter: "all" });
+  assert.deepEqual(action("show all"), { type: "pipeline_view", band: "all" }); // off Activity, "all" is the board's
+  // still questions for the assistant
+  assert.equal(action("take a fresh look at Kestrel").kind, "model");
+  assert.equal(action("make Kestrel a priority").kind, "model");
+});
+
+test("a deal name recognition clipped or misheard still finds the deal, given a second word", () => {
+  assert.deepEqual(action("pin castle bio"), { type: "pin_deal", deal_id: "dl_kestrel", deal_name: "Kestrel Biotech", on: true });
+  assert.deepEqual(action("open harb and pine"), { type: "open_deal", deal_id: "dl_harbor", deal_name: "Harbor & Pine" });
+  // one misheard word alone is not enough to act on
+  assert.equal(action("pin castle").kind, "model");
+  assert.equal(resolveDeal("castle", deals).deal, null);
+});
+
+test("pickHeard: of recognition's guesses, the near one that means something here", () => {
+  const c = ctx({ page: "pipeline" });
+  // the best guess stands when it is a command, names a deal, or is the only guess
+  assert.equal(pickHeard(["open Kestrel", "open kestrel's"], c), "open Kestrel");
+  assert.equal(pickHeard(["why is Kestrel at risk", "why is kestrel a risk"], c), "why is Kestrel at risk");
+  assert.equal(pickHeard(["sort by among", "sort by amount"], c), "sort by amount");
+  assert.equal(pickHeard(["pin harper and pie", "pin harbor and pine"], c), "pin harbor and pine");
+  assert.equal(pickHeard(["what's the risk on castle", "what's the risk on kestrel"], c), "what's the risk on kestrel");
+  // a far-off guess never replaces what was said
+  assert.equal(pickHeard(["what changed overnight", "dark mode"], c), "what changed overnight");
+  assert.equal(pickHeard(["anything new"], c), "anything new");
+  assert.equal(pickHeard([], c), "");
 });

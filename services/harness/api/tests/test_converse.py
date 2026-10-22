@@ -182,6 +182,26 @@ async def test_strands_turn_calls_mcp_tools_and_speaks_the_summary(
     assert [m["role"] for m in model.seen[0]] == ["user", "assistant", "user"]
 
 
+async def test_a_model_that_goes_quiet_after_the_tool_still_answers_from_it(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    # Seen live with Gemini: the briefing came back, then an empty message, and the user heard
+    # "I couldn't answer that just now" although the answer was in hand.
+    model = ScriptedModel("get_risk_briefing", silent=True)
+    app = create_app(
+        make_config(tmp_path, env="dev", haiku_model_id="test.haiku"),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(mcp),
+        model_factory=lambda cfg: model,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/converse", json={"message": "which deals are going dark"})
+    body = r.json()
+    assert r.status_code == 200 and body["engine"] == "strands"
+    assert body["reply"] == BRIEFING and mcp.names() == ["get_risk_briefing"]
+
+
 async def test_nova_reasoning_is_never_spoken(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> None:
     model = ScriptedModel("explain_deal_risk", {"deal_id": HARBOR}, thinking="Read the summary aloud.")
     app = create_app(
@@ -328,6 +348,31 @@ async def test_views_call_allowlisted_tools_with_the_users_token(
     r = await client.post("/api/tool", json={"name": "set_standing_order", "arguments": {}})
     assert r.status_code == 403 and r.json()["error"] == "not_allowed"
     assert mcp.names() == ["explain_deal_risk"]  # the refused call never reached MCP
+
+
+async def test_a_view_sending_bad_arguments_gets_a_400_not_a_502(
+    tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        rpc = json.loads(request.content)
+        if rpc["method"] == "tools/call":
+            err = {
+                "code": -32602,
+                "message": "Invalid arguments for propose_action: action_type: Field required",
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": rpc["id"], "error": err})
+        return mcp(request)
+
+    app = create_app(
+        make_config(tmp_path),
+        auth_transport=httpx.MockTransport(auth),
+        mcp_transport=httpx.MockTransport(refuse),
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://harness.test") as c:
+        await sign_in(c)
+        r = await c.post("/api/tool", json={"name": "propose_action", "arguments": {"deal_id": HARBOR}})
+        assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+        assert "action_type" in r.json()["message"]
 
 
 async def test_a_busy_mcp_server_reads_as_busy_not_unavailable(tmp_path: Path, auth: FakeAuth) -> None:

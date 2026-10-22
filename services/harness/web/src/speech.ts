@@ -11,7 +11,8 @@ export function voices(): SpeechSynthesisVoice[] {
 
 interface RecognitionResult {
   readonly isFinal: boolean;
-  readonly 0: { readonly transcript: string };
+  readonly length: number;
+  readonly [index: number]: { readonly transcript: string };
 }
 
 interface RecognitionEvent {
@@ -23,6 +24,7 @@ interface Recognition {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
+  maxAlternatives: number;
   onresult: ((e: RecognitionEvent) => void) | null;
   onend: (() => void) | null;
   onerror: ((e: { error: string }) => void) | null;
@@ -39,6 +41,35 @@ function recognitionCtor(): RecognitionCtor | null {
 
 export const canListen = (): boolean => recognitionCtor() !== null;
 
+// The commands and the assistant work in English: the user's own English (en-IN, en-GB) when the
+// browser lists one, so their accent is heard as such, and American English when it lists none.
+// (Phrase biasing, `SpeechRecognition.phrases`, is not used: Chrome refuses it for the cloud
+// recogniser with "phrases-not-supported".)
+export function englishLang(): string {
+  const listed = [...(navigator.languages ?? []), navigator.language].filter(Boolean);
+  return listed.find((l) => /^en\b/i.test(l)) ?? "en-US";
+}
+
+const ALTERNATIVES = 4;
+
+/** Picks what was said from the recognizer's guesses, best first; the page sets one that knows its
+ *  commands and deal names (`pickHeard`). Until then, the best guess. */
+let choose: (alternatives: string[]) => string = (a) => a[0] ?? "";
+
+export function setHeardChooser(fn: (alternatives: string[]) => string): void {
+  choose = fn;
+}
+
+function heard(result: RecognitionResult): string {
+  const all: string[] = [];
+  for (let i = 0; i < result.length; i++) all.push(result[i].transcript);
+  try {
+    return choose(all);
+  } catch {
+    return all[0] ?? ""; // a chooser that fails must not lose what was heard
+  }
+}
+
 /** Listen for one utterance. Resolves with the final transcript ("" if nothing was heard). */
 export function listenOnce(onInterim: (text: string) => void): Promise<string> {
   const Ctor = recognitionCtor();
@@ -46,15 +77,17 @@ export function listenOnce(onInterim: (text: string) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const rec = new Ctor();
     active = rec;
-    rec.lang = navigator.language || "en-US";
+    rec.lang = englishLang();
     rec.interimResults = true;
     rec.continuous = false;
+    rec.maxAlternatives = ALTERNATIVES;
     let final = "";
     rec.onresult = (e) => {
       let interim = "";
+      final = "";
       for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) final += r[0].transcript;
+        if (r.isFinal) final += heard(r);
         else interim += r[0].transcript;
       }
       onInterim((final + interim).trim());
@@ -103,15 +136,16 @@ export function browserEars(): Ears | null {
     if (!wanted || !handlers) return;
     const r = new Ctor();
     rec = r;
-    r.lang = navigator.language || "en-US";
+    r.lang = englishLang();
     r.interimResults = true;
     r.continuous = true;
+    r.maxAlternatives = ALTERNATIVES;
     r.onresult = (e) => {
       backoff = 0;
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i];
-        if (result.isFinal) handlers?.onFinal(result[0].transcript);
+        if (result.isFinal) handlers?.onFinal(heard(result));
         else interim += result[0].transcript;
       }
       if (interim.trim()) handlers?.onInterim(interim.trim());
@@ -192,7 +226,7 @@ export function speak(text: string, events: SpeakEvents = {}): void {
     events.onEnd?.(state.cut);
   };
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = navigator.language || "en-US";
+  u.lang = englishLang();
   const { rate, voiceURI } = settings();
   u.rate = rate;
   const chosen = voiceURI ? voices().find((v) => v.voiceURI === voiceURI) : undefined;

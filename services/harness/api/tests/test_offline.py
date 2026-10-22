@@ -365,6 +365,20 @@ async def test_deals_closing_in_a_window() -> None:
     )
 
 
+async def test_deals_closing_in_a_window_named_by_a_month() -> None:
+    t = Talk()
+    assert await t.say("What's closing before November?") == (
+        "None of the 5 riskiest deals close before November. The soonest is Harbor & Pine Logistics, on "
+        "Tuesday, November 10. I checked the top 5 of the 7 deals that need attention."
+    )
+    in_november = (
+        "Harbor & Pine Logistics, on Tuesday, November 10 and Orbital Dental Group, on Monday, November 23."
+    )
+    assert in_november in await t.say("Anything closing in November?")
+    got = await t.say("Which deals close by the end of December?")
+    assert "close by the end of December" in got and "December 9" in got
+
+
 async def test_a_filter_on_amount() -> None:
     t = Talk()
     assert await t.say("Which at-risk deals are over 50K?") == (
@@ -549,6 +563,12 @@ async def test_a_deal_that_isnt_there_says_so() -> None:
         ("Draft a follow-up to Kestrel about the security questions.", "Drafting a follow-up needs"),
         ("Stop watching my big deals rule.", "Removing a standing order needs"),
         ("Mark Kestrel as closed won.", "Watchfloor doesn't change a deal's stage"),
+        # Heard in a live battery (2026-10-22): each was answered as if it were a question, or not followed.
+        ("push the Kestrel close date to the end of november", "Logging a deal update needs"),
+        ("change the Orbital amount to sixty five thousand", "Logging a deal update needs"),
+        ("move the Harbor deal over to Maya", "Creating tasks and reassigning deals needs"),
+        ("tell the team in slack that Kestrel needs help", "Creating tasks and reassigning deals needs"),
+        ("stop alerting me about anything under fifty k", "Removing a standing order needs"),
     ],
 )
 async def test_changes_are_refused_plainly_and_nothing_is_called(message: str, said: str) -> None:
@@ -565,6 +585,10 @@ async def test_changes_are_refused_plainly_and_nothing_is_called(message: str, s
         "Have you looked at Kestrel?",
         "Get Orbital Dental details",
         "Is the stage for Kestrel Proposal?",
+        "When did they push the close date?",
+        "What's the amount on Orbital?",
+        "Who owns the Harbor deal?",
+        "What's closing before November?",
     ],
 )
 async def test_questions_that_look_like_requests_are_still_questions(message: str) -> None:

@@ -236,8 +236,11 @@ class ScriptedModel(Model):
     ``thinking`` prefixes the reply with a ``<thinking>`` block, the way Amazon Nova answers.
     """
 
-    def __init__(self, tool: str, arguments: dict[str, Any] | None = None, thinking: str = "") -> None:
-        self.tool, self.arguments, self.thinking = tool, arguments or {}, thinking
+    def __init__(
+        self, tool: str, arguments: dict[str, Any] | None = None, thinking: str = "", silent: bool = False
+    ) -> None:
+        """``silent``: end the turn with an empty message after the tool result, as Gemini sometimes does."""
+        self.tool, self.arguments, self.thinking, self.silent = tool, arguments or {}, thinking, silent
         self.seen: list[list[dict[str, Any]]] = []
 
     def update_config(self, **_: Any) -> None:
@@ -262,6 +265,9 @@ class ScriptedModel(Model):
             yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(self.arguments)}}}}
             yield {"contentBlockStop": {}}
             yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        if self.silent:
+            yield {"messageStop": {"stopReason": "end_turn"}}
             return
         payload = json.loads(results[0]["content"][0]["text"])
         prefix = f"<thinking>{self.thinking}</thinking>\n" if self.thinking else ""

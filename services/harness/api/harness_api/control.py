@@ -228,10 +228,13 @@ def control_schema() -> dict[str, Any]:
             "page": _enum(PAGES, "For navigate."),
             "theme": _enum(THEMES, "For set_theme."),
             "device": _enum(DEVICES, "For set_device: the Echo Show preview size on Watch."),
-            "motion": _enum(MOTIONS, "For set_motion. calm holds the scope's sweep and the voice lamp still."),
+            "motion": _enum(
+                MOTIONS, "For set_motion. calm holds the scope's sweep and the voice lamp still."
+            ),
             "on": {
                 "type": "boolean",
-                "description": "For set_read_aloud, set_orb (the voice lamp), set_floor (the scope's sweep), hands_free, wake_word, set_alerts, pin_deal.",
+                "description": "For set_read_aloud, set_orb (the voice lamp), set_floor (the scope's sweep), "
+                "hands_free, wake_word, set_alerts, pin_deal.",
             },
             "style": _enum(
                 STYLES,

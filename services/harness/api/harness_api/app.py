@@ -44,7 +44,7 @@ from .config import HarnessConfig, Misconfigured, get_config
 from .control import Profile, Screen
 from .headers import SecurityHeaders
 from .limits import Limiter, subject
-from .mcp_http import McpError, McpHttp, RateLimited, Unauthorized
+from .mcp_http import InvalidParams, McpError, McpHttp, RateLimited, Unauthorized
 from .offline import Focus
 from .refresh import Refreshes
 from .session import (
@@ -92,6 +92,10 @@ class ConverseIn(BaseModel):
 class ToolIn(BaseModel):
     name: str = Field(max_length=64)
     arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class Refused(Exception):
+    """The MCP server refused a view's tool arguments (-32602): a 400 for the page, not a 502."""
 
 
 # The tools that make, renew, finish or take back a change: only these move what waits for an answer.
@@ -313,6 +317,8 @@ def create_app(
             return JSONResponse({"error": "misconfigured", "message": str(exc)}, status_code=503)
         except RateLimited as exc:  # the MCP server's own per-user limit: busy, not down
             return too_many(exc.retry_after)
+        except Refused as exc:  # a view sent arguments the MCP server refused: its to fix, not an outage
+            return JSONResponse({"error": "invalid_request", "message": str(exc)}, status_code=400)
         except McpError as exc:
             return JSONResponse({"error": "mcp_unavailable", "message": str(exc)}, status_code=502)
         except TimeoutError:
@@ -379,7 +385,10 @@ def create_app(
         after: dict[str, Pending | None] = {}
 
         async def call(token: str) -> dict[str, Any]:
-            c = await McpHttp(s.mcp_url, token, http=mcp_client()).call_tool(body.name, body.arguments)
+            try:
+                c = await McpHttp(s.mcp_url, token, http=mcp_client()).call_tool(body.name, body.arguments)
+            except InvalidParams as exc:
+                raise Refused(str(exc)) from None
             # A preview made in a view can be confirmed by voice. A plain read (a poll of the board, a
             # row opened) leaves whatever waits for the user's answer exactly as it was.
             after["pending"] = next_pending(pending, [c]) if body.name in FLOW_TOOLS else pending

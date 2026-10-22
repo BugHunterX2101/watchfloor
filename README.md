@@ -859,7 +859,7 @@ watchfloor/
 │           ├── src/
 │           │   ├── main.ts · router.ts · store.ts · api.ts · dom.ts
 │           │   ├── pipeline.ts · orders.ts · activity.ts · guide.ts · settings.ts
-│           │   ├── orb.ts · orb3d.ts · scene3d.ts   # the 3D orb and the deal skyline, no library
+│           │   ├── orb.ts · plot.ts                 # the voice state and the pipeline plot (SVG, no library)
 │           │   ├── speech.ts · sound.ts · captions.ts · banner.ts · apphost.ts · trace.ts · logic.ts · icons.ts
 │           │   ├── styles.css
 │           │   └── voice/
@@ -923,12 +923,13 @@ Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
 | Undo on the receipt, more time on a preview | Mistakes are cheap to reverse when they are caught fast | [021](docs/adr/0021-undo-and-more-time.md) |
 | Nova on the Free plan; Gemini when Bedrock cannot run | The credits are the only budget | [022](docs/adr/0022-nova-on-the-free-plan.md) · [023](docs/adr/0023-gemini-when-bedrock-cannot-run.md) |
 | ECS Fargate while Lambda is refused | Same code, same URLs, a different place to run | [025](docs/adr/0025-ecs-when-lambda-is-refused.md) |
-| Five pages, a 3D orb, local personalisation | A voice product needs a screen worth glancing at | [026](docs/adr/0026-harness-pages-orb-and-personalisation.md) |
+| Five pages, local personalisation (its 3D orb was replaced by [032](docs/adr/0032-the-night-scope.md)) | A voice product needs a screen worth glancing at | [026](docs/adr/0026-harness-pages-orb-and-personalisation.md) |
 | Voice-only control of every page | Hands full, eyes elsewhere | [027](docs/adr/0027-voice-only-control.md) |
 | Hands-free is a conversation | Nobody should tap a mic twice | [028](docs/adr/0028-hands-free-conversation.md) |
 | A companion, not a command line | Change your mind, be known, be told the board | [029](docs/adr/0029-voice-companion.md) |
 | A command must account for the whole sentence | Half a sentence must never run silently | [030](docs/adr/0030-voice-precision.md) |
 | Totals from the server, read-backs from code, corrections learned | The model words the answer; it never does the sums or decides what a yes saves | [031](docs/adr/0031-learning-from-corrections.md) |
+| A night scope instead of a 3D orb and floor | Every fact must survive without colour, motion or sight | [032](docs/adr/0032-the-night-scope.md) |
 
 ---
 
