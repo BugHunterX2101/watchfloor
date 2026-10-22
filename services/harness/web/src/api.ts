@@ -90,6 +90,8 @@ export interface Screen {
 export interface SessionInfo {
   signed_in: boolean;
   engine: "strands" | "offline" | null;
+  /** "polly": the server reads replies aloud in Amazon Polly's voice (`/api/speak`). */
+  voice?: "polly" | null;
 }
 
 export class SignedOut extends Error {}

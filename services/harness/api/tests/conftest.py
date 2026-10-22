@@ -212,6 +212,7 @@ def app(tmp_path: Path, auth: FakeAuth, mcp: FakeMcp) -> Starlette:
         make_config(tmp_path),
         auth_transport=httpx.MockTransport(auth),
         mcp_transport=httpx.MockTransport(mcp),
+        voice=None,  # the browser speaks: a WF_POLLY_VOICE in the developer's environment never reaches AWS
     )
 
 

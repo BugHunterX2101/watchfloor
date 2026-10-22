@@ -414,6 +414,10 @@ test("pickHeard: of recognition's guesses, the near one that means something her
   assert.equal(pickHeard(["sort by among", "sort by amount"], c), "sort by amount");
   assert.equal(pickHeard(["pin harper and pie", "pin harbor and pine"], c), "pin harbor and pine");
   assert.equal(pickHeard(["what's the risk on castle", "what's the risk on kestrel"], c), "what's the risk on kestrel");
+  // a runner-up that ends, clears or answers yes is never swapped in
+  assert.equal(pickHeard(["clean the conversation", "clear the conversation"], c), "clean the conversation");
+  assert.equal(pickHeard(["yeh", "yes"], ctx({ confirming: true })), "yeh");
+  assert.equal(pickHeard(["hands free of", "hands free off"], c), "hands free of");
   // a far-off guess never replaces what was said
   assert.equal(pickHeard(["what changed overnight", "dark mode"], c), "what changed overnight");
   assert.equal(pickHeard(["anything new"], c), "anything new");

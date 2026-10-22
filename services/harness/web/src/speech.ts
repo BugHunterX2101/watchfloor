@@ -43,8 +43,9 @@ export const canListen = (): boolean => recognitionCtor() !== null;
 
 // The commands and the assistant work in English: the user's own English (en-IN, en-GB) when the
 // browser lists one, so their accent is heard as such, and American English when it lists none.
-// (Phrase biasing, `SpeechRecognition.phrases`, is not used: Chrome refuses it for the cloud
-// recogniser with "phrases-not-supported".)
+// (Phrase biasing, `SpeechRecognition.phrases`, is not used: it is experimental, and the spec's
+// "phrases-not-supported" error is what the platform tests expect from a cloud recognizer, which is
+// the one Chrome uses by default. The guesses are rescored instead: see `pickHeard`.)
 export function englishLang(): string {
   const listed = [...(navigator.languages ?? []), navigator.language].filter(Boolean);
   return listed.find((l) => /^en\b/i.test(l)) ?? "en-US";
@@ -209,22 +210,146 @@ export interface SpeakEvents {
   onEnd?: (interrupted: boolean) => void;
 }
 
-/** The utterance in flight; stopping it marks it cut, so its end reports an interruption. */
-let speaking: { cut: boolean } | null = null;
+/** The utterance in flight; stopping it marks it cut, so its end reports an interruption. A reply in
+ *  the server's voice also has a request or an audio element to stop: `halt` does that, and ends it. */
+interface Speaking {
+  cut: boolean;
+  halt?: () => void;
+}
+let speaking: Speaking | null = null;
+
+// The server's voice (Amazon Polly, `/api/speak`), when it offers one: the default voice then, and
+// the browser's own voice whenever the server's can't speak a reply (too long, too slow to start, a
+// refusal, the network, autoplay). Picking a browser voice in Settings always uses that voice.
+let cloud = false;
+const CLOUD_MAX = 1500; // the server's own limit (voice.py MAX_CHARS)
+// Past this the browser's voice starts instead. A warm reply takes one to two seconds; the first after
+// the server starts also opens its connection to AWS, so the wait covers that and no more.
+const CLOUD_WAIT_MS = 6000;
+
+export function setCloudVoice(on: boolean): void {
+  cloud = on;
+}
 
 export function speak(text: string, events: SpeakEvents = {}): void {
-  if (!("speechSynthesis" in window) || !text) {
+  if (!text) {
     events.onEnd?.(false);
     return;
   }
-  if (speaking) speaking.cut = true;
-  window.speechSynthesis.cancel();
-  const state = { cut: false };
+  stopSpeaking();
+  const state: Speaking = { cut: false };
   speaking = state;
+  let ended = false;
   const end = (): void => {
+    if (ended) return;
+    ended = true;
     if (speaking === state) speaking = null;
     events.onEnd?.(state.cut);
   };
+  if (cloud && !settings().voiceURI && text.length <= CLOUD_MAX && navigator.onLine !== false) {
+    void cloudSpeak(text, events, state, end);
+  } else {
+    browserSpeak(text, events, state, end);
+  }
+}
+
+interface Spoken {
+  audio: string;
+  type: string;
+  /** [milliseconds into the audio, offset in the text, length]: one per word. */
+  marks: [number, number, number][];
+}
+
+async function cloudSpeak(text: string, events: SpeakEvents, state: Speaking, end: () => void): Promise<void> {
+  const ctl = new AbortController();
+  let audio: HTMLAudioElement | null = null;
+  let url = "";
+  let tick = 0;
+  let started = false;
+  const cleanup = (): void => {
+    window.clearInterval(tick);
+    if (audio) {
+      audio.onplay = audio.onended = audio.onerror = null;
+      audio.pause();
+    }
+    if (url) URL.revokeObjectURL(url);
+    url = "";
+  };
+  state.halt = () => {
+    ctl.abort();
+    cleanup();
+    end();
+  };
+  const fallback = (): void => {
+    cleanup();
+    state.halt = undefined;
+    if (state.cut) end();
+    else browserSpeak(text, events, state, end);
+  };
+
+  let body: Spoken;
+  const timer = window.setTimeout(() => ctl.abort(), CLOUD_WAIT_MS);
+  try {
+    const r = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      credentials: "same-origin",
+      signal: ctl.signal,
+    });
+    if (r.status === 401 || r.status === 404) cloud = false; // signed out, or no voice: stop asking
+    if (!r.ok) return fallback();
+    body = (await r.json()) as Spoken;
+    if (typeof body.audio !== "string" || !Array.isArray(body.marks)) return fallback();
+  } catch {
+    return fallback(); // aborted (too slow, or stopped: `fallback` then just ends it) or the network
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (state.cut) return;
+
+  const bytes = Uint8Array.from(atob(body.audio), (c) => c.charCodeAt(0));
+  url = URL.createObjectURL(new Blob([bytes], { type: body.type || "audio/mpeg" }));
+  const player = new Audio(url);
+  audio = player;
+  player.playbackRate = settings().rate; // the pitch is kept (preservesPitch defaults to true)
+  let next = 0;
+  player.onplay = () => {
+    if (started) return;
+    started = true;
+    events.onStart?.();
+    // The marks are in the audio's own time, so they hold at any playback rate.
+    tick = window.setInterval(() => {
+      const ms = player.currentTime * 1000;
+      while (next < body.marks.length && body.marks[next][0] <= ms) {
+        const [, index, length] = body.marks[next++];
+        events.onWord?.(index, length);
+      }
+    }, 40);
+  };
+  player.onended = () => {
+    cleanup();
+    end();
+  };
+  player.onerror = () => {
+    if (!started) return fallback();
+    state.cut = true;
+    cleanup();
+    end();
+  };
+  try {
+    await player.play();
+  } catch {
+    if (!started) fallback(); // autoplay refused, or the audio could not be decoded
+  }
+}
+
+function browserSpeak(text: string, events: SpeakEvents, state: Speaking, end: () => void): void {
+  if (!("speechSynthesis" in window)) {
+    end();
+    return;
+  }
+  window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = englishLang();
   const { rate, voiceURI } = settings();
@@ -250,6 +375,10 @@ export function speak(text: string, events: SpeakEvents = {}): void {
 }
 
 export function stopSpeaking(): void {
-  if (speaking) speaking.cut = true;
+  const was = speaking;
+  if (was) {
+    was.cut = true;
+    was.halt?.();
+  }
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }

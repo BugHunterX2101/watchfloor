@@ -143,9 +143,10 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
           : "Okay, I won't interrupt. Ask me when you want an update.",
       );
     case "change_voice": {
-      const list = h.voices();
+      // The default voice (Amazon Polly where the server offers it) is one stop on the way round.
+      const list = [{ voiceURI: "", name: "the default voice" }, ...h.voices()];
       if (list.length < 2) return said("This browser doesn't offer another voice.");
-      const at = list.findIndex((v) => v.voiceURI === h.settings().voiceURI);
+      const at = Math.max(0, list.findIndex((v) => v.voiceURI === h.settings().voiceURI));
       const next = list[(at + (a.step === "next" ? 1 : -1) + list.length) % list.length];
       h.update({ voiceURI: next.voiceURI });
       return said(`Using ${next.name}.`);

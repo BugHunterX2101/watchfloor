@@ -604,6 +604,8 @@ export function interpret(raw: string, ctx: Context): Intent {
 const JOINERS = /\s+(?:and\s+then|and\s+also|then|and|also)\s+|\s*[,;]\s*(?:and\s+|then\s+)?/;
 const MAX_PARTS = 4;
 const ASKS_USER = new Set(["sign_out", "forget_data", "clear_activity"]);
+// Commands that change the session, taken only as the recognizer's best guess (see `pickHeard`).
+const NOT_GUESSED = new Set(["clear_conversation", "hands_free", "wake_word", "set_name"]);
 
 /** What was meant, as one intent or, for a sentence of several commands, one intent per command. */
 export function interpretAll(raw: string, ctx: Context): Intent[] {
@@ -636,10 +638,13 @@ function namesDeal(text: string, deals: readonly DealRef[]): boolean {
 export function pickHeard(alternatives: readonly string[], ctx: Context): string {
   const top = alternatives[0] ?? "";
   if (alternatives.length < 2) return top;
-  const command = (t: string): boolean => interpretAll(t, ctx)[0].kind !== "model";
-  if (command(top)) return top;
+  if (interpretAll(top, ctx)[0].kind !== "model") return top;
+  // A runner-up may only be a harmless page command: never a yes, nor anything that ends, clears or
+  // signs out ("clean" heard as "clear" must not wipe the conversation).
+  const harmless = (t: string): boolean =>
+    interpretAll(t, ctx).every((i) => i.kind === "action" && !ASKS_USER.has(i.action.type) && !NOT_GUESSED.has(i.action.type));
   const near = alternatives.slice(1).filter((t) => t.trim() && similarity(norm(top), norm(t)) >= 0.6);
-  const better = near.find(command);
+  const better = near.find(harmless);
   if (better) return better;
   return namesDeal(top, ctx.deals) ? top : (near.find((t) => namesDeal(t, ctx.deals)) ?? top);
 }

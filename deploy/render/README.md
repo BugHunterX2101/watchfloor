@@ -25,6 +25,11 @@ Set on the service, never in the repo:
 - A model: `WF_GEMINI_MODEL_ID` + `WF_GEMINI_API_KEY`, or Amazon Nova on Bedrock (`WF_HAIKU_MODEL_ID`
   with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`). With `WF_KMS_KEY_ID` set, tokens are
   signed by AWS KMS instead of the PEM.
+- Optional, Amazon Polly reads replies aloud (ADR-033): `WF_POLLY_VOICE` (a neural voice id, e.g.
+  `Ruth`) with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` for an IAM user allowed
+  `polly:SynthesizeSpeech` and nothing else. `WF_POLLY_DAILY_CHARS` caps the characters a UTC day
+  (default 30,000; audio and word timings count twice); `WF_POLLY_REGION` overrides `AWS_REGION`.
+  Unset `WF_POLLY_VOICE` to turn it off: the browser's own voice speaks.
 
 `WF_ENV=local` keeps the file signer available and runs the workers in-process; the https issuer still
 makes every cookie Secure. Behind Caddy every caller shares one address, so the auth server's per-address

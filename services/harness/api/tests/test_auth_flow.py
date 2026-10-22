@@ -34,7 +34,11 @@ async def test_callback_exchanges_the_code_with_the_matching_verifier(
     assert auth.tokens["client_id"] == "wf-harness" and "client_secret" not in auth.tokens
     assert auth.tokens["resource"] == MCP_URL and auth.tokens["redirect_uri"] == REDIRECT
     assert pkce.challenge(auth.tokens["code_verifier"]) == q["code_challenge"][0]
-    assert (await client.get("/api/session")).json() == {"signed_in": True, "engine": "offline"}
+    assert (await client.get("/api/session")).json() == {
+        "signed_in": True,
+        "engine": "offline",
+        "voice": None,
+    }
     await sign_in(client)  # the shared helper takes the same path
 
 

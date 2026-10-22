@@ -18,6 +18,7 @@ CSP = "; ".join(
         "style-src-attr 'unsafe-inline'",
         "img-src 'self' data:",
         "font-src 'self'",
+        "media-src 'self' blob:",  # a reply in Polly's voice plays from a blob: URL (voice.py)
         "frame-src 'self'",  # the MCP view's own page (/api/view), which brings its own, stricter policy
         "connect-src 'self'",
         "manifest-src 'self'",

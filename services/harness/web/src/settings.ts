@@ -67,7 +67,7 @@ export function mountSettings(host: SettingsHost): { open(): void } {
       const here = (navigator.language || "en").slice(0, 2).toLowerCase();
       const mine = all.filter((v) => v.lang.toLowerCase().startsWith(here));
       const rest = all.filter((v) => !mine.includes(v));
-      voiceSelect.replaceChildren(h("option", { value: "" }, "Browser default"));
+      voiceSelect.replaceChildren(h("option", { value: "" }, "Default (Amazon Polly when available)"));
       for (const v of [...mine, ...rest]) {
         voiceSelect.append(h("option", { value: v.voiceURI, selected: v.voiceURI === settings().voiceURI }, `${v.name} (${v.lang})`));
       }

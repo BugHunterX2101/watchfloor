@@ -930,6 +930,7 @@ Thirty-one records in [`docs/adr`](docs/adr). The ones that matter most:
 | A command must account for the whole sentence | Half a sentence must never run silently | [030](docs/adr/0030-voice-precision.md) |
 | Totals from the server, read-backs from code, corrections learned | The model words the answer; it never does the sums or decides what a yes saves | [031](docs/adr/0031-learning-from-corrections.md) |
 | A night scope instead of a 3D orb and floor | Every fact must survive without colour, motion or sight | [032](docs/adr/0032-the-night-scope.md) |
+| The recogniser's runner-up guesses; Amazon Polly reads replies | Hear what was said, and say it in a voice worth hearing | [033](docs/adr/0033-hearing-alternatives-and-polly-voice.md) |
 
 ---
 

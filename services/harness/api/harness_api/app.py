@@ -2,8 +2,9 @@
 
     GET  /oauth/login      start OAuth 2.1 + PKCE as the public ``wf-harness`` client
     GET  /oauth/callback   exchange the code; the tokens go into an encrypted cookie
-    GET  /api/session      {"signed_in": bool, "engine": ...}
+    GET  /api/session      {"signed_in": bool, "engine": ..., "voice": "polly" | null}
     POST /api/logout       revoke the refresh token and clear the cookie
+    POST /api/speak        {"text"} → {"audio", "type", "marks"}: a reply in Amazon Polly's voice (voice.py)
     POST /converse         {"message", "history", "context"?, "profile"?, "unheard"?}
                            → {"reply", "engine", "calls", "ui", "actions", "awaiting"}
     POST /api/tool         {"name", "arguments"} from a ui:// view → the tool result (allowlisted tools)
@@ -21,6 +22,7 @@ a turn runs a language model.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -59,6 +61,7 @@ from .session import (
     Box,
     Session,
 )
+from .voice import MAX_CHARS, SPEAK_PER_MIN, Unavailable, Voice, from_env
 
 log = logging.getLogger("watchfloor.harness")
 
@@ -75,6 +78,10 @@ class Line(BaseModel):
     role: Literal["user", "assistant"]
     # Clipped, not refused: one long model reply must not make every later turn a 400.
     text: Annotated[str, BeforeValidator(lambda v: v[:2000] if isinstance(v, str) else v)]
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_CHARS)
 
 
 class ConverseIn(BaseModel):
@@ -167,8 +174,11 @@ def create_app(
     auth_transport: httpx.AsyncBaseTransport | None = None,
     mcp_transport: httpx.AsyncBaseTransport | None = None,
     model_factory: ModelFactory | None = None,
+    voice: Voice | None | Literal["env"] = "env",
 ) -> Starlette:
     conf = cfg or get_config()
+    tts = from_env() if voice == "env" else voice
+    speak_limit = Limiter(SPEAK_PER_MIN)
     box = Box(conf.session_secret)
     s = conf.core
     shared: dict[str, httpx.AsyncClient] = {}
@@ -184,7 +194,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        # The voice's client is built in the background, so the first reply read aloud doesn't wait for it.
+        warming = asyncio.create_task(asyncio.to_thread(tts.warm)) if tts else None
         yield
+        if warming:
+            await warming
         if "mcp" in shared:
             await shared.pop("mcp").aclose()
 
@@ -251,7 +265,9 @@ def create_app(
 
     async def session_info(request: Request) -> Response:
         signed_in = box.open_session(request.cookies.get(SESSION_COOKIE)) is not None
-        return JSONResponse({"signed_in": signed_in, "engine": conf.engine})
+        return JSONResponse(
+            {"signed_in": signed_in, "engine": conf.engine, "voice": "polly" if tts else None}
+        )
 
     async def logout(request: Request) -> Response:
         session = box.open_session(request.cookies.get(SESSION_COOKIE))
@@ -416,6 +432,26 @@ def create_app(
         resp.delete_cookie(PENDING_COOKIE, path="/")
         return resp
 
+    async def speak(request: Request) -> Response:
+        """A reply read by Amazon Polly. Any refusal (no voice, too long, too often, the day's allowance
+        spent, Polly down) tells the page to speak it with the browser's own voice instead."""
+        if tts is None:
+            return JSONResponse({"error": "no_voice"}, status_code=404)
+        session = box.open_session(request.cookies.get(SESSION_COOKIE))
+        if session is None:
+            return signed_out()
+        body = await json_body(request, SpeakIn)
+        if isinstance(body, Response):
+            return body
+        assert isinstance(body, SpeakIn)
+        wait = speak_limit.hit(subject(session.access_token))
+        if wait:
+            return too_many(wait)
+        try:
+            return JSONResponse(await tts.speak(body.text))
+        except Unavailable as exc:
+            return JSONResponse({"error": "voice_unavailable", "message": str(exc)}, status_code=503)
+
     async def view_page(request: Request) -> Response:
         """A ``ui://`` view as a page of its own, for the sandboxed iframe on Watch.
 
@@ -468,6 +504,7 @@ def create_app(
         Route("/converse", converse, methods=["POST"]),
         Route("/api/tool", view_tool, methods=["POST"]),
         Route("/api/dismiss", dismiss, methods=["POST"]),
+        Route("/api/speak", speak, methods=["POST"]),
         Route("/api/view", view_page, methods=["GET"]),
     ]
     if (conf.web_dist / "index.html").is_file():

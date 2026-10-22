@@ -49,7 +49,17 @@ import { mountPlot } from "./plot";
 import { current, initRouter, navigate, onRoute, parseHash, setBadge, type Route } from "./router";
 import { mountSettings } from "./settings";
 import { earcon, earconFor, setSounds } from "./sound";
-import { browserEars, canListen, listenOnce, setHeardChooser, speak, stopListening, stopSpeaking, voices } from "./speech";
+import {
+  browserEars,
+  canListen,
+  listenOnce,
+  setCloudVoice,
+  setHeardChooser,
+  speak,
+  stopListening,
+  stopSpeaking,
+  voices,
+} from "./speech";
 import {
   clearPlot,
   forgetEverything,
@@ -1375,6 +1385,7 @@ async function start(): Promise<void> {
   try {
     const info = await session();
     setSignedIn(info.signed_in, info.engine);
+    setCloudVoice(info.signed_in && info.voice === "polly");
     if (info.signed_in) {
       if (!transcript.children.length) addLine("system", "Signed in · ask anything, or pick a suggestion");
       try {
