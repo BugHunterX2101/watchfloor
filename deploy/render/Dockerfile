@@ -30,7 +30,8 @@ COPY packages ./packages
 COPY services/mcp_server ./services/mcp_server
 COPY services/auth_server ./services/auth_server
 COPY services/workers ./services/workers
-RUN uv sync --frozen --no-dev --all-packages
+# --extra aws adds boto3 (workers' extra), which the auth server's KMS signer imports.
+RUN uv sync --frozen --no-dev --all-packages --extra aws
 COPY services/harness/api ./services/harness/api
 RUN cd services/harness/api && uv sync --frozen --no-dev
 
