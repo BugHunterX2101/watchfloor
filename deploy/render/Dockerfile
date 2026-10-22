@@ -18,7 +18,10 @@ RUN mkdir -p services/mcp_server/mcp_server && cd services/mcp_server/ui && npm 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONUTF8=1 UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY --from=ghcr.io/astral-sh/uv:0.12.4 /uv /usr/local/bin/uv
-COPY --from=caddy:2.10.2 /usr/bin/caddy /usr/local/bin/caddy
+COPY --from=caddy:2.10.2 /usr/bin/caddy /tmp/caddy
+# The image gives caddy cap_net_bind_service as a file capability, which a non-root process under Render's
+# sandbox may not exec (EPERM). A plain cp drops it; Caddy only needs $PORT (10000), not a low port.
+RUN cp /tmp/caddy /usr/local/bin/caddy && rm /tmp/caddy
 WORKDIR /app
 
 # The workspace (core, MCP server, auth server, workers), then the harness API's own project (ADR-011).
