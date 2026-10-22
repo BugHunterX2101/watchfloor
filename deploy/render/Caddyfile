@@ -1,0 +1,31 @@
+# One public origin for the three servers (deploy/render/Dockerfile). Render terminates TLS in front.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		trusted_proxies static private_ranges # Render's edge, so X-Forwarded-Proto https survives
+	}
+}
+
+:{$PORT:10000} {
+	# The authorization server: metadata, keys, the login and consent pages, tokens (auth_server/app.py).
+	@auth path /.well-known/oauth-authorization-server /.well-known/oauth-authorization-server/* /jwks.json /authorize /login /consent /token /revoke /privacy /terms /static/addon/*
+	handle @auth {
+		reverse_proxy 127.0.0.1:8081
+	}
+
+	# The MCP server: the endpoint and its protected-resource metadata (mcp_server/app.py).
+	@mcp path /mcp /mcp/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	handle @mcp {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else is the harness: the page, /oauth/*, /api/*, /converse, /healthz.
+	handle {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:8082
+	}
+}

@@ -6,12 +6,14 @@
 import { callTool, SignedOut, type Call } from "./api";
 import { busy, confirmDialog, h, icon, toast } from "./dom";
 import { ICONS } from "./icons";
-import { relativeTime } from "./logic";
+import { orderExamples, relativeTime, type BriefingDeal } from "./logic";
 
 export interface OrdersHost {
   ask(text: string): void;
   report(call: Call, source: string): void;
   signedOut(): void;
+  /** The deals in the latest briefing this visit, so the examples fit this board (empty before one). */
+  deals(): readonly BriefingDeal[];
 }
 
 export interface Rule {
@@ -38,12 +40,6 @@ export function toRules(data: unknown): Rule[] | null {
   }
   return out;
 }
-
-const EXAMPLES = [
-  "Flag deals over $50,000 with no buyer reply for 7 days.",
-  "Watch enterprise deals whose health drops to 30 or lower.",
-  "Alert me about negotiation-stage deals that go quiet for 5 days.",
-];
 
 const PREFERENCES = [
   "Show five deals in my briefing.",
@@ -123,7 +119,11 @@ export function mountOrders(root: HTMLElement, host: OrdersHost): OrdersHandle {
           : "Say it the way you'd tell a colleague. Watchfloor reads the rule back and asks before it saves anything.",
       ),
       h("h3", { class: "mini-title" }, "New orders"),
-      chips(EXAMPLES, offline || !signedIn),
+      // Sized to the latest briefing: its typical amount, its top deal's stage, just above its lowest health.
+      ...(host.deals().length
+        ? [h("p", { class: "help" }, "These fit your latest briefing: its typical deal size, the stage your top deal is in, and its lowest health.")]
+        : []),
+      chips(orderExamples(host.deals()), offline || !signedIn),
       h("h3", { class: "mini-title" }, "Briefing preferences"),
       chips(PREFERENCES, offline || !signedIn),
     );

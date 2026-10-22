@@ -4,13 +4,16 @@
 
 import { confirmDialog, h, icon, toast } from "./dom";
 import { ICONS } from "./icons";
-import { forgetEverything } from "./store";
+import { promptSafe, questionFor, type BriefingDeal } from "./logic";
+import { forgetEverything, settings } from "./store";
 
 export interface GuideHost {
   ask(text: string): void;
   /** "offline", a model name, or null when signed out. */
   engine(): string | null;
   openSettings(): void;
+  /** The deals in the latest briefing this visit (empty before the first). */
+  deals(): readonly BriefingDeal[];
 }
 
 interface Scenario {
@@ -20,28 +23,65 @@ interface Scenario {
   needsModel?: boolean;
 }
 
-const SCENARIOS: Scenario[] = [
-  { title: "Your morning briefing", says: "What needs my attention today?", why: "The risk board opens on the screen and the top deals are read out." },
-  { title: "Why is it at risk?", says: "Why is Kestrel at risk?", why: "Health, the reasons behind it and the trend, in one spoken answer." },
-  { title: "Go deeper", says: "Dig into Kestrel", why: "Starts a background review; Watchfloor tells you when it is ready, so there is nothing to check." },
-  { title: "What am I watching?", says: "What am I watching?", why: "Lists your standing orders." },
-  {
-    title: "Do something about it",
-    says: "Create a follow-up task for the owner of Kestrel.",
-    why: "Previews the change, reads it back, and only acts after you say yes. You can undo it for 30 seconds.",
-    needsModel: true,
-  },
-];
+/** The scenarios, about your own deals once a briefing has run: the one that most needs you. Before
+ *  that, only the ones that need no deal name are offered. */
+function scenarios(deals: readonly BriefingDeal[]): Scenario[] {
+  const top = deals.find((d) => d.band === "at_risk") ?? deals.find((d) => d.band === "watch") ?? deals[0];
+  const who = top ? promptSafe(top.account) : "";
+  return [
+    { title: "Your morning briefing", says: "What needs my attention today?", why: "The risk board opens on the screen and the top deals are read out." },
+    ...(top
+      ? [
+          {
+            title: top.band === "at_risk" ? "Why is it at risk?" : "How is it doing?",
+            says: questionFor(top),
+            why: `Health (${top.health} now), the reasons behind it and the trend, in one spoken answer.`,
+          },
+          { title: "Go deeper", says: `Dig into ${who}`, why: "Starts a background review; Watchfloor tells you when it is ready, so there is nothing to check." },
+        ]
+      : []),
+    { title: "What changed?", says: "What changed since my last briefing?", why: "Only what is new or has moved since you last asked." },
+    { title: "What am I watching?", says: "What am I watching?", why: "Lists your standing orders." },
+    ...(top
+      ? [
+          {
+            title: "Do something about it",
+            says: `Create a follow-up task for the owner of ${who}.`,
+            why: "Previews the change, reads it back, and only acts after you say yes. You can undo it for 30 seconds.",
+            needsModel: true,
+          },
+        ]
+      : []),
+  ];
+}
 
 // What can be said, by what it does. Each line is a phrase the page understands on its own (no
 // model needed) except the last group, which goes to the assistant. voice/grammar.ts is the source.
-const SAY: [string, string[]][] = [
-  ["Move around", ["Go to the pipeline", "Open standing orders", "Show activity", "Open the guide", "Go home", "Go back"]],
-  ["Work the board", ["Show only at-risk deals", "Sort by amount", "Show the top three", "Show enterprise deals", "Clear filters", "Open Kestrel", "Open the second one", "Pin the first deal"]],
-  ["Look and sound", ["Dark mode", "Speak slower", "Change the voice", "Mute", "Reduce motion", "Call me Priya"]],
-  ["Run the session", ["What can I say here?", "Stop", "Repeat that", "Read this page", "Remove the first rule", "Clear the conversation", "Sign me out"]],
-  ["Ask and act", ["What needs my attention today?", "What should I do first?", "Show me Harbor and Pine", "Create a follow-up task for the owner of Kestrel", "Flag deals over fifty thousand with no reply for a week"]],
-];
+// Deal names are your own once a briefing has run; until then "a deal's name" stands in for one.
+function sayList(deals: readonly BriefingDeal[], name: string): [string, string[]][] {
+  const first = deals[0] ? promptSafe(deals[0].account) : "";
+  const second = deals.find((d) => d.account !== deals[0]?.account);
+  const other = second ? promptSafe(second.account) : "";
+  return [
+    ["Move around", ["Go to the pipeline", "Open standing orders", "Show activity", "Open the guide", "Go home", "Go back"]],
+    [
+      "Work the board",
+      ["Show only at-risk deals", "Sort by amount", "Show the top three", "Show enterprise deals", "Clear filters", first ? `Open ${first}` : "Open, then a deal's name", "Open the second one", "Pin the first deal"],
+    ],
+    ["Look and sound", ["Dark mode", "Speak slower", "Change the voice", "Mute", "Reduce motion", "Hide the sweep", `Call me ${name || "Sam"}`]],
+    ["Run the session", ["What can I say here?", "Stop", "Repeat that", "Read this page", "Remove the first rule", "Clear the conversation", "Sign me out"]],
+    [
+      "Ask and act",
+      [
+        "What needs my attention today?",
+        "What should I do first?",
+        other ? `Show me ${other}` : "Show me, then a deal's name",
+        first ? `Create a follow-up task for the owner of ${first}` : "Create a follow-up task for the owner of, then a deal's name",
+        "Flag deals over fifty thousand with no reply for a week",
+      ],
+    ],
+  ];
+}
 
 const KEYS: [string, string][] = [
   ["/", "Jump to the message box"],
@@ -72,7 +112,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
     ),
   );
 
-  const scenarios = h("section", { class: "panel", "aria-labelledby": "guide-try" });
+  const scenarioPanel = h("section", { class: "panel", "aria-labelledby": "guide-try" });
   function renderScenarios(): void {
     const engine = host.engine();
     const offline = engine === "offline";
@@ -82,13 +122,18 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       : offline
         ? "This run uses the offline keyword router, so the scenario that needs a language model is switched off."
         : "A language model is answering, so all of these work.";
-    scenarios.replaceChildren(
+    const own = host.deals().length
+      ? " The ones about a single deal use the deal that needs you most in your latest briefing."
+      : signedIn
+        ? " Once a briefing has run, scenarios about your own top deal appear here too."
+        : "";
+    scenarioPanel.replaceChildren(
       h("h2", { class: "panel-title", id: "guide-try" }, "Try it"),
-      h("p", { class: "muted" }, note),
+      h("p", { class: "muted" }, note + own),
       h(
         "ul",
         { class: "scenarios" },
-        ...SCENARIOS.map((s) => {
+        ...scenarios(host.deals()).map((s) => {
           const blocked = !signedIn || (s.needsModel === true && offline);
           const run = h("button", { type: "button", class: "btn btn-quiet", disabled: blocked });
           run.append(icon(ICONS.play), "Run it");
@@ -106,6 +151,20 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
             run,
           );
         }),
+      ),
+    );
+  }
+
+  const sayGrid = h("div", { class: "say-grid" });
+  function renderSay(): void {
+    sayGrid.replaceChildren(
+      ...sayList(host.deals(), settings().name).map(([group, phrases]) =>
+        h(
+          "div",
+          { class: "say-group" },
+          h("h3", { class: "mini-title" }, group),
+          h("ul", { class: "say-list" }, ...phrases.map((p) => h("li", null, `“${p}”`))),
+        ),
       ),
     );
   }
@@ -132,18 +191,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       h("li", null, "Say “keep it short” or “more detail from now on” to set how long answers are (a plain “more detail” is a follow-up question about the last answer), and tell it your name in Settings, or just say “call me …”. “What can I say here?” lists what works on the page you are on."),
       h("li", null, "Hands-free switches itself off after five minutes without a request."),
     ),
-    h(
-      "div",
-      { class: "say-grid" },
-      ...SAY.map(([group, phrases]) =>
-        h(
-          "div",
-          { class: "say-group" },
-          h("h3", { class: "mini-title" }, group),
-          h("ul", { class: "say-list" }, ...phrases.map((p) => h("li", null, `“${p}”`))),
-        ),
-      ),
-    ),
+    sayGrid,
     h(
       "p",
       { class: "muted" },
@@ -173,7 +221,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
     h(
       "p",
       { class: "muted" },
-      "The floor behind the page is your pipeline. After a briefing each deal stands on it as a glowing column: red when at risk, amber on watch, green when healthy, and taller the lower its health. It moves with the assistant (faster while it thinks, a ripple on every word it speaks). It is decoration only: every fact is also in words on the page.",
+      "The scope on Watch is your pipeline. After a briefing each deal is a contact on it: the nearer the centre, the lower its health (the rings at 35 and 60 are where At risk and Watch begin), its bearing is its stage, its size its amount, and its shape says its band. Choose one to open it. The lamp at the centre is the assistant: it breathes while ready, brightens while listening, turns while it thinks and pulses on every word it speaks. Every fact on the scope is also in words beside it.",
     ),
   );
 
@@ -231,15 +279,19 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       { class: "plain" },
       h("li", null, "Everything works from the keyboard, and the page tells a screen reader where you've landed."),
       h("li", null, "Risk is never colour alone: each band is a word, a colour and a shape."),
-      h("li", null, "Motion follows your system setting, and “Calm” in settings stops the 3D orb and card tilt."),
+      h("li", null, "Motion follows your system setting, and “Calm” in settings holds the sweep and the lamp still."),
       h("li", null, "The Echo Show previews on Watch show the view at 960, 1280 and 1920 pixels wide."),
     ),
   );
 
-  root.append(head, scenarios, voice, how, keys, data, access);
+  root.append(head, scenarioPanel, voice, how, keys, data, access);
   renderScenarios();
+  renderSay();
   return {
-    refresh: renderScenarios,
+    refresh() {
+      renderScenarios();
+      renderSay();
+    },
     describe: () =>
       "This is the guide. It has scenarios to try, everything you can say, how the pieces fit together, the keyboard shortcuts, what this page keeps, and accessibility notes. To hear what you can say, ask: what can I say?",
   };

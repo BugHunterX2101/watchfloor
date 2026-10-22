@@ -1,4 +1,5 @@
-// The voice state shared by the orbs, the watch light and the composer (body[data-voice]).
+// The voice state shared by the plot's lamp, the small lamp by the conversation and the composer
+// (body[data-voice]).
 // Each state is also written out in #voice-state, so it never depends on motion or colour alone.
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "error";
@@ -32,10 +33,9 @@ export function voiceState(): VoiceState {
   return (document.body.dataset.voice as VoiceState | undefined) ?? "idle";
 }
 
-/** One pulse of the orbs, on each spoken word boundary: the motion follows the real speech. */
+/** One pulse of the lamps, on each spoken word boundary: the motion follows the real speech. */
 export function beat(): void {
-  window.dispatchEvent(new Event("wf:beat")); // the 3D orb (orb3d.ts) pulses on the same word
-  for (const orb of document.querySelectorAll<HTMLElement>(".orb")) {
+  for (const orb of document.querySelectorAll<Element>(".orb, .lamp")) {
     orb.classList.add("beat");
     window.setTimeout(() => orb.classList.remove("beat"), 110);
   }

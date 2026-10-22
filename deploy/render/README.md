@@ -1,0 +1,38 @@
+# Watchfloor on Render (free plan)
+
+While the AWS account's compute is blocked, the whole stack runs as **one Docker web service** on Render's
+free plan, with Render's **free Postgres 16**. Nothing here is paid.
+
+| Piece | Where |
+| --- | --- |
+| `Dockerfile` | Node stage builds the harness page and the MCP Apps views; Python stage installs the workspace and the harness API's own project (ADR-011), plus Caddy |
+| `Caddyfile` | One origin: `/authorize`, `/login`, `/token`, `/jwks.json`… to the auth server (:8081); `/mcp` and its metadata to the MCP server (:8080); everything else to the harness (:8082) |
+| `start.sh` | Every boot: migrate, give `wf_app` and `wf_auth` logins, write the signing key, re-seed the demo workspace relative to now, provision the OAuth clients and demo logins; then run the three servers, the workers and Caddy |
+| `bootstrap.py` | The migrate-and-roles step |
+
+## Environment
+
+Set on the service, never in the repo:
+
+- `WF_OWNER_DATABASE_URL`: the Postgres internal URL. `WF_APP_DB_PASSWORD`, `WF_AUTH_DB_PASSWORD`: 24+
+  URL-safe characters each.
+- `WF_SIGNING_KEY_PEM_B64`: a base64 ES256 PKCS#8 PEM. `WF_SESSION_SECRET`, `WF_HARNESS_SESSION_SECRET`,
+  `WF_ALEXA_CLIENT_SECRET`, `WF_DISPATCHER_CLIENT_SECRET`, `WF_DEMO_PASSWORD`.
+- `WF_ISSUER=https://<host>`, `WF_RESOURCE_URI=https://<host>/mcp`,
+  `WF_HARNESS_REDIRECT_URI=https://<host>/oauth/callback`, `WF_ALLOWED_HOSTS=<host>,localhost,127.0.0.1`,
+  `WF_ALLOWED_ORIGINS=https://<host>`; the servers reach each other on loopback
+  (`WF_JWKS_URL=http://127.0.0.1:8081/jwks.json`, `WF_MCP_URL=http://127.0.0.1:8080/mcp`).
+- A model: `WF_GEMINI_MODEL_ID` + `WF_GEMINI_API_KEY`, or Amazon Nova on Bedrock (`WF_HAIKU_MODEL_ID`
+  with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`). With `WF_KMS_KEY_ID` set, tokens are
+  signed by AWS KMS instead of the PEM.
+
+`WF_ENV=local` keeps the file signer available and runs the workers in-process; the https issuer still
+makes every cookie Secure. Behind Caddy every caller shares one address, so the auth server's per-address
+login limit is shared too.
+
+## What to expect
+
+- A free instance sleeps after 15 minutes idle; the first request wakes it (about a minute). Each wake
+  re-seeds the demo workspace relative to now, so you may need to sign in again.
+- The workers run only while the instance is awake.
+- Render's free Postgres expires 30 days after it is created.

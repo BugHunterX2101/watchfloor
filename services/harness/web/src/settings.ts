@@ -203,13 +203,18 @@ export function mountSettings(host: SettingsHost): { open(): void } {
           { class: "set-row" },
           h("span", { class: "set-label", id: "set-motion-label" }, "Motion"),
           motionBox,
-          h("p", { class: "help" }, "Calm stops the 3D orb and the card tilt. “Follow my system” respects your reduced-motion setting."),
+          h("p", { class: "help" }, "Calm holds the sweep and the lamp still. “Follow my system” respects your reduced-motion setting."),
         ),
-        toggle("set-orb", "Show the 3D orb", "The animated sphere on the Watch screen.", orb),
+        toggle(
+          "set-orb",
+          "Animate the voice lamp",
+          "The lamp at the centre of the scope breathes while ready and pulses on each spoken word. Off: it changes colour only.",
+          orb,
+        ),
         toggle(
           "set-scene",
-          "Show the 3D floor behind the page",
-          "After a briefing your deals stand on it as glowing columns, taller the lower their health. Calm holds it still.",
+          "Turn the sweep on the scope",
+          "A line turns once every six seconds and each deal answers as it passes. Off: the scope holds still; every deal stays where it is.",
           floor,
         ),
         h(

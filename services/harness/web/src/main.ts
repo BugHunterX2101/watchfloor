@@ -1,12 +1,13 @@
 // The app shell: the chat loop (text or voice in, the harness turn, the spoken reply, the view and
-// the trace) and the pages around it (Pipeline, Orders, Activity, Guide), the 3D orb, and what the
-// page remembers about this viewer. Pages are modules with a mount function; this file connects
-// them to the conversation and to each other.
+// the trace) and the pages around it (Pipeline, Orders, Activity, Guide), the plot on the Watch
+// screen, ship's time in the top bar, and what the page remembers about this viewer. Pages are
+// modules with a mount function; this file connects them to the conversation and to each other.
 
-import "@fontsource-variable/geist";
-import "@fontsource-variable/geist-mono";
-// The optical-size cut: display forms for the big headings, sturdier text forms in the transcript.
-import "@fontsource-variable/fraunces/opsz.css";
+// Schibsted Grotesk for the interface, Newsreader (optical sizes) for the assistant's voice and the
+// big lines, Martian Mono for instrument readings. All bundled: the page works offline.
+import "@fontsource-variable/schibsted-grotesk";
+import "@fontsource-variable/martian-mono/standard.css"; // weight and width axes
+import "@fontsource-variable/newsreader/opsz.css";
 import "./styles.css";
 import { clearActivity, mountActivity, recordTurn } from "./activity";
 import {
@@ -27,27 +28,39 @@ import { caption } from "./captions";
 import { confirmDialog, h, toast } from "./dom";
 import { mountGuide } from "./guide";
 import { ICONS } from "./icons";
-import { greeting, promptSafe, toBriefing, type Briefing } from "./logic";
+import {
+  BAND_LABEL,
+  BAND_ORDER,
+  bellWords,
+  boardTotals,
+  greeting,
+  promptSafe,
+  relativeTime,
+  shipsWatch,
+  startersFor,
+  toBriefing,
+  type Briefing,
+  type PlotDeal,
+} from "./logic";
 import { beat, setVoice, voiceState } from "./orb";
-import { mountOrb3d } from "./orb3d";
 import { mountOrders } from "./orders";
 import { mountPipeline } from "./pipeline";
-import { mountScene } from "./scene3d";
+import { mountPlot } from "./plot";
 import { current, initRouter, navigate, onRoute, parseHash, setBadge, type Route } from "./router";
 import { mountSettings } from "./settings";
 import { earcon, earconFor, setSounds } from "./sound";
 import { browserEars, canListen, listenOnce, speak, stopListening, stopSpeaking, voices } from "./speech";
 import {
-  clearSkyline,
+  clearPlot,
   forgetEverything,
   learn,
   lessons,
-  loadSkyline,
+  loadPlot,
   onSettings,
   pinnedLabels,
   recents,
   rememberAsk,
-  saveSkyline,
+  savePlot,
   settings,
   update,
   type DeviceChoice,
@@ -85,21 +98,16 @@ const suggestions = $<HTMLDivElement>("suggestions");
 const hearing = $<HTMLParagraphElement>("hearing");
 const greet = $<HTMLParagraphElement>("greet");
 const idlePins = $<HTMLDivElement>("idle-pins");
-const screen = document.querySelector<HTMLElement>(".screen");
+const idleTitle = $<HTMLParagraphElement>("idle-title");
+const idleSub = $<HTMLParagraphElement>("idle-sub");
+const plotStamp = $<HTMLParagraphElement>("plot-stamp");
+const plotLoad = $<HTMLButtonElement>("plot-load");
+const clock = $<HTMLParagraphElement>("clock");
 const page = (name: Route): HTMLElement => {
   const el = document.querySelector<HTMLElement>(`[data-page="${name}"]`);
   if (!el) throw new Error(`page ${name} is missing`);
   return el;
 };
-
-// Phrasings the offline keyword router understands too (harness_api/offline.py), so every
-// suggestion works with or without a model.
-const STARTERS = [
-  "What needs my attention today?",
-  "Why is Kestrel at risk?",
-  "How's Harbor & Pine doing?",
-  "What am I watching?",
-];
 
 const SIGNIN_ERRORS: Record<string, string> = {
   access_denied: "Sign-in was canceled.",
@@ -125,6 +133,8 @@ let watchTimer: number | null = null;
 let watchBusy = false;
 let baseline: Snapshot | null = null; // the board as it was at the last look; null until the first
 const told = new Map<string, number>(); // news key → when it was last said (voice/watcher.ts)
+let latest: { briefing: Briefing; at: number } | null = null; // the last briefing seen this visit, from any path
+const STALE_MS = 5 * 60_000; // a plot older than this is taken again when Watch comes back into view
 
 const handsFreeButton = $<HTMLButtonElement>("handsfree");
 mic.innerHTML = ICONS.mic;
@@ -164,8 +174,77 @@ function updateGreeting(): void {
   greet.textContent = greeting(new Date().getHours(), settings().name);
 }
 
+/** "2 at risk · 1 on watch · 2 healthy, across 3 stages": the plot in words, beside it. */
+function plotWords(b: Briefing): string {
+  const by = boardTotals(b.deals).byBand;
+  const parts = BAND_ORDER.filter((band) => by[band] > 0).map((band) =>
+    band === "watch" ? `${by[band]} on watch` : `${by[band]} ${BAND_LABEL[band].toLowerCase()}`,
+  );
+  const stages = new Set(b.deals.map((d) => d.stage).filter(Boolean)).size;
+  if (!parts.length) return "No deals in this briefing.";
+  return `${parts.join(" · ")}${stages > 1 ? `, across ${stages} stages` : ""}. Nearest the centre needs you most.`;
+}
+
+/** What the screen says beside the plot: the live board when there is one, else how to get it. */
+function renderPlotState(): void {
+  const live = engine !== null ? latest : null;
+  if (live) {
+    idleTitle.textContent = live.briefing.summary || (live.briefing.all_clear ? "All clear." : "Your pipeline.");
+    idleSub.textContent = plotWords(live.briefing);
+    plotStamp.textContent = `Bearing taken ${relativeTime(live.at, Date.now())}`;
+    plotLoad.textContent = "Take a fresh bearing";
+  } else {
+    idleTitle.textContent = "Ask about your pipeline.";
+    idleSub.textContent =
+      engine === null
+        ? "Sign in, then speak or type. Your deals appear on this scope: the nearer the centre, the more a deal needs you."
+        : plot.count()
+          ? "The scope shows your board as you last saw it, without names. Ask anything, or take a bearing for the live board."
+          : "Speak or type, or take a bearing to put your live board on the scope.";
+    plotStamp.textContent = "";
+    plotLoad.textContent = "Take a bearing";
+  }
+  plotLoad.hidden = engine === null;
+}
+
+/** Load the live board onto the plot. It counts as a briefing, the same as asking. */
+async function takeBearing(): Promise<void> {
+  if (engine === null) return;
+  plotLoad.disabled = true;
+  plotStamp.textContent = "Taking a bearing…";
+  try {
+    await pipeline.refresh();
+  } finally {
+    plotLoad.disabled = false;
+    renderPlotState();
+  }
+}
+plotLoad.title = "Loads the live board. Counts as a briefing, the same as asking.";
+plotLoad.addEventListener("click", () => void takeBearing());
+
+/** Ship's time in the top bar: the watch, the bells struck in it (as pips in pairs), the hour. */
+function tickClock(): void {
+  const now = new Date();
+  const { watch, bells } = shipsWatch(now.getHours(), now.getMinutes());
+  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const name = clock.querySelector(".clock-watch");
+  const pips = clock.querySelector(".clock-bells");
+  const at = clock.querySelector<HTMLTimeElement>(".clock-time");
+  if (name) name.replaceChildren(watch, h("span", { class: "sr-only" }, `, ${bellWords(bells)}, `));
+  if (pips)
+    pips.replaceChildren(
+      ...Array.from({ length: 8 }, (_, i) => h("i", { class: i < bells ? "on" : "", "data-pair": String(Math.floor(i / 2)) })),
+    );
+  if (at) {
+    at.textContent = time;
+    at.dateTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  }
+  clock.title = `${watch}, ${bellWords(bells)}. Bells are struck each half hour, eight to end a watch.`;
+}
+
 function updateIdle(): void {
   updateGreeting();
+  renderPlotState();
   const labels = engine !== null ? pinnedLabels().slice(0, 3) : [];
   idlePins.hidden = labels.length === 0;
   idlePins.replaceChildren(
@@ -190,7 +269,8 @@ function suggestionList(): string[] {
   };
   for (const label of pinnedLabels().slice(0, 2)) add(`How's ${promptSafe(label)} doing?`);
   for (const text of recents().slice(0, 2)) add(text);
-  for (const text of STARTERS) add(text);
+  // Made from the board as it is (logic.ts), in phrasings the offline router understands too.
+  for (const text of startersFor(latest?.briefing ?? null)) add(text);
   return out;
 }
 
@@ -227,14 +307,15 @@ function setSignedIn(signedIn: boolean, engineName: string | null): void {
   orders.setEngine(engine);
   guide.refresh();
   if (signedIn) {
-    scene?.setDeals(loadSkyline()); // the floor shows the pipeline as it was last seen
+    if (!latest) plot.set(loadPlot()); // the scope shows the board's shape as it was last seen
   } else {
     hf?.stop(); // nobody is signed in: the microphone must not stay open for them
     for (const timer of watchedReviews.values()) window.clearTimeout(timer);
     watchedReviews.clear();
     setBadge("pipeline", null);
-    scene?.setDeals([]);
-    clearSkyline(); // a shared browser must not show the last person's pipeline
+    latest = null;
+    plot.set([]);
+    clearPlot(); // a shared browser must not show the last person's pipeline
   }
   updateIdle();
 }
@@ -347,12 +428,23 @@ function report(call: Call, source: string): void {
 
 const viewCall = (call: Call): void => report(call, "View");
 
-/** A briefing was shown or loaded: the pipeline tab's badge and the 3D floor's skyline follow it. */
+/** A briefing was shown or loaded (asked for, on the board, or looked at by hands-free): the
+ *  pipeline tab's badge, the plot, the words beside it and the suggestions all follow it. */
 function briefingSeen(b: Briefing): void {
   setBadge("pipeline", b.attention_count);
-  const deals = b.deals.map((d) => ({ id: d.deal_id, band: d.band, health: d.health }));
-  scene?.setDeals(deals);
-  saveSkyline(deals);
+  latest = { briefing: b, at: Date.now() };
+  const deals: PlotDeal[] = b.deals.map((d) => ({
+    id: d.deal_id,
+    band: d.band,
+    health: d.health,
+    account: d.account,
+    stage: d.stage,
+    amount_cents: d.amount_cents,
+  }));
+  plot.set(deals);
+  savePlot(deals);
+  renderPlotState();
+  renderSuggestions();
 }
 
 function noteBriefing(data: string): void {
@@ -823,7 +915,7 @@ const hf: HandsFree | null = (() => {
       else stopWatching();
       handsFreeButton.setAttribute("aria-pressed", String(on));
       handsFreeButton.setAttribute("aria-label", on ? "Stop hands-free listening" : "Start hands-free listening");
-      // The orb listens while the microphone is open for a request.
+      // The lamp listens while the microphone is open for a request.
       if (state === "awake" && voiceState() === "idle" && !listening) setVoice("listening");
       else if ((state === "waiting" || state === "off") && voiceState() === "listening" && !listening) setVoice("idle");
       if (!on) hearing.textContent = "";
@@ -866,7 +958,7 @@ async function watchBoard(): Promise<void> {
     const r = await callTool("get_risk_briefing", { limit: 5 });
     const b = r.isError ? null : toBriefing(r.structuredContent);
     if (!b) return;
-    briefingSeen(b); // the tab's badge and the floor stay current too
+    briefingSeen(b); // the tab's badge and the plot stay current too
     const next = snapshot(b);
     const prev = baseline;
     baseline = next;
@@ -1024,20 +1116,15 @@ const themeRadio = radioGroup(
   (v) => update({ theme: v as ThemeChoice }),
 );
 
-// --- the 3D orb ---
+// --- the plot's two moving parts, each with its own switch (Calm and reduced motion stop both) ---
 
-const orb3d = mountOrb3d($<HTMLCanvasElement>("orb3d"));
-
-function applyOrb(): void {
-  if (screen) screen.dataset.orb = orb3d && settings().orb3d ? "3d" : "css";
+function applyLamp(): void {
+  document.body.dataset.lamp = settings().orb3d ? "on" : "off";
 }
 
-// --- the 3D floor behind the page ---
-
-const scene = mountScene($<HTMLCanvasElement>("scene"));
-
-function applyScene(): void {
-  document.body.dataset.scene = scene && settings().scene ? "on" : "off";
+function applySweep(): void {
+  document.body.dataset.sweep = settings().scene ? "on" : "off";
+  requestAnimationFrame(() => plot.sync());
 }
 
 // --- settings: applied at start, and again whenever one changes ---
@@ -1050,7 +1137,6 @@ onSettings((s, changed) => {
   if (changed.includes("theme")) {
     setTheme(s.theme);
     themeRadio.show(s.theme);
-    orb3d?.refresh();
   }
   if (changed.includes("device")) {
     setDevice(s.device);
@@ -1063,14 +1149,10 @@ onSettings((s, changed) => {
   }
   if (changed.includes("motion")) {
     applyMotion();
-    orb3d?.refresh();
-    scene?.refresh();
+    requestAnimationFrame(() => plot.sync());
   }
-  if (changed.includes("orb3d")) applyOrb();
-  if (changed.includes("scene")) {
-    applyScene();
-    scene?.refresh();
-  }
+  if (changed.includes("orb3d")) applyLamp();
+  if (changed.includes("scene")) applySweep();
   if (changed.includes("name")) updateGreeting();
   if (changed.includes("wakeWord")) hf?.refresh();
   if (changed.includes("alerts")) baseline = null; // a fresh look, so what changed while it was off is not "news"
@@ -1085,8 +1167,8 @@ onSettings((s, changed) => {
   voice.checked = s.readAloud;
   setSounds(s.readAloud);
   applyMotion();
-  applyOrb();
-  applyScene();
+  applyLamp();
+  applySweep();
 }
 
 // Offline: say so plainly and hold the composer, rather than letting a send fail.
@@ -1152,12 +1234,28 @@ if (chrome) {
 // --- pages ---
 
 const pipeline = mountPipeline(page("pipeline"), { ask, report, signedOut: handleSignedOut, briefing: briefingSeen });
-const orders = mountOrders(page("orders"), { ask, report, signedOut: handleSignedOut });
+const orders = mountOrders(page("orders"), {
+  ask,
+  report,
+  signedOut: handleSignedOut,
+  deals: () => latest?.briefing.deals ?? [],
+});
 const activity = mountActivity(page("activity"), { toWatch: () => navigate("watch") });
 const guide = mountGuide(page("guide"), {
   ask,
   engine: () => engine,
   openSettings: () => settingsDialog.open(),
+  deals: () => latest?.briefing.deals ?? [],
+});
+
+// The plot on the Watch screen: choosing a contact opens that deal's explanation, as the board does.
+const plot = mountPlot($<HTMLDivElement>("plot"), {
+  label:
+    "Your pipeline on a scope. Each deal is a contact: the nearer the centre, the lower its health; its bearing is its stage; its size is its amount.",
+  pick: (id, account) =>
+    void pipeline.open({ deal_id: id, deal_name: account }).then((said) => {
+      if (!said.startsWith("Opening")) toast(said, "error");
+    }),
 });
 
 // What voice (and the assistant's control_app tool) does to the page, one handle per page.
@@ -1234,6 +1332,11 @@ onRoute((route) => {
   if (route === "watch") {
     updateIdle();
     renderSuggestions();
+    // Hidden pages restart their animations together; put the echoes back on the sweep's clock.
+    requestAnimationFrame(() => plot.sync());
+    // A plot older than five minutes is taken again (only once one was taken this visit, so simply
+    // opening the page never counts as a briefing on its own).
+    if (engine !== null && latest && !busy && Date.now() - latest.at > STALE_MS) void takeBearing();
     // Not while a turn is in flight: its reply isn't in the history yet, but the conversation has begun.
     suggestions.hidden = engine === null || history.length > 0 || busy;
     transcript.lastElementChild?.scrollIntoView({ block: "end" });
@@ -1247,7 +1350,13 @@ async function start(): Promise<void> {
   renderSuggestions();
   setVoice("idle");
   updateIdle();
-  window.setInterval(updateGreeting, 5 * 60_000);
+  tickClock();
+  // Each minute: the clock, the greeting, and how long ago the bearing was taken.
+  window.setInterval(() => {
+    tickClock();
+    updateGreeting();
+    if (latest) renderPlotState();
+  }, 15_000);
   initRouter();
   const params = new URLSearchParams(location.search);
   const error = params.get("signin");

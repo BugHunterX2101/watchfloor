@@ -4,42 +4,37 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f1ede4" media="(prefers-color-scheme: light)" />
     <title>Watchfloor · Simulated Alexa+</title>
     <meta name="description" content="Simulated Alexa+ experience for Watchfloor: ask about pipeline risk by voice or text, then explore the board, your standing orders and the live tool activity." />
     <link rel="icon" type="image/svg+xml" href="/logo-mark.svg" />
   </head>
   <body data-voice="idle">
     <a class="skip" href="#main">Skip to the content</a>
-    <div class="atmosphere" aria-hidden="true"><canvas id="scene"></canvas></div>
+    <!-- The chart room: a faint graticule and paper grain, drawn by CSS (nothing here moves). -->
+    <div class="atmosphere" aria-hidden="true"></div>
 
     <header class="chrome">
       <div id="banner"></div>
       <div class="topbar">
         <a class="brand" href="#/" aria-label="Watchfloor, back to Watch">
           <svg class="logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            <defs>
-              <linearGradient id="wf-ring" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-                <stop offset="0" style="stop-color: var(--signal)" />
-                <stop offset=".55" style="stop-color: var(--signal-2)" />
-                <stop offset="1" style="stop-color: var(--signal-3)" />
-              </linearGradient>
-              <radialGradient id="wf-orb" cx=".35" cy=".3" r=".8">
-                <stop offset="0" stop-color="#d6fff7" />
-                <stop offset=".45" stop-color="#33d1bb" />
-                <stop offset="1" stop-color="#176b8f" />
-              </radialGradient>
-            </defs>
-            <!-- A health ring, open at one end, with the sentinel dot in the gap; the orb is the assistant. -->
-            <g class="logo-spin">
-              <circle cx="32" cy="32" r="26" fill="none" stroke="url(#wf-ring)" stroke-width="5" stroke-linecap="round" stroke-dasharray="127.4 36" transform="rotate(-90 32 32)" />
-              <circle class="logo-dot" cx="15.46" cy="11.94" r="3.2" />
+            <!-- The scope: the rim, the Watch and At risk rings, the sweep, one contact, and the
+                 assistant's lamp at the centre (public/logo-mark.svg is the same drawing). -->
+            <circle class="logo-rim" cx="32" cy="32" r="26" />
+            <circle class="logo-ring" cx="32" cy="32" r="17" />
+            <circle class="logo-ring inner" cx="32" cy="32" r="11.4" />
+            <g class="logo-sweep">
+              <path class="logo-wedge" d="M32 32 32 6A26 26 0 0 1 48.7 12.1Z" />
+              <line class="logo-line" x1="32" y1="32" x2="48.7" y2="12.1" />
             </g>
-            <circle cx="32" cy="32" r="15" fill="url(#wf-orb)" />
-            <ellipse cx="27" cy="26.5" rx="5" ry="3.2" fill="#fff" opacity=".55" transform="rotate(-25 27 26.5)" />
+            <path class="logo-contact" d="M38.1 33.4 41.3 39.5H34.9Z" />
+            <circle class="logo-lamp" cx="32" cy="32" r="4" />
           </svg>
           <span class="brand-text">
-            <span class="brand-name">Watch<span>floor</span></span>
-            <span class="brand-tag">Pipeline risk watch</span>
+            <span class="brand-name">Watchfloor</span>
+            <span class="brand-tag">Pipeline risk, on watch</span>
           </span>
         </a>
         <nav class="nav" aria-label="Main">
@@ -49,6 +44,12 @@
           <a href="#/activity" data-route="activity"><span class="nav-ico" data-icon="activity" aria-hidden="true"></span><span class="nav-label">Activity</span><span class="nav-badge" hidden></span></a>
           <a href="#/guide" data-route="guide"><span class="nav-ico" data-icon="guide" aria-hidden="true"></span><span class="nav-label">Guide</span><span class="nav-badge" hidden></span></a>
         </nav>
+        <!-- Ship's time by the viewer's clock: the watch, the bells struck in it, and the hour. -->
+        <p id="clock" class="clock">
+          <span class="clock-watch"></span>
+          <span class="clock-bells" aria-hidden="true"></span>
+          <time class="clock-time"></time>
+        </p>
         <div class="topbar-tools">
           <button id="handsfree" type="button" class="icon-btn" aria-pressed="false" aria-label="Start hands-free listening" aria-keyshortcuts="h" title="Hands-free (h)"></button>
           <button id="open-settings" type="button" class="icon-btn" aria-label="Settings" title="Settings (,)"></button>
@@ -78,15 +79,27 @@
             </div>
           </div>
 
-          <div class="screen" aria-label="Watchfloor view" data-orb="3d">
+          <div class="screen" aria-label="Watchfloor view">
             <div id="view" class="frame"></div>
             <div id="idle" class="idle">
-              <div class="orb3d-wrap" id="orb3d-wrap"><canvas id="orb3d" aria-hidden="true"></canvas></div>
-              <div class="orb orb-hero" id="orb-fallback" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
-              <p id="greet" class="idle-greet"></p>
-              <p class="idle-title">Ask about your pipeline.</p>
-              <p class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
-              <div id="idle-pins" class="chip-row center" hidden></div>
+              <!-- The plot: your deals as contacts on a scope (src/plot.ts). Health is the distance
+                   from the centre, stage the bearing, amount the size. -->
+              <figure class="idle-plot">
+                <div id="plot" class="plot-box"></div>
+                <figcaption class="plot-key">
+                  <span class="key at_risk"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.2 11 10.5H1z" /></svg>At risk <span class="key-n">under 35</span></span>
+                  <span class="key watch"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.8" y="1.8" width="8.4" height="8.4" rx="1" /></svg>Watch <span class="key-n">under 60</span></span>
+                  <span class="key healthy"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6" /></svg>Healthy</span>
+                </figcaption>
+              </figure>
+              <div class="idle-copy">
+                <p id="greet" class="idle-greet"></p>
+                <p id="idle-title" class="idle-title">Ask about your pipeline.</p>
+                <p id="idle-sub" class="idle-sub">Speak or type. Watchfloor's views appear here, the way they would on an Echo Show.</p>
+                <p id="plot-stamp" class="idle-stamp" aria-live="polite"></p>
+                <button id="plot-load" type="button" class="btn btn-quiet" hidden>Take a bearing</button>
+                <div id="idle-pins" class="chip-row" hidden></div>
+              </div>
             </div>
             <!-- What the microphone is hearing, shown on the screen as Echo devices do (the message box
                  carries the same text for assistive technology). -->
@@ -96,7 +109,7 @@
 
         <section class="rail" aria-label="Conversation">
           <div class="presence">
-            <div class="orb orb-small" aria-hidden="true"><span class="ring"></span><span class="ring"></span></div>
+            <span class="orb lamp-mini" aria-hidden="true"></span>
             <div>
               <p id="voice-state" class="voice-state" aria-live="polite">Ready</p>
               <p id="engine" class="engine"></p>

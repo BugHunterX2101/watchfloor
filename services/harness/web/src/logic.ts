@@ -348,31 +348,180 @@ export function hash32(s: string): number {
   return h >>> 0;
 }
 
-/** Where a column can stand on the floor (world units, left and right of the clear middle). */
-export const SKYLINE_LANES = [-9, -7.4, -5.8, -4.2, 4.2, 5.8, 7.4, 9] as const;
+// --- the plot: the pipeline as contacts on a watch-stander's scope (plot.ts draws it) ---
 
-export interface SkylineDeal {
+/** Where the bands begin on the health scale (ADR-020): below 35 at risk, below 60 on watch. */
+export const BAND_EDGES = { at_risk: 35, watch: 60 } as const;
+
+/** What the plot needs of a deal. Only `id`, `band` and `health` are kept between visits. */
+export interface PlotDeal {
   id: string;
   band: Band;
   health: number;
+  account?: string;
+  stage?: string;
+  amount_cents?: number | null;
 }
 
-export interface Pillar extends SkylineDeal {
-  x: number; // lane
-  height: number; // world units: taller means lower health
+export interface Contact extends PlotDeal {
+  /** Clockwise from twelve o'clock, 0-360. */
+  angle: number;
+  /** 0 (the centre, health 0) to 1 (the rim, health 100). */
+  range: number;
+  /** Mark size, 0-1, by amount relative to the largest on the plot (0.35 when the amount is unknown). */
+  weight: number;
 }
 
-/** The background's skyline: one column per deal (at most five, as in a briefing), each in its own
- *  lane chosen by the deal's id, with a height that grows as health falls (1.2 at health 100, 5.5 at 0). */
-export function skyline(deals: readonly SkylineDeal[]): Pillar[] {
-  const taken = new Set<number>();
-  return deals.slice(0, 5).map((d) => {
-    let lane = hash32(d.id) % SKYLINE_LANES.length;
-    while (taken.has(lane)) lane = (lane + 1) % SKYLINE_LANES.length;
-    taken.add(lane);
-    const risk = 100 - Math.min(100, Math.max(0, Number.isFinite(d.health) ? d.health : 0));
-    return { ...d, x: SKYLINE_LANES[lane], height: Math.round((1.2 + (risk / 100) * 4.3) * 100) / 100 };
+export interface Sector {
+  stage: string;
+  start: number;
+  end: number;
+}
+
+/** The innermost ring the plot leaves to the assistant's lamp, as a share of the radius. */
+export const PLOT_CORE = 0.14;
+
+/** Distance from the centre for a health: the closer a deal sits, the more it needs you. */
+export function plotRange(health: number): number {
+  const h = Math.min(100, Math.max(0, Number.isFinite(health) ? health : 0));
+  return PLOT_CORE + (1 - PLOT_CORE) * (h / 100);
+}
+
+/** Lays deals out as contacts. Bearing is the stage (one sector per stage, in the order the board
+ *  lists them, so the most urgent stage starts at twelve o'clock); within a sector the deal's id
+ *  picks a stable spot. Range is health. Marks closer than ~9° on the same ring are nudged apart. */
+export function plotContacts(deals: readonly PlotDeal[]): { contacts: Contact[]; sectors: Sector[] } {
+  const stages: string[] = [];
+  for (const d of deals) {
+    const s = (d.stage ?? "").trim();
+    if (!stages.includes(s)) stages.push(s);
+  }
+  const width = 360 / Math.max(1, stages.length);
+  const sectors: Sector[] = stages.map((stage, i) => ({ stage, start: i * width, end: (i + 1) * width }));
+  const most = Math.max(0, ...deals.map((d) => d.amount_cents ?? 0));
+  const contacts: Contact[] = deals.map((d) => {
+    const sector = sectors[stages.indexOf((d.stage ?? "").trim())];
+    const spot = (hash32(d.id) % 1000) / 1000;
+    const known = typeof d.amount_cents === "number" && most > 0;
+    return {
+      ...d,
+      angle: sector.start + width * (0.18 + 0.64 * spot),
+      range: plotRange(d.health),
+      weight: known ? Math.round(Math.sqrt(Math.max(0, d.amount_cents as number) / most) * 100) / 100 : 0.35,
+    };
   });
+  // Two marks on nearly the same bearing and range would sit on top of each other.
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    for (let i = 0; i < contacts.length; i++) {
+      for (let j = i + 1; j < contacts.length; j++) {
+        const a = contacts[i];
+        const b = contacts[j];
+        const apart = Math.abs(((a.angle - b.angle + 540) % 360) - 180);
+        if (apart < 9 && Math.abs(a.range - b.range) < 0.08) {
+          b.angle = (b.angle + 11) % 360;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  for (const c of contacts) c.angle = Math.round(c.angle * 10) / 10;
+  return { contacts, sectors };
+}
+
+/** A point on the plot for a bearing (degrees clockwise from twelve) and range, in a box of `size`. */
+export function plotPoint(angle: number, range: number, size: number): { x: number; y: number } {
+  const r = (size / 2) * range;
+  const t = ((angle - 90) * Math.PI) / 180;
+  return { x: Math.round((size / 2 + r * Math.cos(t)) * 10) / 10, y: Math.round((size / 2 + r * Math.sin(t)) * 10) / 10 };
+}
+
+// --- ship's time: the watch and its bells, for the clock in the top bar ---
+
+export interface ShipsWatch {
+  watch: string;
+  /** The last bell struck: one each half hour, eight to end a four-hour watch. */
+  bells: number;
+}
+
+/** The watch by the viewer's local time, with the bells as most merchant and US ships strike them
+ *  (counted straight through the dog watches, 1 to 8 between 16:00 and 20:00). */
+export function shipsWatch(hour: number, minute: number): ShipsWatch {
+  const h = Number.isFinite(hour) ? ((Math.floor(hour) % 24) + 24) % 24 : 0;
+  const m = Number.isFinite(minute) ? Math.min(59, Math.max(0, Math.floor(minute))) : 0;
+  const halves = Math.floor((h * 60 + m) / 30);
+  const watch =
+    h < 4
+      ? "Middle watch"
+      : h < 8
+        ? "Morning watch"
+        : h < 12
+          ? "Forenoon watch"
+          : h < 16
+            ? "Afternoon watch"
+            : h < 18
+              ? "First dog watch"
+              : h < 20
+                ? "Last dog watch"
+                : "First watch";
+  return { watch, bells: halves % 8 || 8 };
+}
+
+/** "1 bell", "4 bells". */
+export function bellWords(bells: number): string {
+  return bells === 1 ? "1 bell" : `${bells} bells`;
+}
+
+// --- what to suggest, from the board as it really is ---
+
+/** Questions worth one tap, made from the latest briefing. Every phrasing is one the offline router
+ *  also understands (harness_api/offline.py), so each works with or without a model. */
+export function startersFor(b: Pick<Briefing, "deals" | "new_count"> | null): string[] {
+  const out = ["What needs my attention today?"];
+  const deals = b?.deals ?? [];
+  const first = deals.find((d) => d.band !== "healthy") ?? deals[0];
+  if (first) out.push(questionFor(first));
+  const second = deals.find((d) => d !== first && d.account !== first?.account);
+  if (second) out.push(`How's ${promptSafe(second.account)} doing?`);
+  if (b && b.new_count > 0) out.push("What changed since my last briefing?");
+  for (const more of [deals.length ? "What should I do first?" : "", "What am I watching?"]) {
+    if (more && out.length < 4) out.push(more);
+  }
+  return [...new Set(out)].slice(0, 4);
+}
+
+/** The question a deal invites: "why is it at risk" only when it is, otherwise how it is doing. */
+export function questionFor(d: Pick<BriefingDeal, "account" | "band">): string {
+  const who = promptSafe(d.account);
+  return d.band === "at_risk" ? `Why is ${who} at risk?` : `How's ${who} doing?`;
+}
+
+/** A round figure at or below `usd`: 1, 2.5, 5 or 10 times a power of ten. */
+export function roundFigure(usd: number): number {
+  if (!(usd >= 1)) return 0;
+  const p = 10 ** Math.floor(Math.log10(usd));
+  for (const step of [5, 2.5, 1]) if (usd >= step * p) return step * p;
+  return p;
+}
+
+/** Standing-order examples sized to this board: a money line at the middle at-risk amount, the stage
+ *  the top deal sits in, and a health floor just above the lowest health showing. The usual wording
+ *  when there is no board yet. */
+export function orderExamples(deals: readonly BriefingDeal[]): string[] {
+  const amounts = deals
+    .map((d) => d.amount_cents)
+    .filter((c): c is number => typeof c === "number" && c > 0)
+    .sort((a, b) => a - b);
+  const line = amounts.length ? roundFigure(amounts[Math.floor((amounts.length - 1) / 2)] / 100) : 0;
+  const top = deals.find((d) => d.band !== "healthy") ?? deals[0];
+  const lowest = deals.length ? Math.min(...deals.map((d) => d.health)) : Number.NaN;
+  const floor = Number.isFinite(lowest) ? Math.min(60, Math.ceil((lowest + 1) / 5) * 5) : 30;
+  return [
+    `Flag deals over $${(line >= 1000 ? line : 50_000).toLocaleString("en-US")} with no buyer reply for 7 days.`,
+    `Alert me about ${(top?.stage || "negotiation").toLowerCase()}-stage deals that go quiet for 5 days.`,
+    `Watch deals whose health drops to ${floor} or lower.`,
+  ];
 }
 
 /** A deal or account name becomes part of a chat prompt: control characters out, whitespace

@@ -199,6 +199,12 @@ test("look and sound", () => {
   assert.deepEqual(action("turn off the 3d orb"), { type: "set_orb", on: false });
   assert.deepEqual(action("show the floor"), { type: "set_floor", on: true });
   assert.deepEqual(action("hide the background"), { type: "set_floor", on: false });
+  // The plot's words: the lamp and the sweep.
+  assert.deepEqual(action("turn off the lamp"), { type: "set_orb", on: false });
+  assert.deepEqual(action("hide the sweep"), { type: "set_floor", on: false });
+  assert.deepEqual(action("stop the sweep"), { type: "set_floor", on: false });
+  assert.deepEqual(action("turn on the radar sweep"), { type: "set_floor", on: true });
+  assert.deepEqual(action("start the sweep"), { type: "set_floor", on: true });
   assert.deepEqual(action("show echo show eight"), { type: "set_device", device: "standard" });
   assert.deepEqual(action("echo show 15"), { type: "set_device", device: "large" });
   assert.deepEqual(action("fit to window"), { type: "set_device", device: "fit" });

@@ -3,7 +3,7 @@
 // and none of it is needed: every read is guarded, so blocked or full storage just means the page
 // forgets on reload (private windows, thumbnail capture).
 
-import { pushRecent, togglePin, type SkylineDeal } from "./logic";
+import { pushRecent, togglePin, type PlotDeal } from "./logic";
 import { addLesson, dropLesson, parseLesson, type Lesson } from "./voice/lessons";
 
 export type ThemeChoice = "auto" | "light" | "dark";
@@ -16,8 +16,8 @@ export interface Settings {
   voiceURI: string; // "" = the browser's default voice
   rate: number; // 0.7 – 1.4
   motion: Motion;
-  orb3d: boolean;
-  scene: boolean; // the 3D floor behind the page
+  orb3d: boolean; // the voice lamp's animation (the key predates the plot; kept so saved choices carry over)
+  scene: boolean; // the plot's turning sweep
   readAloud: boolean;
   wakeWord: boolean; // hands-free acts only on requests that start with "Watchfloor" (or follow a reply)
   style: ReplyStyle; // how long the assistant's replies are (told to the model each turn)
@@ -46,7 +46,7 @@ const LEGACY_THEME = "wf-theme";
 const RECENT_KEY = "wf.recent";
 const PINS_KEY = "wf.pins";
 const PIN_NAMES_KEY = "wf.pinnames";
-const SKYLINE_KEY = "wf.skyline";
+const PLOT_KEY = "wf.skyline"; // the name it has always had, so a returning viewer keeps their plot
 const LESSONS_KEY = "wf.lessons";
 
 function get(key: string): string | null {
@@ -192,33 +192,41 @@ export function pinDeal(id: string, label = ""): { pins: string[]; full: boolean
   return result;
 }
 
-/** The last briefing's deals as the background's skyline: only the id, the band and the health
- *  (no names or amounts), so the floor shows your pipeline as soon as you return. */
-export function saveSkyline(deals: readonly SkylineDeal[]): void {
-  put(SKYLINE_KEY, JSON.stringify(deals.slice(0, 5).map((d) => ({ id: d.id, band: d.band, health: d.health }))));
+/** The last briefing's deals for the plot: only the id, the band, the health and the stage (no
+ *  names or amounts), so the scope shows your pipeline's shape as soon as you return. */
+export function savePlot(deals: readonly PlotDeal[]): void {
+  put(PLOT_KEY, JSON.stringify(deals.slice(0, 5).map(keep)));
 }
 
-export function loadSkyline(): SkylineDeal[] {
+const keep = (d: PlotDeal): PlotDeal => ({
+  id: d.id,
+  band: d.band,
+  health: d.health,
+  ...(typeof d.stage === "string" && d.stage ? { stage: d.stage.slice(0, 40) } : {}),
+});
+
+export function loadPlot(): PlotDeal[] {
   try {
-    const v: unknown = JSON.parse(get(SKYLINE_KEY) ?? "[]");
+    const v: unknown = JSON.parse(get(PLOT_KEY) ?? "[]");
     if (!Array.isArray(v)) return [];
     return v
       .filter(
-        (d): d is SkylineDeal =>
+        (d): d is PlotDeal =>
           !!d &&
           typeof d === "object" &&
-          typeof (d as SkylineDeal).id === "string" &&
-          ["at_risk", "watch", "healthy"].includes((d as SkylineDeal).band) &&
-          typeof (d as SkylineDeal).health === "number",
+          typeof (d as PlotDeal).id === "string" &&
+          ["at_risk", "watch", "healthy"].includes((d as PlotDeal).band) &&
+          typeof (d as PlotDeal).health === "number",
       )
-      .slice(0, 5);
+      .slice(0, 5)
+      .map(keep);
   } catch {
     return [];
   }
 }
 
-export function clearSkyline(): void {
-  drop(SKYLINE_KEY);
+export function clearPlot(): void {
+  drop(PLOT_KEY);
 }
 
 /** The corrections the user taught (voice/lessons.ts), newest first; each re-checked as it is read. */
@@ -246,7 +254,7 @@ export function unlearn(heard: string): void {
 
 /** Everything this page keeps in the browser, gone. The current settings fall back to the defaults. */
 export function forgetEverything(): void {
-  for (const k of [KEY, LEGACY_THEME, RECENT_KEY, PINS_KEY, PIN_NAMES_KEY, SKYLINE_KEY, LESSONS_KEY]) drop(k);
+  for (const k of [KEY, LEGACY_THEME, RECENT_KEY, PINS_KEY, PIN_NAMES_KEY, PLOT_KEY, LESSONS_KEY]) drop(k);
   const before = current;
   current = { ...DEFAULTS };
   const changed = (Object.keys(current) as (keyof Settings)[]).filter((k) => current[k] !== before[k]);

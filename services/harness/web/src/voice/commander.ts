@@ -125,10 +125,10 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
       return said(a.motion === "calm" ? "Calm mode. The animation holds still." : "Motion follows your system setting.");
     case "set_orb":
       h.update({ orb3d: a.on });
-      return said(a.on ? "The 3D orb is back." : "The 3D orb is off.");
+      return said(a.on ? "The lamp is animated again." : "The lamp holds still now. It still changes colour.");
     case "set_floor":
       h.update({ scene: a.on });
-      return said(a.on ? "The 3D floor is back." : "The 3D floor is off.");
+      return said(a.on ? "The sweep is turning again." : "The sweep is off. The scope holds still.");
     case "set_name":
       h.update({ name: a.name });
       return said(`Nice to meet you, ${h.settings().name || a.name}.`);

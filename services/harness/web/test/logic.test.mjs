@@ -17,8 +17,15 @@ import {
   relativeTime,
   ringDash,
   sinceLabel,
-  skyline,
-  SKYLINE_LANES,
+  bellWords,
+  orderExamples,
+  PLOT_CORE,
+  plotContacts,
+  plotPoint,
+  plotRange,
+  roundFigure,
+  shipsWatch,
+  startersFor,
   toBriefing,
   toExplain,
   togglePin,
@@ -205,20 +212,100 @@ test("drag words, deal titles", () => {
   assert.equal(dealTitle("Acme", "Renewal"), "Renewal");
 });
 
-test("the skyline gives each deal its own stable lane and a height that follows risk", () => {
-  const deals = ["dl_a", "dl_b", "dl_c", "dl_d", "dl_e", "dl_f"].map((id, i) => ({ id, band: "watch", health: 100 - i * 20 }));
-  const a = skyline(deals);
-  assert.equal(a.length, 5, "capped at five, as a briefing is");
-  assert.equal(new Set(a.map((p) => p.x)).size, 5, "no two columns share a lane");
-  assert.deepEqual(skyline(deals), a, "stable between calls");
-  assert.ok(a.every((p) => SKYLINE_LANES.includes(p.x)));
-  assert.equal(skyline([{ id: "x", band: "healthy", health: 100 }])[0].height, 1.2);
-  assert.equal(skyline([{ id: "x", band: "at_risk", health: 0 }])[0].height, 5.5);
-  assert.ok(a[0].height < a[4].height, "lower health stands taller");
-  assert.equal(skyline([{ id: "x", band: "watch", health: Number.NaN }])[0].height, 5.5);
+test("the plot puts health on range and stage on bearing, stably and without overlaps", () => {
+  const deals = [
+    { id: "dl_a", band: "at_risk", health: 29, stage: "Proposal", amount_cents: 84_000_00 },
+    { id: "dl_b", band: "at_risk", health: 34, stage: "Negotiation", amount_cents: 52_000_00 },
+    { id: "dl_c", band: "watch", health: 37, stage: "Proposal", amount_cents: 24_000_00 },
+    { id: "dl_d", band: "watch", health: 42, stage: "Demo", amount_cents: null },
+  ];
+  const { contacts, sectors } = plotContacts(deals);
+  assert.deepEqual(
+    sectors.map((s) => [s.stage, s.start, s.end]),
+    [["Proposal", 0, 120], ["Negotiation", 120, 240], ["Demo", 240, 360]],
+    "one sector per stage, in board order",
+  );
+  assert.deepEqual(plotContacts(deals), { contacts, sectors }, "stable between calls");
+  for (const c of contacts) {
+    const s = sectors.find((x) => x.stage === deals.find((d) => d.id === c.id).stage);
+    assert.ok(c.angle >= s.start && c.angle < s.end + 11, `${c.id} sits in its stage's sector`);
+  }
+  assert.equal(contacts[0].weight, 1, "the largest amount is the largest mark");
+  assert.equal(contacts[3].weight, 0.35, "an unknown amount gets a middling mark");
+  assert.ok(contacts[0].range < contacts[3].range, "lower health sits closer to the centre");
+  assert.equal(plotRange(0), PLOT_CORE);
+  assert.equal(plotRange(100), 1);
+  assert.equal(plotRange(Number.NaN), PLOT_CORE);
+  const twins = plotContacts([
+    { id: "x1", band: "watch", health: 50, stage: "Demo" },
+    { id: "x1", band: "watch", health: 50, stage: "Demo" },
+  ]).contacts;
+  assert.ok(Math.abs(twins[0].angle - twins[1].angle) >= 9, "marks on top of each other are nudged apart");
+  assert.deepEqual(plotContacts([]), { contacts: [], sectors: [] });
+  assert.deepEqual(plotPoint(0, 1, 200), { x: 100, y: 0 }, "bearing 0 is twelve o'clock");
+  assert.deepEqual(plotPoint(90, 0.5, 200), { x: 150, y: 100 });
   assert.equal(hash32("dl_a"), hash32("dl_a"));
   assert.notEqual(hash32("dl_a"), hash32("dl_b"));
-  assert.deepEqual(skyline([]), []);
+});
+
+test("ship's time names the watch and counts its bells", () => {
+  assert.deepEqual(shipsWatch(0, 0), { watch: "Middle watch", bells: 8 });
+  assert.deepEqual(shipsWatch(0, 30), { watch: "Middle watch", bells: 1 });
+  assert.deepEqual(shipsWatch(3, 59), { watch: "Middle watch", bells: 7 });
+  assert.deepEqual(shipsWatch(4, 0), { watch: "Morning watch", bells: 8 });
+  assert.deepEqual(shipsWatch(9, 45), { watch: "Forenoon watch", bells: 3 });
+  assert.deepEqual(shipsWatch(14, 0), { watch: "Afternoon watch", bells: 4 });
+  assert.deepEqual(shipsWatch(16, 30), { watch: "First dog watch", bells: 1 });
+  assert.deepEqual(shipsWatch(18, 30), { watch: "Last dog watch", bells: 5 });
+  assert.deepEqual(shipsWatch(22, 0), { watch: "First watch", bells: 4 });
+  assert.deepEqual(shipsWatch(23, 59), { watch: "First watch", bells: 7 });
+  assert.deepEqual(shipsWatch(Number.NaN, Number.NaN), { watch: "Middle watch", bells: 8 });
+  assert.equal(bellWords(1), "1 bell");
+  assert.equal(bellWords(6), "6 bells");
+});
+
+test("suggestions come from the board as it is", () => {
+  assert.deepEqual(startersFor(null), ["What needs my attention today?", "What am I watching?"]);
+  const b = {
+    new_count: 1,
+    deals: [
+      deal("a", { account: "Kestrel Biotech", band: "at_risk" }),
+      deal("b", { account: "Harbor & Pine", band: "at_risk" }),
+    ],
+  };
+  assert.deepEqual(startersFor(b), [
+    "What needs my attention today?",
+    "Why is Kestrel Biotech at risk?",
+    "How's Harbor & Pine doing?",
+    "What changed since my last briefing?",
+  ]);
+  const calm = startersFor({ new_count: 0, deals: [deal("c", { account: "Northgate", band: "healthy" })] });
+  assert.deepEqual(calm, ["What needs my attention today?", "How's Northgate doing?", "What should I do first?", "What am I watching?"]);
+  assert.equal(startersFor({ new_count: 0, deals: [deal("d", { account: "Bad\nName", band: "at_risk" })] })[1], "Why is Bad Name at risk?");
+  // A deal on watch is not at risk, so it is not asked about as if it were.
+  assert.equal(startersFor({ new_count: 0, deals: [deal("e", { account: "Orchard" })] })[1], "How's Orchard doing?");
+});
+
+test("standing-order examples are sized to the board", () => {
+  assert.equal(roundFigure(84_000), 50_000);
+  assert.equal(roundFigure(31_000), 25_000);
+  assert.equal(roundFigure(12_000), 10_000);
+  assert.equal(roundFigure(0), 0);
+  const deals = [
+    deal("a", { amount_cents: 84_000_00, health: 29, stage: "Proposal", band: "at_risk" }),
+    deal("b", { amount_cents: 52_000_00, health: 34 }),
+    deal("c", { amount_cents: 31_000_00, health: 42 }),
+  ];
+  assert.deepEqual(orderExamples(deals), [
+    "Flag deals over $50,000 with no buyer reply for 7 days.",
+    "Alert me about proposal-stage deals that go quiet for 5 days.",
+    "Watch deals whose health drops to 30 or lower.",
+  ]);
+  assert.deepEqual(orderExamples([]), [
+    "Flag deals over $50,000 with no buyer reply for 7 days.",
+    "Alert me about negotiation-stage deals that go quiet for 5 days.",
+    "Watch deals whose health drops to 30 or lower.",
+  ]);
 });
 
 test("prompt text drops control characters and is capped", () => {

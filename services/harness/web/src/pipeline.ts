@@ -22,6 +22,7 @@ import {
   FACTOR_NAME,
   FACTORS,
   promptSafe,
+  questionFor,
   relativeTime,
   ringDash,
   sinceLabel,
@@ -33,7 +34,7 @@ import {
   type Explain,
   type SortKey,
 } from "./logic";
-import { pinDeal, pinnedDeals, pins as loadPins, settings } from "./store";
+import { pinDeal, pinnedDeals, pins as loadPins } from "./store";
 import { resolveDeal, type DealRef } from "./voice/grammar";
 
 export interface PipelineHost {
@@ -41,7 +42,7 @@ export interface PipelineHost {
   ask(text: string): void;
   report(call: Call, source: string): void;
   signedOut(): void;
-  /** A briefing was loaded: the tab badge and the 3D floor follow it. */
+  /** A briefing was loaded: the tab badge and the plot on Watch follow it. */
   briefing(b: Briefing): void;
 }
 
@@ -130,27 +131,6 @@ function sparkline(values: number[]): HTMLElement {
   );
 }
 
-/** A card leans toward the pointer: a touch of real depth. Off for touch, reduced motion and "Calm". */
-function attachTilt(card: HTMLElement): void {
-  const fine = matchMedia("(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)");
-  card.addEventListener("pointermove", (e) => {
-    if (!fine.matches || settings().motion === "calm") return;
-    const box = card.getBoundingClientRect();
-    const px = (e.clientX - box.left) / box.width - 0.5;
-    const py = (e.clientY - box.top) / box.height - 0.5;
-    card.style.setProperty("--ry", `${(px * 7).toFixed(2)}deg`);
-    card.style.setProperty("--rx", `${(-py * 7).toFixed(2)}deg`);
-    card.style.setProperty("--gx", `${((px + 0.5) * 100).toFixed(0)}%`);
-    card.style.setProperty("--gy", `${((py + 0.5) * 100).toFixed(0)}%`);
-    card.classList.add("tilting");
-  });
-  card.addEventListener("pointerleave", () => {
-    card.classList.remove("tilting");
-    card.style.removeProperty("--rx");
-    card.style.removeProperty("--ry");
-  });
-}
-
 /** What the board is showing: the four controls above it. */
 export interface PipelineView {
   segment: Segment;
@@ -184,6 +164,10 @@ export interface PipelineHandle {
   describe(): string;
   /** A briefing is loaded (loading one if needed); false when signed out or it failed. */
   ensure(): Promise<boolean>;
+  /** The briefing on the board and when it arrived (null before the first). */
+  latest(): { briefing: Briefing; at: number } | null;
+  /** Load the board again now, whichever page is showing (counts as a briefing). */
+  refresh(): Promise<void>;
 }
 
 const SORT_SPOKEN: Record<SortKey, string> = {
@@ -452,7 +436,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
 
     const ask = h("button", { type: "button", class: "btn btn-ghost" });
     ask.append("Ask Watchfloor", icon(ICONS.arrow));
-    ask.addEventListener("click", () => host.ask(`Why is ${promptSafe(d.account)} at risk?`));
+    ask.addEventListener("click", () => host.ask(questionFor(d)));
 
     const card = h(
       "li",
@@ -479,7 +463,6 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
       ),
       h("div", { class: "deal-actions" }, ask),
     );
-    attachTilt(card);
     return card;
   }
 
@@ -569,7 +552,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
     ask.append("Ask Watchfloor about this", icon(ICONS.arrow));
     ask.addEventListener("click", () => {
       dialog.close();
-      host.ask(`Why is ${promptSafe(ex.deal.account)} at risk?`);
+      host.ask(questionFor({ account: ex.deal.account, band: ex.band }));
     });
     const dig = h("button", { type: "button", class: "btn btn-quiet", title: "Starts a background review of this deal; the result comes back on Watch." }, "Start a deep review");
     dig.addEventListener("click", () => {
@@ -820,5 +803,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
       return `${briefing.summary} ${spokenBoard()}`.trim();
     },
     ensure,
+    latest: () => (briefing ? { briefing, at: loadedAt } : null),
+    refresh: () => (inflight ?? load()),
   };
 }
