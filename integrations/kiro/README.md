@@ -65,4 +65,6 @@ is not documented, so check where it lands before relying on it.
 - Watchfloor's 401 carries no `WWW-Authenticate` header (Alexa+ cannot take one). Kiro should find
   the sign-in through `/.well-known/oauth-protected-resource`, which is served, but this is unverified.
   If sign-in never starts, check that URL first.
+- If sign-in ends with `invalid_scope`, the client asked for more than `watchfloor.read` (for example
+  `offline_access`, which Watchfloor does not offer). Check that `oauthScopes` reached the request.
 - Kiro Crew's badge "Signed in" means a token file exists, not that it is valid.
