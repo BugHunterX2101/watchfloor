@@ -2,8 +2,8 @@
 
 Order: Host → 421, Origin → 403 (a MUST in 2025-11-25, against DNS rebinding),
 then for ``POST /mcp``: Accept → 406, body > 64 KiB → 413, not JSON → 400 with
-a JSON-RPC parse error. The parsed method is stashed for the version check, and
-the buffered body is replayed downstream.
+a JSON-RPC parse error. The parsed message and its method are stashed for the
+auth and version checks, and the buffered body is replayed downstream.
 """
 
 from __future__ import annotations
@@ -90,6 +90,7 @@ class EdgeGuard:
             except orjson.JSONDecodeError:
                 await respond_jsonrpc_error(send, 400, -32700, "Parse error")
                 return
+            state(scope)["jsonrpc_message"] = msg
             state(scope)["jsonrpc_method"] = msg.get("method") if isinstance(msg, dict) else None
             receive = replay(body, receive)
         await self.app(scope, receive, send)

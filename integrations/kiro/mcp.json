@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "watchfloor": {
+      "url": "https://watchfloor.onrender.com/mcp",
+      "oauth": {
+        "clientId": "wf-kiro",
+        "redirectUri": "http://127.0.0.1:7778/oauth/callback",
+        "oauthScopes": ["watchfloor.read"]
+      }
+    }
+  }
+}

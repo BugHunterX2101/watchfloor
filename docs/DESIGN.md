@@ -1812,6 +1812,7 @@ Repo hygiene: `.env.example` only, GitHub secret scanning and push protection on
 | CF-04 | `tools/list` with agent scope | 6 tools; no write tools |
 | CF-05 | Missing `MCP-Protocol-Version` on non-initialize | 400 (we require it) |
 | CF-06 | Unsupported version `2099-01-01` | 400 |
+| CF-06b | `initialize` offering a version not in `WF_PROTOCOL_VERSIONS` (e.g. `2024-11-05`) | 200, counter-offers the newest allowed; `2025-06-18` is allowed and echoed (ADR-034) |
 | CF-07 | `Accept: application/json` only | 406 |
 | CF-08 | `GET /mcp` and `DELETE /mcp` | 405 |
 | CF-09 | Malformed JSON | 400 (JSON-RPC parse error body) |

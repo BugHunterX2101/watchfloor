@@ -24,7 +24,7 @@ import httpx
 import jwt
 import pytest
 from auth_server.app import create_app
-from auth_server.clients import ALEXA, DISPATCHER, HARNESS, bootstrap
+from auth_server.clients import ALEXA, DISPATCHER, HARNESS, KIRO, KIRO_REDIRECT_URIS, bootstrap
 from auth_server.signer import FileSigner
 from auth_server.storage import AuthStore
 
@@ -316,6 +316,51 @@ async def test_dispatcher_gets_short_lived_job_tokens(auth_app: Any, client: htt
     assert user_scope.json()["error"] == "invalid_scope"
     public = await _token(auth_app, {**job, "client_id": HARNESS})
     assert public.json()["error"] == "unauthorized_client"
+
+
+async def test_kiro_links_read_only_and_sees_no_write_tools(
+    auth_app: Any, emails: list[str], client: httpx.AsyncClient
+) -> None:
+    """wf-kiro (ADR-034): public PKCE client on a pinned loopback redirect, watchfloor.read only."""
+    kiro_cb = KIRO_REDIRECT_URIS[0]
+    query, verifier = await _link(
+        auth_app, emails[-1], client_id=KIRO, redirect_uri=kiro_cb, scope="watchfloor.read"
+    )
+    exchange = {
+        "grant_type": "authorization_code",
+        "code": query["code"][0],
+        "redirect_uri": kiro_cb,
+        "code_verifier": verifier,
+        "client_id": KIRO,
+        "resource": RESOURCE,
+    }
+    r = await _token(auth_app, exchange)
+    assert r.status_code == 200, r.text
+    assert r.json()["refresh_token"]
+    claims = jwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["scope"] == "watchfloor.read" and claims["aud"] == RESOURCE
+
+    names = {t["name"] for t in await Mcp(client, r.json()["access_token"]).tools()}
+    assert "propose_action" in names  # proposing is a read: nothing changes until a confirm
+    writes = {"confirm_action", "undo_action", "log_deal_update", "update_briefing_preferences"}
+    assert not names & (writes | {"set_standing_order", "remove_standing_order"})
+
+    _, challenge = _pkce()
+    async with _browser(auth_app) as c:
+        r = await c.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": KIRO,
+                "redirect_uri": kiro_cb,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "scope": "watchfloor.read watchfloor.write",
+                "state": "s1",
+            },
+        )
+    assert r.status_code == 303
+    assert parse_qs(urlparse(r.headers["location"]).query)["error"] == ["invalid_scope"]
 
 
 async def test_unregistered_redirect_never_redirects(auth_app: Any) -> None:

@@ -1569,7 +1569,7 @@ export default defineConfig({
 | `WF_JWKS_URL` | mcp | `https://auth.dev.watchfloor.example/jwks.json` | Cached 10 min |
 | `WF_ALLOWED_HOSTS` | mcp | `mcp.dev.watchfloor.example,abc123.execute-api.us-east-1.amazonaws.com` | Include the execute-api host |
 | `WF_ALLOWED_ORIGINS` | mcp | `https://harness.dev.watchfloor.example` | Absent Origin is allowed (server-to-server) |
-| `WF_PROTOCOL_VERSIONS` | mcp | `2025-11-25` | Comma list |
+| `WF_PROTOCOL_VERSIONS` | mcp | `2025-06-18,2025-11-25` | Comma list; `initialize` is counter-offered the newest (ADR-034) |
 | `WF_JOBS_QUEUE_URL` / `WF_OUTBOX_QUEUE_URL` | mcp, workers | `https://sqs.us-east-1.amazonaws.com/…/wf-jobs` | |
 | `WF_DEMO_MODE` | mcp, workers | `false` (`true` on demo only) | Enables clock offsets |
 | `WF_RATE_LIMIT_USER` / `WF_RATE_LIMIT_WS` | mcp | `60` / `600` | Per minute |
@@ -2838,7 +2838,7 @@ WF_ISSUER=http://localhost:8081
 WF_JWKS_URL=http://127.0.0.1:8081/jwks.json
 WF_ALLOWED_HOSTS=localhost,127.0.0.1
 WF_ALLOWED_ORIGINS=http://localhost:5173
-WF_PROTOCOL_VERSIONS=2025-11-25
+WF_PROTOCOL_VERSIONS=2025-06-18,2025-11-25
 WF_RATE_LIMIT_USER=60
 WF_RATE_LIMIT_WS=600
 
