@@ -27,9 +27,12 @@ Kiro Crew's chat turns cost about 0.13 to 0.33 credits each.
 
 **Not yet seen:**
 
-- **The digest firing.** It was created, not observed running.
-- **Slack.** It was not connected in this run. The agent reported that the message "landed as a
-  dashboard notification" instead, so the fallback is real, but a Slack post is untried.
+- **The digest firing.** It was created, not observed running. The saved job
+  (`~/.kiro/crew/crons.json`) is `0 17 * * *` in UTC, enabled, never run. Its message is the
+  agent's own wording and tells it to post to Slack with `send_message`.
+- **Slack.** It was not connected in this run. The message went to the dashboard instead: Kiro Crew's
+  notification log (`~/.kiro/crew/notifications.jsonl`) holds it as an "Agent Message". A real Slack
+  post is untried.
 - **The `watchfloor-digest` skill.** The digest above was an ad hoc prompt, not this skill, so none
   of the skill's rules (read only, no invented numbers) applied to it. See the digest section.
 
