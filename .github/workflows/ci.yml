@@ -19,7 +19,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U wf_owner -d watchfloor" --health-interval 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
       - run: uv run ruff check . && uv run ruff format --check .
@@ -33,7 +33,7 @@ jobs:
   agents:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen && uv run --frozen pytest -q
         working-directory: services/agents
@@ -41,7 +41,7 @@ jobs:
   harness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
@@ -53,7 +53,7 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       # build = typecheck + three single-file views + scripts/check.mjs (≤ 150 KB gzip, no network loaders)
@@ -63,7 +63,7 @@ jobs:
   infra:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
