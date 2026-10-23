@@ -23,7 +23,7 @@ from conftest import (
     make_config,
     sign_in,
 )
-from harness_api.agent import TURN_TIMEOUT_S, bedrock_model, gemini_model, to_messages
+from harness_api.agent import TURN_TIMEOUT_S, bedrock_model, gemini_model, to_messages, turn_timeout
 from harness_api.app import create_app
 from harness_api.offline import deal_words
 
@@ -321,6 +321,13 @@ def test_gemini_alone_runs_the_model_engine(tmp_path: Path) -> None:
     assert model.get_config()["model_id"] == "gemini-flash-lite-latest"
     assert model.client_args["api_key"] == "test-key"
     assert model.client_args["http_options"] == {"timeout": int(TURN_TIMEOUT_S * 1000)}
+
+
+def test_the_turn_timeout_stays_under_the_pages_wait() -> None:
+    assert turn_timeout(None) == turn_timeout("") == 25.0  # API Gateway's 30 s, unless set
+    assert turn_timeout("40") == 40.0  # Render (deploy/render/start.sh)
+    assert turn_timeout("90") == 40.0  # under the page's 45 s (web/src/api.ts LIMIT_MS.turn)
+    assert turn_timeout("2") == 10.0
 
 
 def test_the_harness_fits_inside_api_gateway(tmp_path: Path) -> None:

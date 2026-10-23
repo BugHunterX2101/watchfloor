@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -64,7 +65,16 @@ from .offline import Focus, next_focus, offline_answer
 log = logging.getLogger(__name__)
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
-TURN_TIMEOUT_S = 25.0  # under API Gateway's 30 s limit, so a slow turn gets our 504, not the gateway's
+
+
+def turn_timeout(raw: str | None) -> float:
+    """25 s, under API Gateway's 30 s limit, so a slow turn gets our 504, not the gateway's. Render has
+    no gateway, so it sets WF_TURN_TIMEOUT_S higher (deploy/render/start.sh); never past 40 s, under
+    the page's 45 s wait (web/src/api.ts)."""
+    return min(max(float(raw or 25.0), 10.0), 40.0)
+
+
+TURN_TIMEOUT_S = turn_timeout(os.environ.get("WF_TURN_TIMEOUT_S"))
 OFFLINE_RESERVE_S = 5.0  # kept back from the model so the offline router can still answer a slow turn
 UI_CACHE_S = 300.0  # a view's HTML only changes with a deploy: keep it rather than refetch ~280 KB a turn
 MAX_TURNS = 6

@@ -25,6 +25,13 @@ Set on the service, never in the repo:
 - A model: `WF_GEMINI_MODEL_ID` + `WF_GEMINI_API_KEY`, or Amazon Nova on Bedrock (`WF_HAIKU_MODEL_ID`
   with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`). With `WF_KMS_KEY_ID` set, tokens are
   signed by AWS KMS instead of the PEM.
+- `WF_SLACK_WEBHOOK_URL`: a Slack incoming webhook. Every post goes to the channel the webhook was made
+  for, direct messages included. Without it, `WF_ENV=local` prints each Slack message to the service's
+  logs and nothing reaches Slack. The outbox is polled every 2 s, so a post lands within a few seconds,
+  but only while the instance is awake.
+- `WF_TURN_TIMEOUT_S`: how long a harness turn may run, in seconds (10 to 40). `start.sh` makes it 40
+  here: no API Gateway cuts a turn at 30 s, and the free CPU is slow. The model gets all but the last
+  5 s; when it runs out, the offline engine answers and can't take actions such as a Slack post.
 - Optional, Amazon Polly reads replies aloud (ADR-033): `WF_POLLY_VOICE` (a neural voice id, e.g.
   `Ruth`) with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` for an IAM user allowed
   `polly:SynthesizeSpeech` and nothing else. `WF_POLLY_DAILY_CHARS` caps the characters a UTC day

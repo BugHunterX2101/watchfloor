@@ -97,7 +97,8 @@ export interface SessionInfo {
 export class SignedOut extends Error {}
 
 // No request waits forever: a hung one would leave the composer disabled for good. The limits sit
-// above the server's own (a turn stops at 25 s, a tool call at 15 s) so its answer wins the race.
+// above the server's own (a turn stops at 25 s, 40 s at most on Render; a tool call at 15 s) so its
+// answer wins the race.
 const LIMIT_MS = { turn: 45_000, tool: 30_000, quick: 15_000 } as const;
 
 async function timedFetch(url: string, init: RequestInit, limit: number): Promise<Response> {

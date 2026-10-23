@@ -26,6 +26,9 @@ export WF_DEV_SIGNING_KEY_PATH=/app/.secrets/es256.pem
 "$PY" -m db.seed --workspace ws_lumenridge --seed 42
 "$PY" -m auth_server.clients --harness-redirect-uri "$WF_HARNESS_REDIRECT_URI"
 
+# No API Gateway cuts a turn at 30 s here, and the free instance's CPU is slow: give the model longer.
+export WF_TURN_TIMEOUT_S="${WF_TURN_TIMEOUT_S:-40}"
+
 trap 'kill 0 2>/dev/null; exit 0' TERM INT
 "$PY" -m uvicorn auth_server.app:app --host 127.0.0.1 --port 8081 --no-access-log &
 "$PY" -m uvicorn mcp_server.app:app --host 127.0.0.1 --port 8080 --no-access-log &
