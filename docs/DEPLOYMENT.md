@@ -27,7 +27,7 @@ Offsets take effect only where `demo_mode: true` (`demo`, not `dev`); `demo-cloc
 ## Deploy to AWS
 
 Eight CDK stacks per environment (`dev`, `demo`) in `us-east-1`: net, data, auth, mcp, agents, async,
-harness, ops. Pushes to `main` deploy `dev`, and `v*.*.*` tags deploy `demo` (`.github/workflows`).
+harness, ops. Pushes to `main` run the checks; `dev` deploys when `deploy-dev` is run by hand, and `v*.*.*` tags deploy `demo` (`.github/workflows`).
 
 **On an AWS Free plan account** (new accounts since July 2025 start on it), the models are Amazon
 Nova, which runs on demand in us-east-1 and is paid from the credits (ADR-022). Nova Lite runs the

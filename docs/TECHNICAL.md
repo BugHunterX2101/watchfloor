@@ -637,7 +637,7 @@ flowchart LR
   PR --> CI{"ci.yml<br/>ruff · uv lock · schema snapshot<br/>unit · conformance · integration (Postgres)<br/>agents · harness · ui build · cdk synth"}
   CI -- fail --> DEV
   CI -- pass --> MAIN["main"]
-  MAIN --> DD{"deploy-dev.yml<br/>integration (testcontainers)<br/>cdk deploy dev · migrate · seed<br/>smoke: tools/list via canary"}
+  MAIN --> DD{"deploy-dev.yml<br/>checks on push; deploy by hand<br/>cdk deploy dev · migrate · seed<br/>smoke: tools/list via canary"}
   DD -- pass --> TAG["git tag v1.x"]
   TAG --> RD{"release-demo.yml<br/>cdk deploy demo · migrate<br/>evals · conformance vs URL<br/>latency probe"}
   RD --> MAN["Manual gate:<br/>utterance eval in the harness<br/>(Path B; §14 if toolkit access opens)"]
@@ -672,7 +672,7 @@ watchfloor/
 │   └── workflows/
 │       ├── ci.yml                          # PR gate: ruff, uv lock, tool snapshot, root suite on Postgres; agents,
 │       │                                   #   harness, ui and infra suites/builds as their own jobs
-│       ├── deploy-dev.yml                  # main → checks → package → cdk deploy dev → migrate → seed → conformance
+│       ├── deploy-dev.yml                  # main → checks; by hand: package → cdk deploy dev → migrate → seed → conformance
 │       ├── release-demo.yml                # tag → deploy demo → migrate → clients → conformance → evals → latency
 │       └── security.yml                    # advisories (pip-audit, npm audit) + Trivy; PRs touching dependencies, weekly, on demand; never on a push
 ├── .gitattributes                          # LF everywhere (the snapshot check is byte for byte)
@@ -2063,10 +2063,12 @@ jobs:
         working-directory: infra
 ```
 
-### 12.2 `deploy-dev.yml` (push to `main`)
+### 12.2 `deploy-dev.yml` (push to `main`, deploy by hand)
 
-1. `checks`: the whole of `ci.yml`.
-2. `deploy` (GitHub environment `dev`, OIDC role `secrets.AWS_DEPLOY_ROLE_DEV`, variable `AWS_ACCOUNT_ID`):
+1. `checks`: the whole of `ci.yml`, on every push to `main`.
+2. `deploy`, only on a manual run (`workflow_dispatch`). A push stops after `checks`: the live app runs on
+   Render (`deploy/render`), and the AWS account can't run compute. A manual run (GitHub environment `dev`,
+   OIDC role `secrets.AWS_DEPLOY_ROLE_DEV`, variable `AWS_ACCOUNT_ID`):
    build the views, the harness page and the Lambda zips (`make package`, arm64); push the agents image only
    when `infra/config/dev.yaml` puts the agents on AgentCore (`EnvConfig.agents_on`, ADR-022/023; on a first
    deploy it creates the repository with `AGENT_RUNTIME=false` first); `make cdk-deploy`, which prints the hosts
@@ -2402,7 +2404,7 @@ fields reason
 
 ### 17.1 Deploy
 
-1. Merge to `main` → `deploy-dev` runs automatically. Watch the dashboard for 15 minutes.
+1. Merge to `main` → `deploy-dev` runs the checks. To deploy `dev`, run `deploy-dev` by hand (Actions → deploy-dev → Run workflow), then watch the dashboard for 15 minutes. Render redeploys its branch on its own (`deploy/render/README.md`).
 2. `git tag vX.Y.Z && git push --tags` → `release-demo` runs. It requires green evals and the latency probe.
 3. If `tools.snapshot.json` changed: re-run the utterance sheet in the harness (§15.4). The harness reads `tools/list` on every turn, so the deploy is all it needs. (Path A would also need `alexa-ai deploy`, §14.)
 4. Record the release in `docs/friction-log.md` if anything was surprising.

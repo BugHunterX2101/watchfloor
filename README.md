@@ -778,7 +778,7 @@ flowchart LR
   PR --> CI{"ci.yml<br/>ruff · lockfile · tool-schema snapshot<br/>unit · conformance · integration (Postgres)<br/>agents · harness (api + web) · views build · cdk synth"}
   CI -- fail --> DEV
   CI -- pass --> MAIN["main"]
-  MAIN --> DD{"deploy-dev.yml<br/>checks · package · cdk deploy dev<br/>migrate · seed · remote conformance"}
+  MAIN --> DD{"deploy-dev.yml<br/>checks on push · deploy by hand<br/>package · cdk deploy dev<br/>migrate · seed · remote conformance"}
   DD -- pass --> TAG["git tag vX.Y.Z"]
   TAG --> RD{"release-demo.yml<br/>cdk deploy demo · migrate<br/>evals · conformance · latency probe"}
   RD --> FREEZE["Demo frozen"]
@@ -805,7 +805,7 @@ watchfloor/
 │   ├── dependabot.yml           # weekly update PRs (uv ×4, npm ×2, actions)
 │   └── workflows/
 │       ├── ci.yml               # lint · tests · builds · synth
-│       ├── deploy-dev.yml       # main → dev
+│       ├── deploy-dev.yml       # main → checks; dev by hand
 │       ├── release-demo.yml     # v*.*.* → demo
 │       └── security.yml         # advisories + Trivy: dependency PRs, weekly, on demand; never on a push
 ├── packages/
