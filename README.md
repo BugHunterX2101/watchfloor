@@ -827,9 +827,9 @@ watchfloor/
 │           ├── repos/                         # SQL: deals · scores · rules · proposals · outbox · jobs · prefs · users …
 │           └── services/                      # read · actions · rules · triage · updates · scoring · agent_read · slack_blocks
 ├── services/
-│   ├── mcp_server/              # the product: a stateless MCP server
+│   ├── mcp_server/              # the product: a stateless MCP server (RFC 9728 metadata in wellknown)
 │   │   ├── mcp_server/
-│   │   │   ├── app.py · server.py · session.py · context.py · resources.py · wellknown.py (RFC 9728)
+│   │   │   ├── app.py · server.py · session.py · context.py · resources.py · wellknown.py
 │   │   │   ├── middleware/                    # edge_guard · auth · version · ratelimit · telemetry
 │   │   │   └── tools/                         # briefing · explain · lookup · triage · actions · updates · rules · prefs · agent_read · descriptions · snapshot
 │   │   ├── schemas/tools.snapshot.json        # the pinned tool schemas (CI fails if they drift)
