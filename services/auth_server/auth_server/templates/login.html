@@ -5,19 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · Watchfloor</title>
   <style>
-    :root { color-scheme: light dark; --fg: #1b1f24; --muted: #5b6573; --bg: #f6f7f9; --card: #fff; --accent: #1f5fd1; --err: #b42318; }
-    @media (prefers-color-scheme: dark) { :root { --fg: #e8ebef; --muted: #9aa4b2; --bg: #0f1216; --card: #171b21; --accent: #6a9cff; --err: #ff8a80; } }
-    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-    main { max-width: 380px; margin: 10vh auto; padding: 28px; background: var(--card); border-radius: 12px; }
-    h1 { font-size: 1.35rem; margin: 0 0 4px; }
-    p.lead { color: var(--muted); margin: 0 0 20px; }
-    label { display: block; font-weight: 600; margin: 14px 0 6px; }
-    input[type=email], input[type=password] { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; border: 1px solid var(--muted); border-radius: 8px; background: transparent; color: inherit; }
-    button { margin-top: 22px; width: 100%; padding: 11px; font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
-    .error { color: var(--err); margin: 0 0 12px; }
+{% include "_room.css" %}
+    .primary { width: 100%; margin-top: 26px; }
   </style>
 </head>
 <body>
+<p class="brand"><i aria-hidden="true"></i>Watchfloor</p>
 <main>
   <h1>Sign in to Watchfloor</h1>
   <p class="lead">{{ client_name }} wants to connect to your pipeline.</p>
@@ -29,8 +22,9 @@
     <input id="email" name="email" type="email" autocomplete="username" required autofocus>
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Continue</button>
+    <button class="primary" type="submit">Continue</button>
   </form>
 </main>
+<p class="foot"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
 </body>
 </html>

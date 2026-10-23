@@ -5,17 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Privacy policy · Watchfloor</title>
   <style>
-    :root { color-scheme: light dark; --fg: #1b1f24; --muted: #59636e; --bg: #f6f7f9; --card: #fff; }
-    @media (prefers-color-scheme: dark) { :root { --fg: #e8ebef; --muted: #a3acb6; --bg: #0f1216; --card: #171b21; } }
-    body { margin: 0; font: 16px/1.6 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-    main { max-width: 720px; margin: 6vh auto; padding: 28px 32px; background: var(--card); border-radius: 12px; }
-    h1 { font-size: 1.6rem; margin: 0 0 4px; }
-    h2 { font-size: 1.1rem; margin: 28px 0 8px; }
-    .meta { color: var(--muted); margin: 0 0 20px; }
-    @media (max-width: 760px) { main { margin: 0; border-radius: 0; padding: 24px 16px; } }
+{% include "_room.css" %}
+    :root { --page: 720px; }
+    body { line-height: 1.65; }
+    @media (min-width: 481px) { main { padding: 32px 36px; } }
+    h1 { font-size: 2rem; }
+    .meta { margin-bottom: 22px; }
   </style>
 </head>
 <body>
+<p class="brand"><i aria-hidden="true"></i>Watchfloor</p>
 <main>
   <h1>Watchfloor privacy policy</h1>
   <p class="meta">Last updated October 15, 2026</p>
