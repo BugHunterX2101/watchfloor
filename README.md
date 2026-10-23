@@ -51,7 +51,7 @@ It is three things that fit together:
 
 | | What | Where |
 |---|---|---|
-| **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, standing orders, log an update) and six read-only tools for the triage agents (`explain_deal_risk` is in both sets: 19 distinct tools). | [`services/mcp_server`](services/mcp_server) |
+| **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, more time on a preview, standing orders, log an update, briefing preferences) and six read-only tools for the triage agents (`explain_deal_risk` is in both sets: 19 distinct tools). | [`services/mcp_server`](services/mcp_server) |
 | **2. A triage backend** | Deterministic, explainable risk scoring (RIGS) kept fresh in Postgres, a transactional outbox, standing orders that run in the background, and a team of Strands agents (a Lead and four specialists) for a deep review, behind a deterministic output gate. | [`packages/core`](packages/core) · [`services/workers`](services/workers) · [`services/agents`](services/agents) |
 | **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 31 page actions, and a companion layer that lets you change your mind mid-sentence and learns the names it mishears. | [`services/harness`](services/harness) |
 
@@ -79,7 +79,7 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
   up. What a "yes" saves is
   read back from the held arguments, not the model's paraphrase — [ADR-031](docs/adr/0031-learning-from-corrections.md).
 - **Failure is visible and recoverable.** Side effects go through a transactional outbox with backoff
-  and a dead state; deep reviews time out cleanly; every change can be undone for 30 seconds — [ADR-008](docs/adr/0008-transactional-outbox.md), [ADR-021](docs/adr/0021-undo-and-more-time.md).
+  and a dead state; deep reviews time out cleanly; a task, a new owner, a team post or a logged update can be undone for 30 seconds (a follow-up draft goes only to you) — [ADR-008](docs/adr/0008-transactional-outbox.md), [ADR-021](docs/adr/0021-undo-and-more-time.md).
 - **Trust the data, not the text.** CRM free text is stored as data and shown to models inside
   `<crm_data>` tags that the prompt says are never instructions; the repo ships hostile notes in its
   seed to test it.
@@ -179,6 +179,7 @@ flowchart LR
   HS -- "reasoning" --> BR
   HS -. "when Bedrock cannot run" .-> GM
   WF -- "deep-triage agents" --> BR
+  WF -. "when Bedrock cannot run" .-> GM
   WF -- "Block Kit alerts, plans, drafts" --> SL
   SL --> TM
 ```
@@ -243,7 +244,7 @@ flowchart TD
   SZ -- "bad JSON" --> R400a["400 parse error"]
   SZ -- ok --> T{"Valid Bearer JWT?<br/>iss · aud · exp · signature"}
   T -- no --> R401["401"]
-  T -- yes --> V{"initialize, or<br/>MCP-Protocol-Version = 2025-11-25?"}
+  T -- yes --> V{"initialize, or a supported<br/>MCP-Protocol-Version?<br/>(2025-11-25, 2025-06-18)"}
   V -- no --> R400b["400 Bad Request"]
   V -- yes --> RL{"Within rate limit?"}
   RL -- no --> R429["429 + Retry-After"]
@@ -592,8 +593,8 @@ Eighteen tables in `public` (plus the migrator's own ledger) and five in `auth`.
 data, each scoped by workspace with row-level security forced on, under separate `wf_app`,
 `wf_auth` and `wf_readonly` roles that cannot bypass it ([TECHNICAL.md §9.2](docs/TECHNICAL.md); rules
 and preferences live here too, [ADR-005](docs/adr/0005-postgres-rules-and-prefs.md)). The app role is also cut back to what it needs:
-it cannot rewrite `workspaces` or `schema_migrations`, and the audit log is append-only, with deletes
-allowed only past the 7-day retention policy (migration `0006_least_privilege.sql`). The compact view:
+it cannot rewrite `workspaces` or `schema_migrations`, and the audit log is append-only: the app may delete only entries older
+than 7 days, and the sweeper purges them at 30 (migration `0006_least_privilege.sql`). The compact view:
 
 ```mermaid
 erDiagram
@@ -762,6 +763,7 @@ flowchart LR
   DATA --> ASYNC
   AUTH --> ASYNC
   NET --> HARNESS["harness<br/>harness API · web app"]
+  DATA --> OPS
   AUTH --> OPS["ops<br/>alarms · dashboard · budget"]
   MCP --> OPS
   ASYNC --> OPS
@@ -769,8 +771,8 @@ flowchart LR
 
 ### 21. From a commit to an environment
 
-Pushes to `main` deploy `dev`; tags deploy `demo`. While AWS has compute blocked, pushes are marked
-`[skip ci]` and verified, so no failed deploy runs against the account.
+Pushes to `main` run the checks; `dev` deploys only when `deploy-dev` is run by hand, so no push
+fails against the blocked account. Tags deploy `demo`.
 
 ```mermaid
 flowchart LR
@@ -827,13 +829,13 @@ watchfloor/
 ├── services/
 │   ├── mcp_server/              # the product: a stateless MCP server
 │   │   ├── mcp_server/
-│   │   │   ├── app.py · server.py · session.py · context.py · resources.py · wellknown.py
+│   │   │   ├── app.py · server.py · session.py · context.py · resources.py · wellknown.py (RFC 9728)
 │   │   │   ├── middleware/                    # edge_guard · auth · version · ratelimit · telemetry
 │   │   │   └── tools/                         # briefing · explain · lookup · triage · actions · updates · rules · prefs · agent_read · descriptions · snapshot
 │   │   ├── schemas/tools.snapshot.json        # the pinned tool schemas (CI fails if they drift)
 │   │   └── ui/                                # MCP Apps views: Board · Detail · Confirm (Preact, single-file HTML)
-│   ├── auth_server/             # OAuth 2.1 authorization server (PKCE S256, RFC 8414 / 9728)
-│   │   └── auth_server/         # app · authorize · token · revoke · jwks · signer · clients · storage · seeder · tickets · legal · metadata · templates · static (add-on assets)
+│   ├── auth_server/             # OAuth 2.1 authorization server (PKCE S256, RFC 8414 metadata)
+│   │   └── auth_server/         # app · authorize · token · revoke · jwks · signer · clients · storage · seeder · tickets · legal · metadata · responses · templates · static (add-on assets)
 │   ├── workers/                 # everything that runs without a request
 │   │   └── workers/             # dispatcher · watcher · sweeper · canary · outbox_publisher · job_tokens · drafts · slack · migrator · service · runtime · agentcore_client · memory_events
 │   ├── agents/                  # deep triage; its own uv project (ADR-011)
@@ -845,17 +847,18 @@ watchfloor/
 │   └── harness/                 # simulated Alexa+ (Path B)
 │       ├── api/                 # Starlette API; its own uv project
 │       │   ├── harness_api/
-│       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/view · /api/session · /api/logout · /healthz
+│       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/speak · /api/view · /api/session · /api/logout · /healthz
 │       │   │   ├── agent.py                   # a turn: pending change · model chain · tools · one second look at an unsupported number
 │       │   │   ├── control.py                 # control_app: the 31 page actions, validated · exact read-backs · grounding of numbers and dates
 │       │   │   ├── offline.py                 # the keyword router when no model can answer
+│       │   │   ├── voice.py                   # Amazon Polly read-aloud, opt-in (ADR-033)
 │       │   │   ├── mcp_http.py · session.py · refresh.py · pkce.py
 │       │   │   ├── limits.py · headers.py · config.py
 │       │   │   └── prompts/alexa_style.md     # the assistant's voice, rules and manners
 │       │   └── tests/
 │       └── web/                 # TypeScript + Vite; no framework, no CDN
 │           ├── index.html · vite.config.ts · tsconfig.json
-│           ├── public/                        # logo SVGs, icons
+│           ├── public/                        # logo SVGs
 │           ├── src/
 │           │   ├── main.ts · router.ts · store.ts · api.ts · dom.ts
 │           │   ├── pipeline.ts · orders.ts · activity.ts · guide.ts · settings.ts
@@ -1037,7 +1040,7 @@ Beyond unit tests:
   every page, a full approve/undo, failure paths, an axe accessibility pass, a phone viewport, and
   scripted hands-free speech against the running stack. Those throwaway scripts are not in this
   repository, so this is a manual result, not a check CI repeats.
-- **Against a running stack:** `make conformance-remote` (15 protocol checks over HTTPS),
+- **Against a running stack:** `make conformance-remote` (14 protocol checks over HTTPS: CF-01 to CF-15, less CF-04, which needs an agent token),
   `make latency` (p95 ≤ 150 ms, p99 ≤ 300 ms per read tool), `make evals` (40 driver and 10
   prompt-injection deep reviews), and a Locust load profile.
 - **Two guards keep the docs honest:** a test fails if the tool schemas drift from the pinned
@@ -1053,7 +1056,7 @@ deterministic guards around it, not by the model itself.
 ## Deploy
 
 Eight CDK stacks per environment (`dev`, `demo`) in `us-east-1`, seven of them deployed while AgentCore
-is refused. Pushes to `main` deploy `dev`;
+is refused. Pushes to `main` run the checks and `dev` deploys when `deploy-dev` is run by hand;
 `v*.*.*` tags deploy `demo`. Highlights:
 
 - **Credits only.** On an AWS Free plan account the models are Amazon Nova (on demand, paid from
