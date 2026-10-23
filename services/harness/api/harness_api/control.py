@@ -47,6 +47,7 @@ ACTIONS = (
     "set_motion",
     "set_orb",
     "set_floor",
+    "set_backdrop",
     "set_name",
     "set_style",
     "set_alerts",
@@ -148,7 +149,15 @@ def clean(raw: Any) -> dict[str, Any] | str:
         problem = need("device", _one_of(raw.get("device"), DEVICES), "/".join(DEVICES))
     elif kind == "set_motion":
         problem = need("motion", _one_of(raw.get("motion"), MOTIONS), "/".join(MOTIONS))
-    elif kind in ("set_read_aloud", "set_orb", "set_floor", "hands_free", "wake_word", "set_alerts"):
+    elif kind in (
+        "set_read_aloud",
+        "set_orb",
+        "set_floor",
+        "set_backdrop",
+        "hands_free",
+        "wake_word",
+        "set_alerts",
+    ):
         problem = need("on", _flag(raw.get("on")), "true or false")
     elif kind == "set_style":
         problem = need("style", _one_of(raw.get("style"), STYLES), "/".join(STYLES))
@@ -229,12 +238,13 @@ def control_schema() -> dict[str, Any]:
             "theme": _enum(THEMES, "For set_theme."),
             "device": _enum(DEVICES, "For set_device: the Echo Show preview size on Watch."),
             "motion": _enum(
-                MOTIONS, "For set_motion. calm holds the scope's sweep and the voice lamp still."
+                MOTIONS,
+                "For set_motion. calm holds the scope's sweep, the voice lamp and the chart behind the pages still.",
             ),
             "on": {
                 "type": "boolean",
                 "description": "For set_read_aloud, set_orb (the voice lamp), set_floor (the scope's sweep), "
-                "hands_free, wake_word, set_alerts, pin_deal.",
+                "set_backdrop (the moving chart behind the pages), hands_free, wake_word, set_alerts, pin_deal.",
             },
             "style": _enum(
                 STYLES,

@@ -119,6 +119,9 @@ export function mountSettings(host: SettingsHost): { open(): void } {
     const floor = h("input", { id: "set-scene", type: "checkbox", checked: s.scene });
     floor.addEventListener("change", () => update({ scene: floor.checked }));
 
+    const chart = h("input", { id: "set-backdrop", type: "checkbox", checked: s.backdrop });
+    chart.addEventListener("change", () => update({ backdrop: chart.checked }));
+
     // Corrections the user taught by voice (voice/lessons.ts): shown so they can see and undo what was learned.
     const learned = h("ul", { class: "learned", "aria-labelledby": "set-learned-label" });
     const paintLearned = (): void => {
@@ -203,7 +206,7 @@ export function mountSettings(host: SettingsHost): { open(): void } {
           { class: "set-row" },
           h("span", { class: "set-label", id: "set-motion-label" }, "Motion"),
           motionBox,
-          h("p", { class: "help" }, "Calm holds the sweep and the lamp still. “Follow my system” respects your reduced-motion setting."),
+          h("p", { class: "help" }, "Calm holds the sweep, the lamp and the chart behind the pages still. “Follow my system” respects your reduced-motion setting."),
         ),
         toggle(
           "set-orb",
@@ -216,6 +219,12 @@ export function mountSettings(host: SettingsHost): { open(): void } {
           "Turn the sweep on the scope",
           "A line turns once every six seconds and each deal answers as it passes. Off: the scope holds still; every deal stays where it is.",
           floor,
+        ),
+        toggle(
+          "set-backdrop",
+          "Show the chart behind the pages",
+          "A sea floor in depth contours drifts slowly behind every page, lit by the lamp. It is decoration and shows nothing about your deals. It needs WebGL, rests when the tab is hidden, and holds still with Calm. Off: the plain chart-room grid.",
+          chart,
         ),
         h(
           "div",

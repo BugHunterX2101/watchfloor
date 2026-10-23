@@ -197,8 +197,15 @@ test("look and sound", () => {
   assert.deepEqual(action("reduce motion"), { type: "set_motion", motion: "calm" });
   assert.deepEqual(action("turn on the animations"), { type: "set_motion", motion: "auto" });
   assert.deepEqual(action("turn off the 3d orb"), { type: "set_orb", on: false });
-  assert.deepEqual(action("show the floor"), { type: "set_floor", on: true });
-  assert.deepEqual(action("hide the background"), { type: "set_floor", on: false });
+  // The chart behind the pages (ADR-035): the background, the backdrop, the 3D scene, the sea floor.
+  assert.deepEqual(action("show the floor"), { type: "set_backdrop", on: true });
+  assert.deepEqual(action("hide the background"), { type: "set_backdrop", on: false });
+  assert.deepEqual(action("turn off the 3d background"), { type: "set_backdrop", on: false });
+  assert.deepEqual(action("turn on the backdrop"), { type: "set_backdrop", on: true });
+  assert.deepEqual(action("stop the background animation"), { type: "set_backdrop", on: false });
+  assert.deepEqual(action("hide the scene"), { type: "set_backdrop", on: false });
+  assert.deepEqual(action("show the 3d orb"), { type: "set_orb", on: true });
+  assert.deepEqual(action("hide the plot"), { type: "set_floor", on: false });
   // The plot's words: the lamp and the sweep.
   assert.deepEqual(action("turn off the lamp"), { type: "set_orb", on: false });
   assert.deepEqual(action("hide the sweep"), { type: "set_floor", on: false });

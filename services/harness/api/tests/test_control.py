@@ -48,6 +48,7 @@ VALID: dict[str, dict[str, Any]] = {
     "set_motion": {"motion": "calm"},
     "set_orb": {"on": True},
     "set_floor": {"on": False},
+    "set_backdrop": {"on": True},
     "set_name": {"name": "Priya"},
     "set_style": {"style": "brief"},
     "set_alerts": {"on": False},

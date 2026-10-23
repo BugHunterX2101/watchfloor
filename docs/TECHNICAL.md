@@ -813,7 +813,7 @@ watchfloor/
 │   │       ├── responses.py                # OAuth error JSON, no-store tokens, hardened HTML
 │   │       ├── static/addon/               # listing icons and carousel (PNG)
 │   │       └── templates/
-│   │           └── login.html · consent.html · error.html · privacy.html · terms.html
+│   │           └── login.html · consent.html · error.html · privacy.html · terms.html · _room.css (their shared look, CSS-only)
 │   │
 │   ├── workers/
 │   │   ├── pyproject.toml
@@ -883,11 +883,13 @@ watchfloor/
 │               ├── store.ts                # what the browser remembers (localStorage, guarded)
 │               ├── logic.ts                # pure helpers and API-result parsers (unit-tested)
 │               ├── plot.ts                 # the pipeline as contacts on a scope: health is range, stage is bearing (ADR-032)
+│               ├── backdrop.ts             # the 3D sounding chart behind every page, WebGL2, lazy-loaded (ADR-035)
+│               ├── backdrop-logic.ts       # its camera, moods, contrast caps, pacing and governor (unit-tested)
 │               ├── dom.ts                  # h() builder (text only), toasts, confirm dialog
 │               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone
 │               ├── voice/                  # run everything by voice (ADR-027)
-│               │   ├── actions.ts          #   the 30 page actions, checked on arrival (mirrors control.py)
+│               │   ├── actions.ts          #   the 31 page actions, checked on arrival (mirrors control.py)
 │               │   ├── grammar.ts          #   spoken commands that need no model; wake word; fuzzy deal and rule names
 │               │   ├── handsfree.ts        #   wake word, conversation window, talk-over, "that's all", auto-off (injected clock and recogniser; ADR-028)
 │               │   ├── context.ts          #   what the assistant is told about the person and the board (ADR-029)

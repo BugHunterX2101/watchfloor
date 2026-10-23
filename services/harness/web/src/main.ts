@@ -23,6 +23,7 @@ import {
   type Screen,
 } from "./api";
 import { clearView, renderView, setDevice, setTheme } from "./apphost";
+import type { Backdrop } from "./backdrop";
 import { renderBanner } from "./banner";
 import { caption } from "./captions";
 import { confirmDialog, h, toast } from "./dom";
@@ -1129,6 +1130,27 @@ const themeRadio = radioGroup(
   (v) => update({ theme: v as ThemeChoice }),
 );
 
+// --- the chart behind the pages (ADR-035): loaded once the page has painted. Until then, and
+// wherever WebGL is missing, the CSS chart room (.atmosphere) stands in. ---
+
+let backdrop: Backdrop | null = null;
+
+function startBackdrop(): void {
+  const host = document.querySelector<HTMLElement>(".atmosphere");
+  if (!host) return;
+  import("./backdrop")
+    .then(({ mountBackdrop }) => {
+      backdrop = mountBackdrop(host);
+      backdrop.setEnabled(settings().backdrop);
+    })
+    .catch(() => {
+      // The chunk did not arrive (offline after an update): the CSS chart room stays.
+    });
+}
+
+if ("requestIdleCallback" in window) requestIdleCallback(startBackdrop, { timeout: 1500 });
+else setTimeout(startBackdrop, 300);
+
 // --- the plot's two moving parts, each with its own switch (Calm and reduced motion stop both) ---
 
 function applyLamp(): void {
@@ -1166,6 +1188,7 @@ onSettings((s, changed) => {
   }
   if (changed.includes("orb3d")) applyLamp();
   if (changed.includes("scene")) applySweep();
+  if (changed.includes("backdrop")) backdrop?.setEnabled(s.backdrop);
   if (changed.includes("name")) updateGreeting();
   if (changed.includes("wakeWord")) hf?.refresh();
   if (changed.includes("alerts")) baseline = null; // a fresh look, so what changed while it was off is not "news"

@@ -19,6 +19,7 @@ export const ACTION_NAMES = [
   "set_motion",
   "set_orb",
   "set_floor",
+  "set_backdrop",
   "set_name",
   "set_style",
   "set_alerts",
@@ -76,6 +77,7 @@ export type AppAction =
   | { type: "set_motion"; motion: "auto" | "calm" }
   | { type: "set_orb"; on: boolean }
   | { type: "set_floor"; on: boolean }
+  | { type: "set_backdrop"; on: boolean }
   | { type: "set_name"; name: string }
   | { type: "set_style"; style: StyleName }
   | { type: "set_alerts"; on: boolean }
@@ -141,6 +143,7 @@ export function parseAction(raw: unknown): AppAction | null {
     case "set_read_aloud":
     case "set_orb":
     case "set_floor":
+    case "set_backdrop":
     case "set_alerts":
     case "hands_free":
     case "wake_word": {

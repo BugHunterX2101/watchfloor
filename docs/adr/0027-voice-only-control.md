@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (2026-10-17)
 - **Refines:** ADR-003 (confirmation), ADR-018 (interaction details), ADR-026 (harness pages)
-- **Refined by:** ADR-028 (hands-free conversation), ADR-029 (29 actions), ADR-031 (30 actions: `remember`)
+- **Refined by:** ADR-028 (hands-free conversation), ADR-029 (29 actions), ADR-031 (30 actions: `remember`), ADR-035 (31: `set_backdrop`)
 
 ## Context
 

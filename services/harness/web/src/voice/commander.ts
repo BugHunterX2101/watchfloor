@@ -129,6 +129,9 @@ export async function run(a: AppAction, h: Host): Promise<Outcome> {
     case "set_floor":
       h.update({ scene: a.on });
       return said(a.on ? "The sweep is turning again." : "The sweep is off. The scope holds still.");
+    case "set_backdrop":
+      h.update({ backdrop: a.on });
+      return said(a.on ? "The chart is back behind the pages." : "The chart behind the pages is off.");
     case "set_name":
       h.update({ name: a.name });
       return said(`Nice to meet you, ${h.settings().name || a.name}.`);
