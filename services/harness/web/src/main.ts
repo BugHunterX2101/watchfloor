@@ -1400,7 +1400,7 @@ async function start(): Promise<void> {
   setVoice("idle");
   updateIdle();
   tickClock();
-  // Each minute: the clock, the greeting, and how long ago the bearing was taken.
+  // Every 15 seconds: the clock, the greeting, and how long ago the bearing was taken.
   window.setInterval(() => {
     tickClock();
     updateGreeting();

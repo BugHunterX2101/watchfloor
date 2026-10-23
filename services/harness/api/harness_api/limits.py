@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import time
 from collections import deque
 from collections.abc import Callable
@@ -56,7 +57,7 @@ class Limiter:
         while hits and now - hits[0] >= WINDOW_S:
             hits.popleft()
         if len(hits) >= self.per_minute:
-            return max(1, int(WINDOW_S - (now - hits[0])) + 1)
+            return max(1, math.ceil(WINDOW_S - (now - hits[0])))
         hits.append(now)
         return 0
 

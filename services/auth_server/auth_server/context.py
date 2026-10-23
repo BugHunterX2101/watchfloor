@@ -57,10 +57,11 @@ def server(request: Request) -> AuthServer:
 
 
 def client_ip(request: Request) -> str:
-    """The caller's address, for rate limits. API Gateway is the one proxy in front of this server and it
-    appends the address it saw to whatever X-Forwarded-For the caller sent, so the last hop is the one to
+    """The caller's address, for rate limits. On AWS, API Gateway is the one proxy in front of this server and
+    it appends the address it saw to whatever X-Forwarded-For the caller sent, so the last hop is the one to
     trust: the first is whatever the caller wrote, and would let a password sprayer pick a fresh address
-    for every guess."""
+    for every guess. On Render (env local) the connection is used: Caddy sends the one address it resolved
+    and uvicorn, which trusts loopback, makes that the connection's client (deploy/render/Caddyfile)."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded and server(request).settings.env not in ("local", "test"):
         hop = forwarded.rsplit(",", 1)[-1].strip()

@@ -52,7 +52,8 @@ PACKAGED_WEB_DIST = "/var/task/harness_web"  # scripts/package_lambdas.py copies
 # and its assets come from S3 instead, so the distribution adds the same ones; a test keeps the copies equal.
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; "
-    "img-src 'self' data:; font-src 'self'; frame-src 'self'; connect-src 'self'; manifest-src 'self'; "
+    "img-src 'self' data:; font-src 'self'; media-src 'self' blob:; frame-src 'self'; connect-src 'self'; "
+    "manifest-src 'self'; "
     "base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
 )
 PERMISSIONS_POLICY = "microphone=(self), camera=(), geolocation=(), payment=(), usb=(), interest-cohort=()"

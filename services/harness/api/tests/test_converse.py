@@ -162,6 +162,17 @@ async def test_expired_tokens_are_refreshed_once(
     assert r.status_code == 401 and r.json()["error"] == "signed_out"
 
 
+async def test_a_token_refreshed_because_it_was_due_is_not_refreshed_again_when_refused(
+    client: httpx.AsyncClient, auth: FakeAuth, mcp: FakeMcp
+) -> None:
+    auth.expires_in = 10  # due for a refresh from the start
+    await sign_in(client)
+    mcp.valid.clear()  # and the MCP server accepts nothing
+    r = await client.post("/converse", json={"message": "briefing"})
+    assert r.status_code == 401 and r.json()["error"] == "signed_out"
+    assert auth.issued == 2, "one sign-in and one refresh: a fresh token refused is not refreshed again"
+
+
 async def test_strands_turn_calls_mcp_tools_and_speaks_the_summary(
     tmp_path: Path, auth: FakeAuth, mcp: FakeMcp
 ) -> None:

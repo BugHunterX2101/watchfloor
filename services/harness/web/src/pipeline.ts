@@ -13,6 +13,7 @@ import { h, icon, toast } from "./dom";
 import { ICONS } from "./icons";
 import {
   arrangeDeals,
+  BAND_EDGES,
   BAND_LABEL,
   BAND_ORDER,
   boardTotals,
@@ -91,7 +92,7 @@ function ringSvg(health: number, band: Band, size: number): string {
   );
 }
 
-/** Health over the last days as a line with the two band lines (60 and 35) for scale. Numbers only. */
+/** Health over the last days as a line with the two band lines (BAND_EDGES) for scale. Numbers only. */
 function sparkline(values: number[], width = 360): HTMLElement {
   const W = Math.max(240, Math.round(width)); // drawn at the width it is shown at, so its figures keep their size
   const H = 110;
@@ -103,7 +104,7 @@ function sparkline(values: number[], width = 360): HTMLElement {
   const last = values[values.length - 1];
   const delta = last - first;
   const trend = delta === 0 ? "unchanged" : delta > 0 ? `up ${delta}` : `down ${-delta}`;
-  const guides = [60, 35]
+  const guides = [BAND_EDGES.watch, BAND_EDGES.at_risk]
     .map(
       (line) =>
         `<line class="spark-guide" x1="${pad}" x2="${W - pad}" y1="${y(line).toFixed(1)}" y2="${y(line).toFixed(1)}"/>` +

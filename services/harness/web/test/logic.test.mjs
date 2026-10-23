@@ -185,6 +185,17 @@ test("compact money reads at a glance", () => {
   assert.equal(compactUsd(-5), "$0");
 });
 
+test("compact money follows the spoken rule (speech.money_display, ui compactMoney)", () => {
+  assert.equal(compactUsd(999_950), "$10K");
+  assert.equal(compactUsd(950_000), "$9,500");
+  assert.equal(compactUsd(5_250_000), "$53K");
+  assert.equal(compactUsd(5_350_000), "$54K");
+  assert.equal(compactUsd(99_960_000), "$1M");
+  assert.equal(compactUsd(105_000_000), "$1.1M");
+  assert.equal(compactUsd(12_345_678_900), "$123.5M");
+  assert.equal(compactUsd(123_450_000_000), "$1,234.5M");
+});
+
 test("health is 100 minus risk, clamped, and prefers the server's own number", () => {
   assert.equal(healthOf(62), 38);
   assert.equal(healthOf(62, 40), 40);

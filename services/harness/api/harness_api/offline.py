@@ -724,6 +724,8 @@ def say_list(data: dict[str, Any], band: str | None, asked: int) -> str:
     if band:
         deals = [d for d in deals if d.get("band") == band]
         total = at if band == "at_risk" else attention - at
+    seen = len(deals)  # of the band's deals, the ones the briefing can show
+    deals = deals[:asked]
     if not deals:
         return f"Nothing{seg} is {BAND_WORDS[band] if band else 'at risk or on watch'} right now."
     lines = " ".join(f"{ORDINALS[i]}, {_deal_line(d)}." for i, d in enumerate(deals))
@@ -734,8 +736,8 @@ def say_list(data: dict[str, Any], band: str | None, asked: int) -> str:
     else:
         head = f"{plural(total, 'deal')}{seg} need{'s' if total == 1 else ''} attention."
     out = f"{head} {lines}"
-    if len(deals) < total and (band or asked > len(deals)):
-        rest = total - len(deals)
+    if seen < total and asked > seen:  # more were asked for than the briefing can show
+        rest = total - seen
         out += (
             f" I can only see the top five deals that need attention, so {rest} more {_is(rest)} not shown."
         )
@@ -1098,6 +1100,7 @@ class _Turn:
     segment: str | None = None
     reset_segment: bool = False  # a fresh "what needs my attention" starts from the user's own focus again
     owner_hit: bool = True
+    explained: dict[str, Any] = field(default_factory=dict)  # deal_id → explain_deal_risk's result
 
     async def briefing(
         self, *, limit: int | None = 5, segment: str | None = None, keep: bool = True
@@ -1149,6 +1152,8 @@ class _Turn:
             return (await self.mcp.call_tool("start_deep_triage", {"deal_id": deal_id})).summary
         call = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deal_id})
         data = call.structured or {}
+        if call.ok:
+            self.explained[deal_id] = data
         self.kind = "explain"
         if not call.ok or not data.get("deal"):
             return call.summary
@@ -1165,21 +1170,29 @@ class _Turn:
         return call.summary
 
     async def close_in_window(self, deal_id: str) -> str:
-        """ "When does Harbor close this month?": the close date, and whether it falls in that window."""
+        """ "When does Harbor close this month?", "Does Harbor close before November?": the close date,
+        and whether it falls in that window."""
         answer = await self.about_deal(deal_id, ["close"])
         m = WINDOW.search(self.message)
-        card = await self.mcp.call_tool("explain_deal_risk", {"deal_id": deal_id})
+        if not m and not MONTH_WINDOW.search(self.message):
+            return answer
         briefing = await self.briefing(limit=1, keep=False)
         try:
             today = datetime.fromisoformat(str((briefing.structured or {}).get("generated_at"))).date()
-            closes = date.fromisoformat(str(((card.structured or {}).get("deal") or {}).get("close_date")))
+            closes = date.fromisoformat(
+                str((self.explained.get(deal_id, {}).get("deal") or {}).get("close_date"))
+            )
         except ValueError:
             return answer
-        if not m:
+        if m:
+            start, end = _window(m.group(1).lower(), m.group(2).lower(), today)
+            words = f"{m.group(1).lower()} {m.group(2).lower()}"
+            return f"{answer} That is {'within' if start <= closes <= end else 'not in'} {words}."
+        named = _month_window(self.message, today)
+        if named is None:
             return answer
-        start, end = _window(m.group(1).lower(), m.group(2).lower(), today)
-        words = f"{m.group(1).lower()} {m.group(2).lower()}"
-        return f"{answer} That is {'within' if start <= closes <= end else 'not in'} {words}."
+        start, end, words = named
+        return f"{answer} So it {'closes' if start <= closes <= end else 'does not close'} {words}."
 
     async def aggregate(self, kind: str, *, owner: str | None = None, segment: str | None = None) -> str:
         msg, band = self.message, _band(self.message)
@@ -1192,7 +1205,8 @@ class _Turn:
             return ("Across all segments: " if call.ok and segment == "all" else "") + call.summary
         if kind == "list":
             asked = _top_n(msg)
-            call = await self.briefing(limit=max(1, min(asked, 5)), segment=segment)
+            # A band is picked out of the top five: "the top 3 at-risk deals" need not be the top 3 overall.
+            call = await self.briefing(limit=5 if band else max(1, min(asked, 5)), segment=segment)
             return say_list(call.structured or {}, band, asked) if call.ok else call.summary
         call = await self.briefing(segment=segment)
         data = call.structured or {}
@@ -1340,9 +1354,10 @@ async def _route(turn: _Turn, pending: Pending | None) -> str:
 async def _ask(turn: _Turn) -> str:
     msg = turn.message
     owner, rest = _without_owner(msg)
-    name = deal_words(rest)
-    kinds = _kinds(rest)
     agg = _aggregate(rest)
+    # "Does Harbor close before November?": the month names the window, not the deal.
+    name = deal_words(MONTH_WINDOW.sub(" ", rest) if agg == "closing" else rest)
+    kinds = _kinds(rest)
     seg = _segment(rest)
     elliptical = bool(ELLIPSIS.match(msg))
     asks = bool(ASK_DEAL.search(rest) or RESULT.search(rest) or TRIAGE.search(rest) or kinds)

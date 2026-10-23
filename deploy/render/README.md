@@ -36,8 +36,11 @@ Set on the service, never in the repo:
   client; its setup is in [`integrations/kiro`](../../integrations/kiro/README.md).
 
 `WF_ENV=local` keeps the file signer available and runs the workers in-process; the https issuer still
-makes every cookie Secure. Behind Caddy every caller shares one address, so the auth server's per-address
-login limit is shared too.
+makes every cookie Secure. Caddy (`trusted_proxies_strict`, `header_up X-Forwarded-For {client_ip}`) sends
+each server the one address Render's edge saw, and uvicorn, which trusts loopback, makes it the connection's
+client, so the auth server's per-address login and token limits are per caller. That was checked against
+Caddy 2.10.2 locally; Render's edge appends, with Cloudflare in front, so if it puts a public hop after the
+caller the limit falls back to per edge address: still never the address the caller wrote.
 
 ## What to expect
 

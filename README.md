@@ -16,7 +16,7 @@ and the next step. Nothing changes until you say yes. Then change your mind, and
 ![TypeScript](https://img.shields.io/badge/web-TypeScript%20%2B%20Vite-3178C6)
 ![Postgres](https://img.shields.io/badge/postgres-16%20%2B%20RLS-336791)
 ![IaC](https://img.shields.io/badge/infra-AWS%20CDK%20(Python)-FF9900)
-![Tests](https://img.shields.io/badge/tests-913%20passing-2EA44F)
+![Tests](https://img.shields.io/badge/tests-952%20passing-2EA44F)
 
 [Try it](#try-it) · [Architecture](#architecture) · [Repository map](#repository-map) · [Run it locally](#run-it-locally) ·
 [Decisions](#decisions-that-shape-it) · [Docs](#documentation)
@@ -88,32 +88,32 @@ the real protocol, the real tools. Only the Alexa speech layer is simulated. The
 
 ## Try it
 
-> **Status: the hosted dev environment is down.** AWS has blocked all compute on the account
-> (Lambda from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are refused too,
-> [friction log entry 11](docs/friction-log.md)), so the hosted links answer with errors until AWS
-> Support lifts it (the harness, privacy and terms links below all still returned HTTP 500 when
-> checked on 2026-10-20 and again on 2026-10-21; the Lambda API itself answers
-> `AccessDeniedException`). That is the account block, not a fault in the app.
+**Hosted:** <https://watchfloor.onrender.com/>. While AWS blocks all compute on the account (Lambda
+from 2026-10-16, then Fargate; EC2, App Runner, AgentCore and Lightsail are refused too,
+[friction log entry 11](docs/friction-log.md)), the whole stack runs as one service on Render's free plan
+([deploy/render](deploy/render/README.md)): the same auth server, MCP server, harness and workers, on one
+origin. A free instance sleeps after 15 minutes idle, so the first request can take about a minute.
 
-**Works now: run it on your machine** (no AWS and no model needed). The commands are under
+1. Open <https://watchfloor.onrender.com/> and select **Sign in**. That runs the real OAuth flow (PKCE)
+   against Watchfloor's auth server.
+2. Sign in as `priya@lumenridge.example`. The password is in the Devpost testing instructions; it is
+   never in this repository.
+
+**Or run it on your machine** (no AWS and no model needed). The commands are under
 [Run it locally](#run-it-locally); then open <http://localhost:8082>, select **Sign in**, and sign in
 as `priya@lumenridge.example` with the `WF_DEMO_PASSWORD` you chose.
 
-**Hosted, once AWS restores it:**
-
-1. Open the hosted harness at <https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/> and select
-   **Sign in**. That runs the real OAuth flow (PKCE) against Watchfloor's auth server.
-2. Sign in as `priya@lumenridge.example`. The password is in the Devpost testing instructions; it is
-   never in this repository.
+The AWS `dev` environment (<https://rgroug1dvd.execute-api.us-east-1.amazonaws.com/>) answers with errors
+until AWS Support lifts the block; that is the account, not a fault in the app.
 
 Either way, ask in your own words ([What you can say](#what-you-can-say)), or turn on
 **Hands-free** and just talk. Every tool call, with its latency, is listed beside the conversation.
 The data is a synthetic sales team (Lumenridge) and its deals, so nothing you do reaches a real
 customer.
-[Privacy](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/privacy) ·
-[Terms](https://b4sp3enfx6.execute-api.us-east-1.amazonaws.com/terms)
+[Privacy](https://watchfloor.onrender.com/privacy) ·
+[Terms](https://watchfloor.onrender.com/terms)
 
-> Demo video: _coming with the recording on Oct 21._
+> Demo video: _the link is added here once the recording is published._
 
 ---
 
@@ -192,7 +192,7 @@ and they do it through the same protocol layer as everyone else, with a job-scop
 flowchart TB
   subgraph L1["Experience"]
     V["Alexa+ voice"]
-    HW["Harness web app<br/>5 pages · orb · voice"]
+    HW["Harness web app<br/>5 pages · night scope · voice"]
     UIV["MCP Apps views<br/>triage board · deal detail · confirm sheet"]
     SK["Slack messages"]
   end
@@ -883,6 +883,7 @@ watchfloor/
 │   │   ├── config.py · common.py
 │   │   └── stacks/              # net · data · auth · mcp · agents · async_ · harness · ops
 │   └── tests/                   # config validation and synth assertions
+├── deploy/                      # render/: the whole stack as one Docker service on Render's free plan (Caddy in front)
 ├── integrations/                # kiro/: Kiro and Kiro Crew client config (ADR-034)
 ├── scripts/                     # dev_keys · dev_token · demo · run_task · conformance_remote · latency_probe · load_baseline · explain_plans · package_lambdas · remote_mcp · default_hosts · restore_drill · addon_assets (the Alexa+ listing page)
 ├── tests/
@@ -1017,12 +1018,12 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 
 | Suite | Count | Covers |
 |---|---:|---|
-| Root (`pytest`) | 456 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill, the offline router's answers checked against SQL) |
-| Harness API | 245 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router (specific answers, follow-ups, plain refusals, reading the screen) |
-| Harness web | 137 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic, and the backdrop's contrast proof (every area colour at or under its luminance cap, so text stays at 4.5:1 or better) |
+| Root (`pytest`) | 468 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill, the offline router's answers checked against SQL) |
+| Harness API | 271 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router (specific answers, follow-ups, plain refusals, reading the screen) |
+| Harness web | 138 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic, and the backdrop's contrast proof (every area colour at or under its luminance cap, so text stays at 4.5:1 or better) |
 | Triage agents | 37 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
 | Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
-| **Total** | **913** | |
+| **Total** | **952** | |
 
 ```bash
 make test          # unit + protocol conformance
@@ -1076,7 +1077,7 @@ cost model in [ADR-014](docs/adr/0014-free-plan-instance-types.md) and
 
 | Built | Not yet / blocked |
 |---|---|
-| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness API and web (five pages, 3D orb, hands-free voice companion) · MCP Apps views · demo operations · CDK stacks and CI/CD · latency probe, evals, load profile (run locally) · the Alexa+ add-on side, ready if toolkit access opens | **Hosted dev is down:** since 2026-10-16 AWS blocks all compute on the account until Support lifts it (the deploy path is unchanged and was last exercised before the block) · Bedrock-backed eval run (quotas are 0, so `dev` uses Gemini) · a separate `demo` environment (one environment fits the credits) · CloudFront and reserved concurrency in `dev` |
+| Core domain, RIGS, seed · MCP server (14 user tools, 6 agent tools) · OAuth server · workers · triage agents · harness API and web (five pages, night scope, hands-free voice companion) · MCP Apps views · demo operations · CDK stacks and CI/CD · latency probe, evals, load profile (run locally) · the Alexa+ add-on side, ready if toolkit access opens | **AWS dev is down:** since 2026-10-16 AWS blocks all compute on the account until Support lifts it (the deploy path is unchanged and was last exercised before the block); meanwhile the stack runs on Render's free plan ([deploy/render](deploy/render/README.md)) · Bedrock-backed eval run (quotas are 0, so `dev` uses Gemini) · a separate `demo` environment (one environment fits the credits) · CloudFront and reserved concurrency in `dev` |
 
 Honest limits of the voice experience:
 
@@ -1122,7 +1123,7 @@ way are in the [friction log](docs/friction-log.md) and [feature requests](docs/
 | [Technical](docs/TECHNICAL.md) | Every file, diagram, command, runbook and checklist |
 | [Deployment](docs/DEPLOYMENT.md) | Bootstrap, first deploy, secrets, domains, demo operations on AWS |
 | [Security](docs/SECURITY.md) | What was found and fixed, each with its test; what is accepted; what is not verified |
-| [ADRs](docs/adr) | The 31 decisions and their alternatives |
+| [ADRs](docs/adr) | The 35 decisions and their alternatives |
 | [Implementation notes](docs/implementation-notes.md) | Where the build departs from the specs |
 | [Friction log](docs/friction-log.md) · [Feature requests](docs/feature-requests.md) | What the platforms made hard, and what we'd ask for |
 | [Brand](docs/brand/README.md) | The mark, the lockups, the colours |

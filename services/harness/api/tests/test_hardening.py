@@ -155,7 +155,9 @@ def test_the_window_slides_and_says_when_a_slot_frees() -> None:
     limit = Limiter(3, now=lambda: t[0])
     assert [limit.hit("a") for _ in range(3)] == [0, 0, 0]
     t[0] = 10.0
-    assert limit.hit("a") == 51  # the oldest hit leaves at t=60
+    assert limit.hit("a") == 50  # the oldest hit leaves at t=60
+    t[0] = 10.4
+    assert limit.hit("a") == 50  # 49.6 s, rounded up to a whole second
     assert limit.hit("b") == 0, "one person's turns are not another's"
     t[0] = 59.9
     assert limit.hit("a") == 1

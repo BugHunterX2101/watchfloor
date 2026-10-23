@@ -313,6 +313,16 @@ async def test_lists_by_band() -> None:
     )  # only three of the five on-watch deals are among the top five overall
 
 
+async def test_the_top_few_of_a_band_come_from_the_band_not_the_top_few_overall() -> None:
+    t = Talk()
+    got = await t.say("List the top two deals on watch")
+    assert got == (
+        "5 deals are on watch. First, Orbital Dental Group, $31K, on watch, health 42. "
+        "Second, Valewood Analytics, $24K, on watch, health 37."
+    )  # the top two overall are both at risk; asking for two is not "more than I can see"
+    assert t.last_calls == [("get_risk_briefing", {"limit": 5})]
+
+
 async def test_the_biggest_deal_is_the_largest_amount_not_the_first_listed() -> None:
     t = Talk()
     assert await t.say("What's the biggest deal at risk?") == (
@@ -734,6 +744,16 @@ async def test_a_deal_asked_about_with_a_window_says_whether_it_falls_in_it() ->
         "Harbor & Pine Logistics is expected to close on Tuesday, November 10. That is not in this month."
     )
     assert (await t.say("Does Harbor close next month?")).endswith("That is within next month.")
+    assert [n for n, _ in t.last_calls].count("explain_deal_risk") == 1  # the card is read once
+
+
+async def test_a_deal_asked_about_with_a_named_month_says_whether_it_falls_in_it() -> None:
+    t = Talk()
+    assert await t.say("Does Harbor close before November?") == (
+        "Harbor & Pine Logistics is expected to close on Tuesday, November 10. So it does not close before "
+        "November."
+    )
+    assert (await t.say("Does Harbor close in November?")).endswith("So it closes in November.")
 
 
 async def test_odd_phrasings_get_the_briefing_not_a_company_lookup() -> None:

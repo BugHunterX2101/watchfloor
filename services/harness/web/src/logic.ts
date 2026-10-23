@@ -203,14 +203,22 @@ export function boardTotals(deals: readonly BriefingDeal[]): {
   return { byBand, atRiskCents, unknownAmounts };
 }
 
-const trimNumber = (n: number): string => (n >= 100 ? Math.round(n).toString() : n.toFixed(1).replace(/\.0$/, ""));
+/** `cents / unit` rounded half up, in whole numbers (same as speech._half_up). */
+const halfUp = (cents: number, unit: number): number => Math.floor((Math.round(cents) + unit / 2) / unit);
 
-/** "$1.2M", "$48K", "$950" from cents (compact money for tiles; cards use the API's own display text). */
+/** "$9,500", "$48K", "$1.2M" from cents (compact money for tiles; cards use the API's own display
+ *  text). Same rule as speech.money_display and the views' compactMoney, so a total reads the same
+ *  everywhere: exact under $10K, then thousands, then millions to one decimal. Never negative. */
 export function compactUsd(cents: number): string {
-  const usd = Math.max(0, cents) / 100;
-  if (usd >= 1_000_000) return `$${trimNumber(usd / 1_000_000)}M`;
-  if (usd >= 1_000) return `$${trimNumber(usd / 1_000)}K`;
-  return `$${Math.round(usd)}`;
+  const c = Math.max(0, cents);
+  const dollars = halfUp(c, 100);
+  if (dollars < 10_000) return `$${dollars.toLocaleString("en-US")}`;
+  const thousands = halfUp(c, 100_000);
+  if (thousands < 1_000) return `$${thousands}K`;
+  const tenths = halfUp(c, 10_000_000);
+  const whole = Math.floor(tenths / 10);
+  const tenth = tenths % 10;
+  return `$${whole.toLocaleString("en-US")}${tenth ? `.${tenth}` : ""}M`;
 }
 
 /** Health is what people see (ADR-020): 100 minus the RIGS risk score, within 0-100. Servers

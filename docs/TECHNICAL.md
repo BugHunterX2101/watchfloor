@@ -813,7 +813,7 @@ watchfloor/
 │   │       ├── responses.py                # OAuth error JSON, no-store tokens, hardened HTML
 │   │       ├── static/addon/               # listing icons and carousel (PNG)
 │   │       └── templates/
-│   │           └── login.html · consent.html · error.html · privacy.html · terms.html · _room.css (their shared look, CSS-only)
+│   │           └── login.html · consent.html · error.html · privacy.html · terms.html · _room.css   # their shared look, CSS-only
 │   │
 │   ├── workers/
 │   │   ├── pyproject.toml
@@ -937,6 +937,15 @@ watchfloor/
 │   │       └── async_.py · agents.py · harness.py · ops.py
 │   └── tests/                              # test_config.py · test_synth.py (make test-infra)
 │
+├── deploy/
+│   └── render/                             # the whole stack as one Docker service on Render's free plan
+│       ├── Dockerfile · Caddyfile          # one image; Caddy routes one origin to the three servers
+│       └── start.sh · bootstrap.py · README.md  # migrate, seed, provision, run; the environment it needs
+│
+├── integrations/
+│   └── kiro/                               # Kiro and Kiro Crew as MCP clients (ADR-034)
+│       └── README.md · mcp.json · oauth_endpoints.json · kirocrew-agent.jsonc · skills/
+│
 ├── scripts/
 │   ├── dev_keys.py                         # generates local ES256 key pair (gitignored output)
 │   ├── dev_token.py                        # mints a local JWT for curl testing (local/dev only)
@@ -948,6 +957,8 @@ watchfloor/
 │   ├── conformance_remote.py               # CF-01..15 against a URL
 │   ├── latency_probe.py                    # N calls per read tool → p50/p95/p99 table
 │   ├── load_baseline.py                    # concurrency curve on this machine (own server) → docs/perf/load-baseline.md
+│   ├── explain_plans.py                    # EXPLAIN (ANALYZE, BUFFERS) of the hot-path queries → docs/perf/ (make perf-plans)
+│   ├── restore_drill.py                    # backup and restore drill: restore, migrate, compare row counts and digests
 │   └── addon_assets/                       # listing images and addon.json filler (Path A only)
 │
 └── tests/
@@ -1016,15 +1027,16 @@ flowchart LR
 ```python
 # settings.py
 class Settings(BaseModel):
-    env: Literal["local", "dev", "demo"]
+    env: Literal["local", "test", "dev", "demo"] = "local"
     database_url: str | None = None          # local
     db_secret_arn: str | None = None         # aws
     resource_uri: str                        # https://mcp.watchfloor.example/mcp
     issuer: str                              # https://auth.watchfloor.example
     jwks_url: str
     allowed_hosts: frozenset[str]
+    host_header: str = "host"                # x-wf-host on ECS (ADR-025)
     allowed_origins: frozenset[str] = frozenset()
-    protocol_versions: frozenset[str] = frozenset({"2025-11-25"})
+    protocol_versions: frozenset[str] = frozenset({"2025-06-18", "2025-11-25"})  # ADR-034
     jobs_queue_url: str | None = None
     outbox_queue_url: str | None = None
     demo_mode: bool = False
@@ -1565,7 +1577,7 @@ export default defineConfig({
 | Variable | Used by | Example (dev) | Notes |
 |---|---|---|---|
 | `WF_ENV` | all | `dev` | `local` · `dev` · `demo` |
-| `WF_DATABASE_URL` | local only | `postgresql://wf_app:devpassword@127.0.0.1:5432/watchfloor` | Never set in AWS |
+| `WF_DATABASE_URL` | local only | `postgresql://wf_app:devpassword@127.0.0.1:55432/watchfloor` | Never set in AWS |
 | `WF_DB_SECRET_ARN` | aws services | `arn:aws:secretsmanager:…:secret:wf-db-…` | RDS-managed secret |
 | `WF_RESOURCE_URI` | mcp, auth | `https://mcp.dev.watchfloor.example/mcp` | Must equal token `aud` **exactly** |
 | `WF_ISSUER` | mcp, auth | `https://auth.dev.watchfloor.example` | |

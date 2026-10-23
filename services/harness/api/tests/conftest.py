@@ -98,6 +98,7 @@ class FakeAuth:
     revoked: list[str] = field(default_factory=list)
     refusals: set[str] = field(default_factory=set)  # grant types to refuse
     issued: int = 0
+    expires_in: int = 3600
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
@@ -114,7 +115,7 @@ class FakeAuth:
             json={
                 "access_token": f"at{self.issued}",
                 "token_type": "Bearer",
-                "expires_in": 3600,
+                "expires_in": self.expires_in,
                 "refresh_token": f"rt{self.issued}",
             },
         )

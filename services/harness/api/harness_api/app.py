@@ -23,6 +23,8 @@ a turn runs a language model.
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 import logging
 import re
 import time
@@ -152,6 +154,12 @@ VIEW_CSP = "; ".join(
         "frame-ancestors 'self'",
         "sandbox allow-scripts",
     )
+)
+VIEW_REFUSED_TEXT = "This view can't be shown right now."
+VIEW_REFUSED = (
+    '<!doctype html><html lang="en"><meta charset="utf-8"><title>Watchfloor view</title>'
+    "<style>:root{color-scheme:light dark}body{font:15px/1.5 system-ui,sans-serif;margin:16px}</style>"
+    "<p>{text}</p></html>"
 )
 
 # RFC 6749 §4.1.2.1. Anything else in ``?error=`` is someone's text, and the page would print it.
@@ -305,9 +313,13 @@ def create_app(
         )
 
     async def with_session(
-        request: Request, work: Callable[[str], Awaitable[dict[str, Any]]], limit: Limiter
+        request: Request,
+        work: Callable[[str], Awaitable[Any]],
+        limit: Limiter,
+        respond: Callable[[Any], Response] = JSONResponse,
     ) -> Response:
-        """Run ``work`` with the user's access token: refresh it when due or rejected, once."""
+        """Run ``work`` with the user's access token: refresh it when due or rejected, once. ``respond``
+        turns what it returned into the response (JSON unless said otherwise)."""
         session = box.open_session(request.cookies.get(SESSION_COOKIE))
         if session is None:
             return signed_out()
@@ -323,6 +335,8 @@ def create_app(
             try:
                 result = await work(session.access_token)
             except Unauthorized:
+                if renewed:  # refreshed a moment ago and still refused: another refresh won't help
+                    return signed_out()
                 session, renewed = await fresh(session), True
                 if session is None:
                     return signed_out()
@@ -339,7 +353,7 @@ def create_app(
             return JSONResponse({"error": "mcp_unavailable", "message": str(exc)}, status_code=502)
         except TimeoutError:
             return JSONResponse({"error": "timeout", "message": "That took too long."}, status_code=504)
-        resp = JSONResponse(result)
+        resp = respond(result)
         if renewed:
             set_cookie(resp, SESSION_COOKIE, box.seal_session(session), SESSION_TTL_S)
         return resp
@@ -463,30 +477,47 @@ def create_app(
         """
         uri = request.query_params.get("uri", "")
         if not VIEW_URI.fullmatch(uri):
-            return JSONResponse({"error": "invalid_request"}, status_code=400)
-        session = box.open_session(request.cookies.get(SESSION_COOKIE))
-        if session is None:
-            return signed_out()
+            return framed(JSONResponse({"error": "invalid_request"}, status_code=400))
+        if box.open_session(request.cookies.get(SESSION_COOKIE)) is None:
+            return framed(signed_out())
         key = f"{s.mcp_url} {uri}"
-        hit = ui_cache.get(key)
-        html: str | None = hit[1] if hit is not None and hit[0] > time.monotonic() else None
-        if html is None:  # the turn that showed it normally cached it; an old entry may have lapsed
-            if tool_limit.hit(subject(session.access_token)):
-                return JSONResponse({"error": "rate_limited"}, status_code=429)
-            try:
-                html = await McpHttp(s.mcp_url, session.access_token, http=mcp_client()).read_resource(uri)
-            except Unauthorized:
-                return signed_out()
-            except RateLimited as exc:
-                return too_many(exc.retry_after)
-            except McpError:
-                return JSONResponse({"error": "mcp_unavailable"}, status_code=502)
+
+        def page(html: str | None) -> Response:
             if html is None:
                 return JSONResponse({"error": "not_found"}, status_code=404)
             ui_cache[key] = (time.monotonic() + UI_CACHE_S, html)
-        return HTMLResponse(
-            html, headers={"content-security-policy": VIEW_CSP, "x-frame-options": "SAMEORIGIN"}
+            return HTMLResponse(
+                html, headers={"content-security-policy": VIEW_CSP, "x-frame-options": "SAMEORIGIN"}
+            )
+
+        hit = ui_cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return framed(page(hit[1]))
+
+        async def read(token: str) -> str | None:
+            return await McpHttp(s.mcp_url, token, http=mcp_client()).read_resource(uri)
+
+        # The turn that showed it normally cached it; an old entry may have lapsed, and so may the token.
+        return framed(await with_session(request, read, tool_limit, page))
+
+    def framed(resp: Response) -> Response:
+        """A refusal shown in the view's frame: a line of text under the view's policy. The app's own
+        headers forbid framing, so a JSON refusal would show as the browser's "refused to connect"."""
+        if resp.status_code < 400:
+            return resp
+        try:
+            text = str(json.loads(bytes(resp.body)).get("message") or VIEW_REFUSED_TEXT)
+        except (ValueError, AttributeError):
+            text = VIEW_REFUSED_TEXT
+        out = HTMLResponse(
+            VIEW_REFUSED.replace("{text}", html.escape(text)),
+            status_code=resp.status_code,
+            headers={"content-security-policy": VIEW_CSP, "x-frame-options": "SAMEORIGIN"},
         )
+        for name, value in resp.raw_headers:  # Retry-After, and the cookie a sign-out clears
+            if name.lower() in (b"retry-after", b"set-cookie"):
+                out.raw_headers.append((name, value))
+        return out
 
     async def healthz(request: Request) -> Response:
         models = [name for name, _ in model_chain(conf)]  # names only, never a key

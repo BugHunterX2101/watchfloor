@@ -156,3 +156,18 @@ What was found by reading the code against the claims, and what changed. Each ro
 | Voice | A quick spoken "yes" to a confirmation was dropped as the echo of the assistant's own "Say yes or no" (it is a substring of the question) | The page tells hands-free when a confirmation is open (`answering`), and a reply is never an echo then |
 | Layout | On a phone the top bar (brand, hands-free, settings, theme) was wider than the screen, so every page scrolled sideways | The top bar wraps; checked at 390, 360 and 320 px |
 | Honesty | The page said "Simulated Alexa+" but not that the companies, people and deals are made up | The banner and the Guide say so, and that scores and reasons are worked out by the real engine |
+
+## Update (2026-10-23): audit of the Render deployment and the screens
+
+| Area | Found | Built |
+|---|---|---|
+| Auth: client address on Render | Caddy appended its peer (Render's edge) to `X-Forwarded-For` and uvicorn, which trusts loopback, made that the client, so every caller shared one 5-a-minute login bucket and anyone could lock everyone out | Caddy runs `trusted_proxies_strict` and sends each server one address, `header_up X-Forwarded-For {client_ip}` (the rightmost hop outside the private ranges, never the caller's own). Checked against Caddy 2.10.2 locally; `tests/unit/test_auth_client_ip.py` pins the Caddyfile and the uvicorn default it relies on |
+| Harness: money | `compactUsd` said "$9.5K" where the spoken reply and the views say "$9,500", and $999,600 came out as "$1000K" | Same rule as `speech.money_display`: exact under $10K, whole thousands, then millions to one decimal, rounded half up in integer cents; the exposure tile uses it too (`test/logic.test.mjs`) |
+| Harness: band lines | The trend sparkline drew its guides at hard-coded 60 and 35 | They come from `BAND_EDGES`; `tests/unit/test_band_edges_sync.py` keeps it and the views' copies equal to `rigs.yaml` (health = 100 - risk) |
+| Edge: CSP | The CloudFront policy lacked `media-src 'self' blob:`, which the API sends for the Polly audio, so the page would not play replies there | Added; `infra/tests/test_synth.py` keeps the two policies equal |
+| Harness: wait time | The turn limiter's Retry-After was `int(wait) + 1`, one second long whenever the wait was a whole number (50 s became 51) | `ceil`, at least 1 (`test_hardening.py`) |
+| Harness: refresh | A turn whose token was refreshed and still refused tried a second refresh with the spent refresh token | A refusal after a refresh signs the person out (`test_converse.py`) |
+| Harness: offline lists | "The top two deals on watch" fetched the top two overall (both at risk) and answered "Nothing is on watch" | A band is picked out of the visible five, then cut to the number asked (`test_offline.py`) |
+| Harness: offline close dates | "Does Harbor close before November?" read "November" as part of the deal's name and answered for the whole pipeline; a window question read the deal's card twice | A month window in a closing question is not part of the name, the answer says whether the date falls in it, and the card is read once (`test_offline.py`) |
+| Harness: pages | `/api/view?uri=` signed the person out when the access token had expired, and its 429 carried no Retry-After | It goes through the same session wrapper as the other routes: refresh, then retry, and a 429 with Retry-After (`test_view_page.py`) |
+| Harness: view refusals | The iframe loads `/api/view` directly, and its refusals were JSON under the app's `frame-ancestors 'none'`, so the frame showed the browser's "refused to connect" | A refusal is one line of HTML under the view's own policy, with its status, Retry-After and cookie kept (`test_view_page.py`) |
