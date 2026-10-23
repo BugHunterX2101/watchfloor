@@ -16,7 +16,7 @@ and the next step. Nothing changes until you say yes. Then change your mind, and
 ![TypeScript](https://img.shields.io/badge/web-TypeScript%20%2B%20Vite-3178C6)
 ![Postgres](https://img.shields.io/badge/postgres-16%20%2B%20RLS-336791)
 ![IaC](https://img.shields.io/badge/infra-AWS%20CDK%20(Python)-FF9900)
-![Tests](https://img.shields.io/badge/tests-889%20passing-2EA44F)
+![Tests](https://img.shields.io/badge/tests-913%20passing-2EA44F)
 
 [Try it](#try-it) · [Architecture](#architecture) · [Repository map](#repository-map) · [Run it locally](#run-it-locally) ·
 [Decisions](#decisions-that-shape-it) · [Docs](#documentation)
@@ -860,6 +860,7 @@ watchfloor/
 │           │   ├── main.ts · router.ts · store.ts · api.ts · dom.ts
 │           │   ├── pipeline.ts · orders.ts · activity.ts · guide.ts · settings.ts
 │           │   ├── orb.ts · plot.ts                 # the voice state and the pipeline plot (SVG, no library)
+│           │   ├── backdrop.ts · backdrop-logic.ts · tilt.ts  # the WebGL2 chart behind the pages (lazy chunk) · its colour caps · the card lean
 │           │   ├── speech.ts · sound.ts · captions.ts · banner.ts · apphost.ts · trace.ts · logic.ts · icons.ts
 │           │   ├── styles.css
 │           │   └── voice/
@@ -869,7 +870,7 @@ watchfloor/
 │           │       ├── context.ts · watcher.ts    # what the page tells the model · the board watcher
 │           │       ├── lessons.ts                 # corrections learned from the user (names only)
 │           │       └── dock.ts · text.ts
-│           └── test/                              # logic · voice · handsfree · companion · precision · lessons (node --test)
+│           └── test/                              # logic · voice · handsfree · companion · precision · lessons · backdrop (node --test)
 ├── db/
 │   ├── migrate.py
 │   ├── migrations/              # 0001_init · 0002_rls · 0003_auth_schema · 0004_roles_grants · 0005_undo · 0006_least_privilege
@@ -893,7 +894,7 @@ watchfloor/
 │   └── load/                    # Locust profile
 ├── docs/
 │   ├── PRD.md · DESIGN.md · TECHNICAL.md · DEPLOYMENT.md · SECURITY.md
-│   ├── adr/                     # 31 architecture decision records
+│   ├── adr/                     # 35 architecture decision records
 │   ├── implementation-notes.md · friction-log.md · feature-requests.md
 │   ├── brand/                   # logo, lockups, social card, colour tokens
 │   └── perf/                    # EXPLAIN plans for the hot queries
@@ -907,7 +908,7 @@ container each ships carries only what it needs ([ADR-011](docs/adr/0011-agents-
 
 ## Decisions that shape it
 
-Thirty-four records in [`docs/adr`](docs/adr). The ones that matter most:
+Thirty-five records in [`docs/adr`](docs/adr). The ones that matter most:
 
 | Decision | Why | ADR |
 |---|---|---|
@@ -933,7 +934,7 @@ Thirty-four records in [`docs/adr`](docs/adr). The ones that matter most:
 | A night scope instead of a 3D orb and floor | Every fact must survive without colour, motion or sight | [032](docs/adr/0032-the-night-scope.md) |
 | The recogniser's runner-up guesses; Amazon Polly reads replies | Hear what was said, and say it in a voice worth hearing | [033](docs/adr/0033-hearing-alternatives-and-polly-voice.md) |
 | Kiro and Kiro Crew as read-only MCP clients, no AWS | Agents can triage and draft; only a person confirms a change | [034](docs/adr/0034-kiro-as-an-mcp-client.md) |
-| A 3D sounding chart behind the pages, capped and optional | Atmosphere that moves with the assistant, never a fact and never in the way of a word | [035](docs/adr/0035-the-chart-behind-the-pages.md) |
+| A 3D drowned-coast chart behind the pages (lit sea, datum grid, caustics, card lean), luminance-capped and optional | Atmosphere that moves with the assistant, never a fact and never in the way of a word | [035](docs/adr/0035-the-chart-behind-the-pages.md) |
 
 ---
 
@@ -1018,10 +1019,10 @@ Each takes `ENV=dev|demo` to act on a deployed environment. Details in [Deploy](
 |---|---:|---|
 | Root (`pytest`) | 456 | RIGS golden and property tests, tokens, envelopes, rate limits, Slack blocks, protocol conformance, security (tenant isolation, exactly-once races, database privileges, Host and Origin checks, log hygiene), docs sync; plus integration tests against a real Postgres (database and delivery faults, a restore drill, the offline router's answers checked against SQL) |
 | Harness API | 245 | OAuth flow, a full turn, pending changes, exact read-backs, a spoken no dropping a held change, numbers the user never said, every spoken number and date checked against the turn's tool results, greeting back in kind with no repeated offer, the unheard guard, dismissal, page-action validation, learned corrections (only from a correction), hardening, views, the offline router (specific answers, follow-ups, plain refusals, reading the screen) |
-| Harness web | 113 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic |
+| Harness web | 137 | The hands-free state machine on a fake clock, the spoken grammar, compound commands, whole-sentence precision, board places, the board watcher, learning from corrections, pure logic, and the backdrop's contrast proof (every area colour at or under its luminance cap, so text stays at 4.5:1 or better) |
 | Triage agents | 37 | The output gate, the specialists, the runner, the offline engine, against a fake MCP server |
 | Infrastructure | 38 | Config validation and CDK synth assertions (TLS-only Postgres, ES256 key, queue timeouts, alarms for the database, queue age and authentication, an agent role with no database access) |
-| **Total** | **889** | |
+| **Total** | **913** | |
 
 ```bash
 make test          # unit + protocol conformance

@@ -1,8 +1,9 @@
 // The chart below the page (ADR-035): the numbers and choices behind src/backdrop.ts, kept free of
-// the DOM and WebGL so `npm test` can check them. The scene is a sounding chart seen from a low
-// bridge: the sea floor in depth contours, drifting toward the viewer, lit by a pool of the lamp's
-// colour that wanders slowly (it never turns: the scope's sweep is the only thing that rotates).
-// It carries no data. Its brightness is capped so every text colour keeps its contrast over it.
+// the DOM and WebGL so `npm test` can check them. The scene is a drowned coast seen from a low
+// bridge: the sea floor in depth contours, drifting toward the viewer, under water tinted by depth
+// and lit by a pool of the lamp's colour that wanders slowly (it never turns: the scope's sweep is
+// the only thing that rotates). It carries no data. Its area colours are capped in luminance so
+// every text colour keeps its contrast over it.
 
 export type Page = "watch" | "pipeline" | "orders" | "activity" | "guide";
 export type Voice = "idle" | "listening" | "thinking" | "speaking" | "error";
@@ -42,15 +43,37 @@ export function contrast(a: Rgb, b: Rgb): number {
 export const over = (base: Rgb, top: Rgb, alpha: number): Rgb =>
   rgb(base[0] + (top[0] - base[0]) * alpha, base[1] + (top[1] - base[1]) * alpha, base[2] + (top[2] - base[2]) * alpha);
 
-/** How far the scene may cover the page, per theme; the shaders clamp to these.
- *  `wash` is light spread over an area (the lamp's pool, the haze on the horizon): text can sit on
- *  it, so a test proves the faintest text colour keeps 4.5:1 over the brightest page colour with it.
- *  `line` is the contours and motes: hairlines a pixel or so wide, like the CSS graticule they replace
- *  (which already crossed text at its own opacity), never a field behind a word. */
+/** How far the scene may move the page, per theme; the shaders clamp to these.
+ *  `tint` is the brightest (dark) or darkest (light) luminance any area of water may reach. Every
+ *  area of the scene (the sea, the lit slopes, the caustics, the shafts, the horizon) is the lamp's
+ *  hue at or below that luminance, laid at any alpha up to `wash`, so text can sit anywhere on it: a
+ *  test proves the faintest text colour keeps 4.5:1 over the tint itself, which no blend of it with
+ *  the page can exceed. `line` is the contours, the datum grid and the motes: hairlines a pixel or so
+ *  wide in the lamp's or the ink's own colour, like the CSS graticule they replace (which already
+ *  crossed text at its own opacity), never a field behind a word. `sea` is how hard the lamp's hue is
+ *  pushed before it is laid down as open water (the glints keep the lamp's own saturation, 1): more
+ *  makes the deeper, clearer blue. */
 export const CAPS = {
-  dark: { wash: 0.03, line: 0.22 },
-  light: { wash: 0.07, line: 0.16 },
+  dark: { wash: 1, line: 0.2, tint: 0.0165, sea: 3 },
+  light: { wash: 1, line: 0.15, tint: 0.726, sea: 1.4 },
 } as const;
+
+/** The lamp's hue as an area colour of luminance `target`: its channels raised to `saturation`
+ *  (so a pale lamp becomes a clear blue), then slid along the line toward `toward` (black in the
+ *  dark theme, white in the light) until the luminance is the target. */
+export function tintOf(hue: Rgb, target: number, toward: Rgb, saturation = 1): Rgb {
+  const sat = rgb(hue[0] ** saturation, hue[1] ** saturation, hue[2] ** saturation);
+  const at = (t: number): Rgb => over(toward, sat, t);
+  // Luminance runs one way along the line, so the target is found by halving.
+  const rising = luminance(sat) > luminance(toward);
+  let [lo, hi] = [0, 1];
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (luminance(at(mid)) < target === rising) lo = mid;
+    else hi = mid;
+  }
+  return at((lo + hi) / 2);
+}
 
 // --- the camera: one framing per page, eased between them ---
 

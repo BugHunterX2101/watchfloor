@@ -38,6 +38,7 @@ import {
   promptSafe,
   relativeTime,
   shipsWatch,
+  splitSummary,
   startersFor,
   toBriefing,
   type Briefing,
@@ -79,6 +80,7 @@ import {
 } from "./store";
 import { clearTrace, pendingTrace, showTrace } from "./trace";
 import { NEEDS_YES, type AppAction } from "./voice/actions";
+import { mountTilt } from "./tilt";
 import { removeByVoice, run as runAction, type Host, type Outcome } from "./voice/commander";
 import { mountDock } from "./voice/dock";
 import { boardOf, profileOf } from "./voice/context";
@@ -185,7 +187,9 @@ function updateGreeting(): void {
   greet.textContent = greeting(new Date().getHours(), settings().name);
 }
 
-/** "2 at risk · 1 on watch · 2 healthy, across 3 stages": the plot in words, beside it. */
+/** "The scope shows 5 of the 7 that need you: 2 at risk · 3 on watch, across 4 stages.": the plot in
+ *  words, beside it. The briefing's own summary counts every deal that needs you; the scope only
+ *  the ones the briefing listed, so the line says which. */
 function plotWords(b: Briefing): string {
   const by = boardTotals(b.deals).byBand;
   const parts = BAND_ORDER.filter((band) => by[band] > 0).map((band) =>
@@ -193,15 +197,20 @@ function plotWords(b: Briefing): string {
   );
   const stages = new Set(b.deals.map((d) => d.stage).filter(Boolean)).size;
   if (!parts.length) return "No deals in this briefing.";
-  return `${parts.join(" · ")}${stages > 1 ? `, across ${stages} stages` : ""}. Nearest the centre needs you most.`;
+  const needing = b.deals.filter((d) => d.band !== "healthy").length;
+  const unseen = b.attention_count - needing;
+  const lead = unseen > 0 && needing > 0 ? `The scope shows ${needing} of the ${b.attention_count} that need you: ` : "";
+  return `${lead}${parts.join(" · ")}${stages > 1 ? `, across ${stages} stages` : ""}. Nearest the centre needs you most.`;
 }
 
 /** What the screen says beside the plot: the live board when there is one, else how to get it. */
 function renderPlotState(): void {
   const live = engine !== null ? latest : null;
   if (live) {
-    idleTitle.textContent = live.briefing.summary || (live.briefing.all_clear ? "All clear." : "Your pipeline.");
-    idleSub.textContent = plotWords(live.briefing);
+    // The first sentence is the headline; the rest of the summary and the plot in words sit under it.
+    const { head, rest } = splitSummary(live.briefing.summary || (live.briefing.all_clear ? "All clear." : "Your pipeline."));
+    idleTitle.textContent = head;
+    idleSub.textContent = [rest, plotWords(live.briefing)].filter(Boolean).join(" ");
     plotStamp.textContent = `Bearing taken ${relativeTime(live.at, Date.now())}`;
     plotLoad.textContent = "Take a fresh bearing";
   } else {
@@ -631,8 +640,11 @@ function ask(text: string): void {
 
 // --- what was said or typed: a command the page runs at once, or a question for the assistant ---
 
+/** The dialog on top: a confirmation can be asked over Settings or a deal, and it is the one being answered. */
+const topDialog = (): HTMLDialogElement | null => [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) ?? null;
+
 function dialogKind(): "none" | "settings" | "deal" | "confirm" {
-  const open = document.querySelector<HTMLDialogElement>("dialog[open]");
+  const open = topDialog();
   if (!open) return "none";
   if (open.classList.contains("small")) return "confirm";
   return open.querySelector("#settings-title") ? "settings" : "deal";
@@ -1150,6 +1162,7 @@ function startBackdrop(): void {
 
 if ("requestIdleCallback" in window) requestIdleCallback(startBackdrop, { timeout: 1500 });
 else setTimeout(startBackdrop, 300);
+mountTilt();
 
 // --- the plot's two moving parts, each with its own switch (Calm and reduced motion stop both) ---
 
@@ -1302,7 +1315,7 @@ const host: Host = {
     navigate(next);
   },
   dialog: dialogKind,
-  closeDialog: () => document.querySelector<HTMLDialogElement>("dialog[open]")?.close(),
+  closeDialog: () => topDialog()?.close(),
   openSettings: () => settingsDialog.open(),
   settings,
   update,

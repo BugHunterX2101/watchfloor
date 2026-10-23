@@ -18,11 +18,13 @@ import {
   gridFor,
   horizonY,
   isSoftwareRenderer,
+  luminance,
   over,
   parseColor,
   poolAt,
   project,
   swellAt,
+  tintOf,
   viewProjection,
 } from "../src/backdrop-logic.ts";
 
@@ -50,19 +52,66 @@ const lightTokens = tokens(css.slice(css.indexOf(':root[data-theme="light"]'), c
 
 test("the faintest text keeps 4.5:1 over the brightest the chart can make the page", () => {
   // The brightest page colour in dark: --bg-2 under the CSS lamp glow (7% of --signal, see .atmosphere).
-  const dark = { base: over(darkTokens["bg-2"], darkTokens.signal, 0.07), t: darkTokens, cap: CAPS.dark };
+  const dark = { base: over(darkTokens["bg-2"], darkTokens.signal, 0.07), t: darkTokens, cap: CAPS.dark, toward: [0, 0, 0] };
   // In light the page only darkens: --bg is the darker of its two paper colours.
-  const light = { base: lightTokens.bg, t: lightTokens, cap: CAPS.light };
-  for (const [name, { base, t, cap }] of Object.entries({ dark, light })) {
-    // The wash is the lamp's colour in its pool and the ink's on lit slopes: either may reach the cap.
-    for (const wash of [t.signal, t.text]) {
-      for (const ink of ["faint", "muted", "text"]) {
-        const washed = over(base, wash, cap.wash);
-        assert.ok(contrast(t[ink], washed) >= 4.5, `${name} --${ink}: ${contrast(t[ink], washed).toFixed(2)}`);
+  const light = { base: lightTokens.bg, t: lightTokens, cap: CAPS.light, toward: [1, 1, 1] };
+  for (const [name, { base, t, cap, toward }] of Object.entries({ dark, light })) {
+    // Every area is the lamp's hue at the cap's luminance, the sea pushed to a clear blue and the
+    // glints at the lamp's own saturation. A blend of two colours is never brighter than the brighter
+    // (nor darker than the darker) in luminance, so proving the tints proves every pixel of wash.
+    for (const saturation of [cap.sea, 1]) {
+      const tint = tintOf(t.signal, cap.tint, toward, saturation);
+      close(luminance(tint), cap.tint, 2e-3 * cap.tint + 1e-4);
+      const washed = over(base, tint, cap.wash);
+      const texts = { faint: t.faint, muted: t.muted, text: t.text, crit: t.crit, warn: t.warn, ok: t.ok };
+      for (const [ink, colour] of Object.entries(texts)) {
+        if (!colour) continue;
+        assert.ok(contrast(colour, washed) >= 4.5, `${name} --${ink} over the ${saturation}x tint: ${contrast(colour, washed).toFixed(2)}`);
+        // And over the page between the tint and the plain background, the worst case for the one
+        // that lightens or darkens against it.
+        const half = over(base, tint, 0.5);
+        assert.ok(contrast(colour, half) >= 4.5, `${name} --${ink} at half: ${contrast(colour, half).toFixed(2)}`);
       }
     }
     // The hairlines stay well short of the text colour itself.
     assert.ok(cap.line <= 0.25, name);
+  }
+});
+
+test("the water is the lamp's own hue, and is visibly not the plain page", () => {
+  for (const [scheme, tokens, toward] of [["dark", darkTokens, [0, 0, 0]], ["light", lightTokens, [1, 1, 1]]]) {
+    const sea = tintOf(tokens.signal, CAPS[scheme].tint, toward, CAPS[scheme].sea);
+    const hue = (c) => Math.atan2(Math.sqrt(3) * (c[1] - c[2]), 2 * c[0] - c[1] - c[2]);
+    assert.ok(Math.abs(hue(sea) - hue(tokens.signal)) < 0.45, `${scheme}: the sea keeps the lamp's blue`);
+    // The light theme has little room: its faintest text sets how far the paper may darken.
+    const step = scheme === "dark" ? 1.2 : 1.12;
+    assert.ok(contrast(sea, tokens.bg) >= step, `${scheme}: the sea is a visible step from the page (${contrast(sea, tokens.bg).toFixed(2)})`);
+  }
+});
+
+test("the stylesheet's --sea is the proven tint, so a card highlight never outshines the page", () => {
+  for (const [scheme, t, toward] of [["dark", darkTokens, [0, 0, 0]], ["light", lightTokens, [1, 1, 1]]]) {
+    assert.ok(t.sea, `${scheme}: --sea is defined`);
+    const sea = tintOf(t.signal, CAPS[scheme].tint, toward, CAPS[scheme].sea);
+    for (let i = 0; i < 3; i++) close(t.sea[i], sea[i], 1.5 / 255);
+    // A highlight is the sea laid over the card's own surface: never brighter than the brighter of the two
+    // (nor, in light, darker than the darker), so what proves the page proves the card.
+    for (const ink of ["faint", "muted", "text"]) {
+      for (const alpha of [0.5, 1]) {
+        const lit = over(t.surface, t.sea, alpha);
+        assert.ok(contrast(t[ink], lit) >= 4.5, `${scheme} --${ink} on a lit card at ${alpha}: ${contrast(t[ink], lit).toFixed(2)}`);
+      }
+    }
+  }
+});
+
+test("tintOf finds the luminance it is asked for, from either side", () => {
+  // The lamp's own luminance lies between the two ends, so each end reaches its own side of it.
+  for (const [toward, targets] of [[[0, 0, 0], [0.004, 0.0165, 0.2]], [[1, 1, 1], [0.5, 0.735, 0.9]]]) {
+    for (const target of targets) {
+      const tint = tintOf([0.61, 0.79, 1], target, toward, 1.8);
+      close(luminance(tint), target, 1e-4 + target * 1e-3);
+    }
   }
 });
 

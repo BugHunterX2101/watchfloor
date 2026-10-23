@@ -4,6 +4,7 @@
 
 import type { Call } from "./api";
 import { ICONS } from "./icons";
+import { fmtMs } from "./logic";
 
 const MAX_TURNS = 60;
 
@@ -82,7 +83,7 @@ export function pendingTrace(list: HTMLOListElement, source = "Turn"): { remove(
 
   const t0 = performance.now();
   const timer = window.setInterval(() => {
-    clock.textContent = `${Math.round(performance.now() - t0)} ms`;
+    clock.textContent = fmtMs(performance.now() - t0);
   }, 50);
   return {
     note(text) {
@@ -103,7 +104,7 @@ export function showTrace(list: HTMLOListElement, calls: Call[], totalMs: number
   const head = el("div", "turn-head");
   const title = el("span");
   title.append(el("b", undefined, source), ` · ${calls.length} tool call${calls.length === 1 ? "" : "s"}`);
-  head.append(title, el("span", "turn-clock", `${Math.round(totalMs)} ms end to end`));
+  head.append(title, el("span", "turn-clock", `${fmtMs(totalMs)} end to end`));
   turn.append(head);
 
   const slowest = Math.max(1, ...calls.map((c) => c.ms));
@@ -119,7 +120,7 @@ export function showTrace(list: HTMLOListElement, calls: Call[], totalMs: number
     fill.style.width = `${Math.max(2, (c.ms / slowest) * 100)}%`;
     bar.append(fill);
     if (WRITES.has(c.tool)) span.classList.add("write");
-    span.append(glyph, name(c.tool), el("span", "span-ms", `${c.ms} ms${c.ok ? "" : " · error"}`), bar);
+    span.append(glyph, name(c.tool), el("span", "span-ms", `${fmtMs(c.ms)}${c.ok ? "" : " · error"}`), bar);
 
     // Confirmation tokens are single-use and short-lived, but still not something to put on screen.
     const shown: Record<string, unknown> = { ...c.arguments };

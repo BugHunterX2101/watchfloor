@@ -1,5 +1,5 @@
 /* The chart room for the sign-in, consent, error and legal pages: the harness's tokens (bone on ink,
-   one cold lamp colour) and a still sounding chart drawn with gradients alone. These pages are
+   one cold lamp colour) and a still chart of a drowned coast drawn with gradients alone. These pages are
    served with default-src 'none' and inline styles only, so there are no fonts, images or scripts:
    the faces fall back to what the device has, and every line here is a CSS gradient. Included
    inside each page's <style> (ADR-035 has the 3D chart these echo). */
@@ -17,6 +17,7 @@
   --muted: #a39c8c;
   --signal: #9cc9ff;
   --signal-soft: rgb(156 201 255 / 0.1);
+  --sea: #102245; /* the harness's sea: the lamp's hue at the brightest the page may get (backdrop-logic.ts, CAPS) */
   --primary: #ece6d8;
   --primary-ink: #0b0d10;
   --crit: #ff7a6b;
@@ -35,6 +36,7 @@
     --muted: #575247;
     --signal: #1f4bb8;
     --signal-soft: rgb(31 75 184 / 0.08);
+    --sea: #d8ddf0;
     --primary: #15181c;
     --primary-ink: #f7f4ee;
     --crit: #b42318;
@@ -54,8 +56,11 @@ body {
   isolation: isolate; /* and the chart (z-index -1) paints over the body's own background */
   font: 16px/1.55 var(--font-ui);
   color: var(--text);
-  /* The lamp, low over the chart table. */
-  background: radial-gradient(70% 50% at 50% -8%, var(--signal-soft), transparent 70%), var(--bg);
+  /* The lamp, low over the chart table, and the sea rising at the foot of the page. */
+  background:
+    radial-gradient(70% 50% at 50% -8%, var(--signal-soft), transparent 70%),
+    radial-gradient(120% 60% at 50% 112%, var(--sea), transparent 74%),
+    var(--bg);
   -webkit-font-smoothing: antialiased;
 }
 /* The chart: soundings round two banks off the edges of the page and a faint graticule, all kept
