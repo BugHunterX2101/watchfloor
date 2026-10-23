@@ -68,7 +68,7 @@ function sayList(deals: readonly BriefingDeal[], name: string): [string, string[
       "Work the board",
       ["Show only at-risk deals", "Sort by amount", "Show the top three", "Show enterprise deals", "Clear filters", first ? `Open ${first}` : "Open, then a deal's name", "Open the second one", "Pin the first deal"],
     ],
-    ["Look and sound", ["Dark mode", "Speak slower", "Change the voice", "Mute", "Reduce motion", "Hide the sweep", `Call me ${name || "Sam"}`]],
+    ["Look and sound", ["Dark mode", "Speak slower", "Change the voice", "Mute", "Reduce motion", "Hide the sweep", "Hide the background", `Call me ${name || "Sam"}`]],
     ["Run the session", ["What can I say here?", "Stop", "Repeat that", "Read this page", "Remove the first rule", "Clear the conversation", "Sign me out"]],
     [
       "Ask and act",
@@ -279,7 +279,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       { class: "plain" },
       h("li", null, "Everything works from the keyboard, and the page tells a screen reader where you've landed."),
       h("li", null, "Risk is never colour alone: each band is a word, a colour and a shape."),
-      h("li", null, "Motion follows your system setting, and “Calm” in settings holds the sweep and the lamp still."),
+      h("li", null, "Motion follows your system setting, and “Calm” in settings holds the sweep, the lamp and the chart behind the pages still. The chart is decoration: it shows nothing about your deals."),
       h("li", null, "The Echo Show previews on Watch show the view at 960, 1280 and 1920 pixels wide."),
     ),
   );

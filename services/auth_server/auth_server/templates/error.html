@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Can't sign in · Watchfloor</title>
   <style>
-    :root { color-scheme: light dark; --fg: #1b1f24; --bg: #f6f7f9; --card: #fff; }
-    @media (prefers-color-scheme: dark) { :root { --fg: #e8ebef; --bg: #0f1216; --card: #171b21; } }
-    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-    main { max-width: 420px; margin: 10vh auto; padding: 28px; background: var(--card); border-radius: 12px; }
-    h1 { font-size: 1.35rem; margin: 0 0 12px; }
+{% include "_room.css" %}
+    :root { --page: 420px; }
+    h1 { margin-bottom: 12px; }
   </style>
 </head>
 <body>
+<p class="brand"><i aria-hidden="true"></i>Watchfloor</p>
 <main>
   <h1>We couldn't complete sign-in</h1>
   <p role="alert">{{ message }}</p>
+  <p class="note">Start again from the app you were connecting.</p>
 </main>
 </body>
 </html>

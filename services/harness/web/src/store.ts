@@ -18,6 +18,7 @@ export interface Settings {
   motion: Motion;
   orb3d: boolean; // the voice lamp's animation (the key predates the plot; kept so saved choices carry over)
   scene: boolean; // the plot's turning sweep
+  backdrop: boolean; // the 3D chart behind the pages (backdrop.ts)
   readAloud: boolean;
   wakeWord: boolean; // hands-free acts only on requests that start with "Watchfloor" (or follow a reply)
   style: ReplyStyle; // how long the assistant's replies are (told to the model each turn)
@@ -33,6 +34,7 @@ export const DEFAULTS: Settings = {
   motion: "auto",
   orb3d: true,
   scene: true,
+  backdrop: true,
   readAloud: true,
   wakeWord: true,
   style: "normal",
@@ -91,6 +93,7 @@ export function sanitize(raw: unknown): Settings {
     motion: oneOf(o.motion, ["auto", "calm"], DEFAULTS.motion),
     orb3d: typeof o.orb3d === "boolean" ? o.orb3d : DEFAULTS.orb3d,
     scene: typeof o.scene === "boolean" ? o.scene : DEFAULTS.scene,
+    backdrop: typeof o.backdrop === "boolean" ? o.backdrop : DEFAULTS.backdrop,
     readAloud: typeof o.readAloud === "boolean" ? o.readAloud : DEFAULTS.readAloud,
     wakeWord: typeof o.wakeWord === "boolean" ? o.wakeWord : DEFAULTS.wakeWord,
     style: oneOf(o.style, ["brief", "normal", "detailed"], DEFAULTS.style),

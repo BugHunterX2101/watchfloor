@@ -464,12 +464,15 @@ const RULES: Rule[] = [
         ? act({ type: "set_motion", motion: "auto" })
         : null,
   (u) => {
-    // The lamp (once "the 3D orb") and the sweep (once "the 3D floor"): the old words still work.
-    const m = /^(?:turn|switch)\s+(on|off)(?:\s+the)?(?:\s+3d)?\s+(orb|lamp|floor|background|scene|sweep|radar|plot)(?:\s+(?:animation|sweep))?$|^(show|hide|enable|disable|stop|start)(?:\s+the)?(?:\s+3d)?\s+(orb|lamp|floor|background|scene|sweep|radar|plot)(?:\s+(?:animation|sweep))?$/.exec(u);
+    // The lamp (once "the 3D orb"), the sweep, and the chart behind the pages (the background, the
+    // 3D scene, the sea floor: ADR-035). "Orb" still means the lamp.
+    const m = /^(?:turn|switch)\s+(on|off)(?:\s+the)?(?:\s+3d)?\s+(orb|lamp|floor|background|backdrop|scene|sweep|radar|plot)(?:\s+(?:animation|sweep))?$|^(show|hide|enable|disable|stop|start)(?:\s+the)?(?:\s+3d)?\s+(orb|lamp|floor|background|backdrop|scene|sweep|radar|plot)(?:\s+(?:animation|sweep))?$/.exec(u);
     if (!m) return null;
     const on = m[1] !== undefined ? m[1] === "on" : m[3] === "show" || m[3] === "enable" || m[3] === "start";
     const target = m[2] ?? m[4];
-    return act(target === "orb" || target === "lamp" ? { type: "set_orb", on } : { type: "set_floor", on });
+    if (target === "orb" || target === "lamp") return act({ type: "set_orb", on });
+    if (target === "sweep" || target === "radar" || target === "plot") return act({ type: "set_floor", on });
+    return act({ type: "set_backdrop", on });
   },
   (u) => {
     const size = /^(?:(?:show|use|set|switch\s+to|preview|try|go\s+to)\s+)?(?:the\s+)?echo\s+show\s+(5|five|8|eight|15|fifteen)(?:\s+(?:preview|size))?$/.exec(u);

@@ -53,7 +53,7 @@ It is three things that fit together:
 |---|---|---|
 | **1. A remote MCP server** | Protocol **2025-11-25**, stateless Streamable HTTP, OAuth 2.1. Fourteen tools for an assistant to call (briefing, explain, look up, deep review, propose / confirm / undo, standing orders, log an update) and six read-only tools for the triage agents (`explain_deal_risk` is in both sets: 19 distinct tools). | [`services/mcp_server`](services/mcp_server) |
 | **2. A triage backend** | Deterministic, explainable risk scoring (RIGS) kept fresh in Postgres, a transactional outbox, standing orders that run in the background, and a team of Strands agents (a Lead and four specialists) for a deep review, behind a deterministic output gate. | [`packages/core`](packages/core) · [`services/workers`](services/workers) · [`services/agents`](services/agents) |
-| **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 30 page actions, and a companion layer that lets you change your mind mid-sentence and learns the names it mishears. | [`services/harness`](services/harness) |
+| **3. A simulated Alexa+ and voice companion** | A web harness that signs in with real OAuth and calls the same server over the real protocol. Hands-free, wake word, a conversation that stays open, spoken confirmations, 31 page actions, and a companion layer that lets you change your mind mid-sentence and learns the names it mishears. | [`services/harness`](services/harness) |
 
 **Path B.** The Alexa+ add-on toolkit was closed to our AWS account
 ([friction log entry 4](docs/friction-log.md)), so this entry is a *simulated* Alexa+ experience, as
@@ -847,7 +847,7 @@ watchfloor/
 │       │   ├── harness_api/
 │       │   │   ├── app.py                     # routes: /oauth/* · /converse · /api/tool · /api/dismiss · /api/view · /api/session · /api/logout · /healthz
 │       │   │   ├── agent.py                   # a turn: pending change · model chain · tools · one second look at an unsupported number
-│       │   │   ├── control.py                 # control_app: the 30 page actions, validated · exact read-backs · grounding of numbers and dates
+│       │   │   ├── control.py                 # control_app: the 31 page actions, validated · exact read-backs · grounding of numbers and dates
 │       │   │   ├── offline.py                 # the keyword router when no model can answer
 │       │   │   ├── mcp_http.py · session.py · refresh.py · pkce.py
 │       │   │   ├── limits.py · headers.py · config.py
@@ -933,6 +933,7 @@ Thirty-four records in [`docs/adr`](docs/adr). The ones that matter most:
 | A night scope instead of a 3D orb and floor | Every fact must survive without colour, motion or sight | [032](docs/adr/0032-the-night-scope.md) |
 | The recogniser's runner-up guesses; Amazon Polly reads replies | Hear what was said, and say it in a voice worth hearing | [033](docs/adr/0033-hearing-alternatives-and-polly-voice.md) |
 | Kiro and Kiro Crew as read-only MCP clients, no AWS | Agents can triage and draft; only a person confirms a change | [034](docs/adr/0034-kiro-as-an-mcp-client.md) |
+| A 3D sounding chart behind the pages, capped and optional | Atmosphere that moves with the assistant, never a fact and never in the way of a word | [035](docs/adr/0035-the-chart-behind-the-pages.md) |
 
 ---
 

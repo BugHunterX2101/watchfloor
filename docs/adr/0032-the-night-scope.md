@@ -1,6 +1,7 @@
 # ADR-032: The night scope replaces the 3D orb and floor
 
-- **Status:** Accepted (2026-10-22)
+- **Status:** Accepted (2026-10-22); §4 superseded in part by
+  [ADR-035](0035-the-chart-behind-the-pages.md) (a WebGL2 chart behind the pages; the scope stays SVG)
 - **Supersedes in part:** ADR-026 (the 3D orb and the watch floor; its pages, personalisation and
   Orders remain)
 - **Refines:** ADR-017 (visual design)
