@@ -883,8 +883,9 @@ watchfloor/
 │               ├── store.ts                # what the browser remembers (localStorage, guarded)
 │               ├── logic.ts                # pure helpers and API-result parsers (unit-tested)
 │               ├── plot.ts                 # the pipeline as contacts on a scope: health is range, stage is bearing (ADR-032)
-│               ├── backdrop.ts             # the 3D sounding chart behind every page, WebGL2, lazy-loaded (ADR-035)
+│               ├── backdrop.ts             # the 3D drowned-coast chart behind every page, WebGL2, lazy-loaded (ADR-035)
 │               ├── backdrop-logic.ts       # its camera, moods, contrast caps, pacing and governor (unit-tested)
+│               ├── tilt.ts                 # the deal cards' lean toward a fine pointer (ADR-035 §4)
 │               ├── dom.ts                  # h() builder (text only), toasts, confirm dialog
 │               ├── api.ts                  # same-origin calls to harness_api
 │               ├── speech.ts               # Web Speech API in/out (voice and speed from settings); the open microphone

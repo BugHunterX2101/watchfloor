@@ -178,7 +178,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       null,
       "Press ",
       h("kbd", { class: "kbd solid" }, "h"),
-      " or choose the headset in the top bar, then say “Watchfloor” and what you want. Everything on every page can be done this way except typing a password to sign in.",
+      " or choose the sound-bars button in the top bar, then say “Watchfloor” and what you want. Everything on every page can be done this way except typing a password to sign in.",
     ),
     h(
       "ul",
@@ -243,7 +243,7 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
   forget.addEventListener("click", async () => {
     const yes = await confirmDialog({
       title: "Forget everything in this browser?",
-      body: "Your name, voice and motion choices, recent questions and pinned deals are removed. Your Watchfloor account and data are not touched.",
+      body: "Your name, voice and motion choices, recent questions, pinned deals and corrections are removed. Your Watchfloor account and data are not touched.",
       confirm: "Forget",
       danger: true,
     });
@@ -263,8 +263,10 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       "ul",
       { class: "plain" },
       h("li", null, "the name you give it, for the greeting"),
-      h("li", null, "your theme, voice, speed and motion choices"),
+      h("li", null, "your theme, voice, speed, motion and background choices"),
       h("li", null, "your last few questions and up to five pinned deals"),
+      h("li", null, "the corrections you teach it by voice (Settings lists each one)"),
+      h("li", null, "the shape of your last board, with no names or amounts, so the scope has something to show when you come back (it is cleared when you sign out)"),
     ),
     h("p", { class: "muted" }, "None of it is sent anywhere. Your sign-in lives in a separate cookie that scripts can't read."),
     h("div", { class: "sheet-actions left" }, settingsButton, forget),
@@ -279,12 +281,38 @@ export function mountGuide(root: HTMLElement, host: GuideHost): { refresh(): voi
       { class: "plain" },
       h("li", null, "Everything works from the keyboard, and the page tells a screen reader where you've landed."),
       h("li", null, "Risk is never colour alone: each band is a word, a colour and a shape."),
-      h("li", null, "Motion follows your system setting, and “Calm” in settings holds the sweep, the lamp and the chart behind the pages still. The chart is decoration: it shows nothing about your deals."),
+      h("li", null, "Motion follows your system setting, and “Calm” in settings holds the sweep, the lamp, the chart behind the pages and the lean of the deal cards still. The chart is decoration: it shows nothing about your deals, and its colours are kept dim enough that text keeps its contrast anywhere on it."),
       h("li", null, "The Echo Show previews on Watch show the view at 960, 1280 and 1920 pixels wide."),
     ),
   );
 
-  root.append(head, scenarioPanel, voice, how, keys, data, access);
+  // A long page gets a way round it. Buttons, not links: a "#section" address would be taken by the
+  // router as a page that does not exist.
+  const parts: [string, HTMLElement][] = [
+    ["Try it", scenarioPanel],
+    ["By voice", voice],
+    ["How it works", how],
+    ["Keyboard", keys],
+    ["What it keeps", data],
+    ["Accessibility", access],
+  ];
+  const jump = h(
+    "nav",
+    { class: "jump chip-row", "aria-label": "On this page" },
+    ...parts.map(([text, panel]) => {
+      const b = h("button", { type: "button", class: "chip" }, text);
+      b.addEventListener("click", () => {
+        const calm = matchMedia("(prefers-reduced-motion: reduce)").matches || settings().motion === "calm";
+        panel.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
+        const title = panel.querySelector<HTMLElement>(".panel-title");
+        title?.setAttribute("tabindex", "-1");
+        title?.focus({ preventScroll: true });
+      });
+      return b;
+    }),
+  );
+
+  root.append(head, jump, scenarioPanel, voice, how, keys, data, access);
   renderScenarios();
   renderSay();
   return {

@@ -25,6 +25,9 @@
   --signal-3: #ece6d8;
   --signal-ink: #0b0d10;
   --signal-soft: rgb(156 201 255 / 0.12);
+  /* The sea behind the pages (src/backdrop-logic.ts, CAPS): the lamp's hue at the brightest the page
+     may get. Surfaces that borrow it for a highlight cannot take text below its contrast. */
+  --sea: #102245;
   /* Primary actions are bone on ink: the brightest thing on the page, and never mistaken for risk. */
   --primary: #ece6d8;
   --primary-ink: #0b0d10;
@@ -70,6 +73,7 @@
     --signal-3: #15181c;
     --signal-ink: #ffffff;
     --signal-soft: rgb(31 75 184 / 0.09);
+    --sea: #d8ddf0;
     --primary: #15181c;
     --primary-ink: #f7f4ee;
     --crit: #b42318;
@@ -101,6 +105,7 @@
   --signal-3: #15181c;
   --signal-ink: #ffffff;
   --signal-soft: rgb(31 75 184 / 0.09);
+  --sea: #d8ddf0;
   --primary: #15181c;
   --primary-ink: #f7f4ee;
   --crit: #b42318;
@@ -331,7 +336,7 @@ body:is([data-backdrop="on"], [data-backdrop="still"]) .atmosphere::before {
 }
 
 .stage-title {
-  margin: 2px 0 0;
+  margin: 6px 0 0;
   font: 500 clamp(24px, 2.4vw, 32px) / 1.1 var(--font-voice);
   letter-spacing: -0.01em;
   text-wrap: balance;
@@ -1621,12 +1626,6 @@ body[data-voice="listening"] .composer {
   }
 }
 
-@keyframes turn {
-  to {
-    rotate: 1turn;
-  }
-}
-
 @keyframes scan {
   from {
     transform: translateX(-100%);
@@ -2280,11 +2279,25 @@ main:focus {
   font-size: 13px;
 }
 
+/* The pages are narrower than Watch; the footer lines up with what is above it. */
+body:not([data-page="watch"]) .foot {
+  max-width: 1180px;
+}
+
 .foot p {
   margin: 0;
 }
 
+/* The keyboard hint means nothing on a phone or a tablet. */
+@media (pointer: coarse) {
+  .foot-keys {
+    display: none;
+  }
+}
+
+/* A link inside a sentence is exempt from the 24px target, but a taller hit area costs nothing. */
 .trace-note a {
+  padding: 6px 0;
   color: var(--signal);
 }
 
@@ -2326,7 +2339,7 @@ main:focus {
 }
 
 .page-title {
-  margin: 2px 0 0;
+  margin: 6px 0 0;
   font: 500 clamp(28px, 3vw, 40px) / 1.1 var(--font-voice);
   letter-spacing: -0.015em;
   text-wrap: balance;
@@ -2844,6 +2857,47 @@ main:focus {
   background: color-mix(in srgb, var(--surface) 70%, var(--raised));
 }
 
+/* With a fine pointer a card leans a few degrees toward it (src/tilt.ts) and the lamp's light rides
+   the spot: the sea's own colour (--sea, the brightest the page may get), laid behind the text so
+   no word sits under a lighter wash than the contrast test proves. Touch, reduced motion and Calm
+   keep the plate flat. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="calm"]) .deal-grid {
+    perspective: 1100px;
+  }
+
+  :root:not([data-motion="calm"]) .deal-card {
+    transition:
+      transform 180ms var(--ease-out),
+      box-shadow var(--t-med) var(--ease-out),
+      border-color var(--t-fast) var(--ease-out),
+      background-color var(--t-fast) var(--ease-out);
+  }
+
+  :root:not([data-motion="calm"]) .deal-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(280px circle at var(--lamp-x, 50%) var(--lamp-y, 0%), var(--sea), transparent 72%);
+    transition: opacity var(--t-med) var(--ease-out);
+  }
+
+  :root:not([data-motion="calm"]) .deal-card.leaning {
+    transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+    box-shadow:
+      var(--shadow),
+      0 22px 36px -26px color-mix(in srgb, var(--signal) 45%, transparent);
+  }
+
+  :root:not([data-motion="calm"]) .deal-card.leaning::before {
+    opacity: 1;
+  }
+}
+
 .deal-card:nth-child(2) {
   animation-delay: 60ms;
 }
@@ -3107,6 +3161,12 @@ dialog.sheet::backdrop {
   margin-bottom: 14px;
 }
 
+/* Four facts in a row would wrap "Next step" into a column of words; two by two reads. */
+.detail-top .deal-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
 .detail-sub {
   margin: 8px 0 10px;
   color: var(--muted);
@@ -3197,7 +3257,6 @@ dialog.sheet::backdrop {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 150px;
 }
 
 .spark-guide {
@@ -3236,9 +3295,31 @@ dialog.sheet::backdrop {
 }
 
 @media (max-width: 520px) {
+  /* The ring beside the band and the deal, the facts under both: no ring alone on a row. */
   .detail-top {
-    grid-template-columns: 1fr;
-    justify-items: start;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px 16px;
+  }
+
+  .detail-id {
+    display: contents;
+  }
+
+  .detail-top .ring-box {
+    grid-row: span 2;
+  }
+
+  .detail-top .ring-box.big .ring {
+    width: 88px;
+    height: 88px;
+  }
+
+  .detail-sub {
+    margin: 0;
+  }
+
+  .detail-top .deal-meta {
+    grid-column: 1 / -1;
   }
 
   .factor {
@@ -3528,14 +3609,52 @@ dialog.sheet::backdrop {
 
 /* ------------------------------------------------------------------ settings */
 
+/* One column that may shrink below its content: a long voice name in a select must not widen the
+   whole sheet past a phone's edge (a grid track is as wide as its widest item unless told otherwise). */
+.settings,
+.set-group,
+.set-row,
+.sheet-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .settings {
   display: grid;
+  gap: 4px;
+}
+
+.set-group {
+  display: grid;
   gap: 18px;
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+
+.set-group:first-child {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.set-group:last-child {
+  padding-bottom: 0;
+}
+
+.set-group-title {
+  margin: 0;
+  font: semi-condensed 600 11px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .set-row {
   display: grid;
   gap: 8px;
+}
+
+.set-row .select,
+.set-row .text {
+  max-width: 100%;
 }
 
 .set-label {
@@ -3815,11 +3934,99 @@ body[data-hf="on"] .toasts {
   animation: none !important;
 }
 
+/* ================================================================== a second pass: phones and the Guide */
+
+/* The Guide's way round: a row of chips, and each panel stops under the sticky bar when jumped to. */
+.jump {
+  margin: 0 0 16px;
+}
+
+.panel,
+.deal-card {
+  scroll-margin-top: calc(var(--chrome-h, 60px) + 12px);
+}
+
+@media (max-width: 720px) {
+  /* A row of choices that is wider than the screen scrolls inside itself; the edge that has more to
+     show is shaded, so nothing looks cut off by accident. */
+  .toolbar .seg {
+    background:
+      linear-gradient(to right, var(--surface), var(--surface)) left center / 22px 100% no-repeat local,
+      linear-gradient(to left, var(--surface), var(--surface)) right center / 22px 100% no-repeat local,
+      linear-gradient(to right, color-mix(in srgb, var(--text) 22%, transparent), transparent) left center / 14px 100% no-repeat scroll,
+      linear-gradient(to left, color-mix(in srgb, var(--text) 22%, transparent), transparent) right center / 14px 100% no-repeat scroll,
+      var(--surface);
+  }
+
+  /* Five tiles in two columns leave one alone: it takes the row. */
+  .tiles > .tile:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  /* The by-tool table becomes a list of cards: the tool, then each figure with its name. */
+  .grid-table,
+  .grid-table tbody,
+  .grid-table tr,
+  .grid-table th,
+  .grid-table td {
+    display: block;
+  }
+
+  .grid-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .grid-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px 10px;
+    padding: 12px 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .grid-table tbody tr:first-child {
+    border-top: 0;
+  }
+
+  .grid-table tbody th,
+  .grid-table tbody td {
+    padding: 0;
+    border: 0;
+  }
+
+  .grid-table tbody th {
+    grid-column: 1 / -1;
+  }
+
+  .grid-table tbody td.num {
+    text-align: left;
+  }
+
+  .grid-table tbody td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--faint);
+    font: semi-condensed 600 10.5px/1 var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .share {
+    margin-left: 8px;
+    width: 44px;
+  }
+}
+
 /* The commands on the Guide page */
 
 .say-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 6px 28px;
   margin: 14px 0 6px;
 }

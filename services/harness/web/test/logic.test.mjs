@@ -8,6 +8,7 @@ import {
   compactUsd,
   dealTitle,
   dragLevel,
+  fmtMs,
   greeting,
   hash32,
   healthOf,
@@ -25,6 +26,8 @@ import {
   plotRange,
   roundFigure,
   shipsWatch,
+  splitSummary,
+  spokenMs,
   startersFor,
   toBriefing,
   toExplain,
@@ -94,6 +97,34 @@ test("relativeTime steps through seconds, minutes, hours and days", () => {
   assert.equal(relativeTime(now - 2 * 3_600_000, now), "2 h ago");
   assert.equal(relativeTime(now - 24 * 3_600_000, now), "yesterday");
   assert.equal(relativeTime(now - 5 * 86_400_000, now), "5 days ago");
+});
+
+test("durations read the way a person says them", () => {
+  assert.equal(fmtMs(0), "0 ms");
+  assert.equal(fmtMs(344.4), "344 ms");
+  assert.equal(fmtMs(999.4), "999 ms");
+  assert.equal(fmtMs(999.6), "1 s", "never prints 1000 ms");
+  assert.equal(fmtMs(1000), "1 s");
+  assert.equal(fmtMs(1234), "1.2 s");
+  assert.equal(fmtMs(10_202), "10 s");
+  assert.equal(fmtMs(19_165), "19 s");
+  assert.equal(fmtMs(-5), "0 ms");
+  assert.equal(fmtMs(Number.NaN), "0 ms");
+  assert.equal(spokenMs(347), "347 milliseconds");
+  assert.equal(spokenMs(1000), "1 second");
+  assert.equal(spokenMs(10_202), "10.2 seconds");
+});
+
+test("a summary splits into its headline and what follows", () => {
+  const s = "2 deals are at risk and 5 more are on watch; 2 new since your last briefing. Top risk: Kestrel Biotech, $84K. No two-way contact for 16 days.";
+  assert.deepEqual(splitSummary(s), {
+    head: "2 deals are at risk and 5 more are on watch; 2 new since your last briefing.",
+    rest: "Top risk: Kestrel Biotech, $84K. No two-way contact for 16 days.",
+  });
+  assert.deepEqual(splitSummary("All clear."), { head: "All clear.", rest: "" });
+  assert.deepEqual(splitSummary("  No full stop  "), { head: "No full stop", rest: "" });
+  assert.deepEqual(splitSummary("Worth $1.2M. Call now."), { head: "Worth $1.2M.", rest: "Call now." }, "a decimal point is not the end of a sentence");
+  assert.deepEqual(splitSummary(""), { head: "", rest: "" });
 });
 
 test("recents keep the newest first, drop repeats and cap the list", () => {

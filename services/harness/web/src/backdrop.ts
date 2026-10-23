@@ -1,8 +1,11 @@
-// The chart below the page (ADR-035): an imaginary sea floor in depth contours, behind every page,
-// drawn with WebGL2 and no library. The floor drifts toward the viewer; nearer banks hide the
-// contours behind them; a pool of the lamp's colour wanders across it and lights the motes in the
-// water. It is decoration only: aria-hidden, no pointer events, no data, and its brightness is
-// capped (CAPS in backdrop-logic.ts) so text keeps its contrast over it.
+// The chart below the page (ADR-035): an imaginary drowned coast, behind every page, drawn with
+// WebGL2 and no library. The sea floor drifts toward the viewer in depth contours, shaded by the
+// light and by depth; nearer banks hide the ones behind them; a glowing line marks the waterline;
+// a graticule of chart crosses floats in the datum plane above the floor and slips over it at its
+// own pace; a pool of the lamp's colour wanders across the water and lights its caustics and the
+// motes; shafts of light slant down through it all. It is decoration only: aria-hidden, no pointer
+// events, no data, and every area of it is the lamp's hue no brighter (no darker, in the light
+// theme) than CAPS says in backdrop-logic.ts, so text keeps its contrast anywhere over it.
 //
 // It eases into the assistant's state (body[data-voice]) rather than beating with words, frames
 // each page differently, leans a little toward a fine pointer, holds one still frame under reduced
@@ -30,6 +33,7 @@ import {
   project,
   spread,
   swellAt,
+  tintOf,
   viewProjection,
   type Camera,
   type Mood,
@@ -115,6 +119,13 @@ void main() {
 
 // The contours come from the floor's height at each pixel, not the mesh's (which is straight between
 // vertices), so they stay smooth curves however close the camera is.
+//
+// The scene is a chart of a drowned coast under a datum: everything below the datum is sea, tinted
+// by depth (pale at the shore, deepening out), lit from the upper left so the banks have form, with
+// the lamp's caustics wandering over the shallows. A glowing line marks the datum itself, and a
+// graticule of chart crosses floats in the datum plane, between you and the sea floor, so it slips
+// over the banks at its own pace as the camera moves. Every area is the lamp's hue at a luminance
+// no brighter (or darker, in the light theme) than the cap's tint, so text keeps its contrast.
 const FLOOR_FS = `#version 300 es
 precision highp float;
 precision highp int;
@@ -122,13 +133,20 @@ in vec3 v_ground;
 in vec3 v_normal;
 uniform vec3 u_ink;
 uniform vec3 u_lamp;
+uniform vec3 u_deep;
+uniform vec3 u_glint;
 uniform vec3 u_ground;
 uniform vec2 u_cap;
 uniform float u_far;
+uniform float u_dark;
+uniform float u_camH;
+uniform float u_vivid;
 uniform vec3 u_pool;
 uniform float u_poolGain;
 ${FLOOR}
 out vec4 color;
+
+const float DATUM = 0.5; // the waterline, in contour units
 
 // A contour at every whole value of v, about "width" pixels wide and anti-aliased; it fades away
 // where the lines crowd together toward the horizon.
@@ -138,11 +156,29 @@ float contour(float v, float width) {
   return (1.0 - smoothstep(width * 0.5 - 0.5, width * 0.5 + 0.5, d)) * (1.0 - smoothstep(0.07, 0.2, w));
 }
 
+// Light on the sea floor: the thin bright network that sunlight makes through waves.
+float caustics(vec2 p, float t) {
+  vec2 q = mod(p * 6.28318, 6.28318) - 250.0;
+  vec2 i = q;
+  float c = 1.0;
+  for (int n = 0; n < 4; n++) {
+    float tt = t * (1.0 - 3.5 / float(n + 1));
+    i = q + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+    c += 1.0 / length(vec2(q.x / (sin(i.x + tt) / 0.005), q.y / (cos(i.y + tt) / 0.005)));
+  }
+  c = 1.17 - pow(c / 4.0, 1.4);
+  c = pow(abs(c), 8.0);
+  return isnan(c) ? 0.0 : clamp(c, 0.0, 1.0);
+}
+
 void main() {
-  float v = floorAt(v_ground.xz) * 12.0;
+  float h = floorAt(v_ground.xz);
+  float v = h * 12.0;
   float minor = contour(v, 0.9);
   float index = contour(v / 5.0, 1.25);
-  // Light from the upper left, behind the viewer: slopes facing it read lighter, so the banks have form.
+  float wd = fwidth(v);
+  float crowd = 1.0 - smoothstep(0.07, 0.2, wd);
+  // Light from the upper left, behind the viewer: slopes facing it return more light.
   float lit = clamp(dot(normalize(v_normal), normalize(vec3(-0.45, 0.75, -0.5))), 0.0, 1.0);
   vec2 q = (v_ground.xz - u_pool.xy) / u_pool.z;
   float pool = exp(-dot(q, q) * 1.4) * u_poolGain;
@@ -153,19 +189,54 @@ void main() {
   }
   float dist = v_ground.z;
   float fog = 1.0 - smoothstep(u_far * 0.42, u_far * 0.98, dist);
-  float lines = (minor * 0.62 + index) * (0.4 + 0.6 * lit);
+
+  // The sea: below the datum, deepest tint where the water is deep, a pale rim along the shore.
+  float under = DATUM - v;
+  float water = smoothstep(-0.5, 0.7, under);
+  float shallow = exp(-max(under, 0.0) * 0.16);
+  float rel = mix(1.0 - lit, lit, u_dark); // the light each slope returns, in either theme
+  float land = 0.06 + 0.42 * smoothstep(0.3, 0.95, rel);
+  float sea = 0.3 + 0.5 * shallow + 0.14 * rel;
+  float caust = water > 0.01 ? caustics((v_ground.xz + u_flow) * 0.17, u_time * 0.32) : 0.0;
+  float cl = caust * (0.12 + 0.88 * pool) * water * (0.3 + 0.7 * shallow);
+  float light = clamp(mix(land, sea, water) + pool * 0.3 + ring * 0.5 + cl * 0.6, 0.0, 1.0) * fog * u_vivid;
+  float glint = clamp(pool * 0.55 + cl * 1.1 + ring * 0.6, 0.0, 1.0);
+
+  // The shore: the contour at the datum itself, drawn heavier than the rest, in the lamp's colour.
+  float shore = (1.0 - smoothstep(1.0, 2.2, abs(under) / max(wd, 1e-5))) * crowd;
+
+  // The datum plane's graticule: where the line from the eye to this bit of sea floor crosses the
+  // plane, a cross at every cell and a fine rule every four. It exists only over the water.
+  float grat = 0.0;
+  if (under > 0.0 && u_camH > DATUM / 12.0 + 0.25) {
+    float t = (u_camH - DATUM / 12.0) / (u_camH - h);
+    vec2 u = (vec2(t * v_ground.x, t * v_ground.z) + u_flow * 0.55) * 0.5;
+    vec2 f = abs(fract(u - 0.5) - 0.5);
+    vec2 w = max(fwidth(u), vec2(1e-5));
+    vec2 ln = 1.0 - smoothstep(0.5, 1.5, f / w);
+    float tick = 0.16;
+    float cross = max(ln.x * (1.0 - smoothstep(tick * 0.6, tick, f.y)), ln.y * (1.0 - smoothstep(tick * 0.6, tick, f.x)));
+    vec2 fm = abs(fract(u * 0.25 - 0.5) - 0.5);
+    vec2 lm = 1.0 - smoothstep(0.5, 1.5, fm / (w * 0.25));
+    float legible = 1.0 - smoothstep(0.08, 0.3, max(w.x, w.y));
+    grat = (cross + 0.3 * max(lm.x, lm.y)) * legible * smoothstep(0.0, 0.8, under);
+  }
+
+  float lines = (minor * 0.55 + index) * (0.4 + 0.6 * lit);
   float aLine = clamp(lines * (0.62 + 0.7 * pool + ring) * fog, 0.0, 1.0) * u_cap.y;
-  // The wash: the lamp's pool and the swell in the lamp's colour, and the lit slopes in the ink's, all
-  // within the wash cap together.
-  float lampWash = clamp(pool * 0.75 + ring * 0.6, 0.0, 1.0);
-  float slope = smoothstep(0.55, 0.95, lit) * (1.0 - lampWash);
-  float aWash = clamp((lampWash + slope * 0.7) * fog, 0.0, 1.0) * u_cap.x;
-  vec3 washColor = mix(u_ink, u_lamp, lampWash / max(lampWash + slope * 0.7, 1e-4));
+  float aGrat = clamp(grat, 0.0, 1.0) * fog * u_cap.y * 0.9;
+  float aShore = shore * fog * u_cap.y;
   vec3 lineColor = mix(u_ink, u_lamp, clamp(pool * 0.8 + ring, 0.0, 1.0));
+
+  // Wash over the ground's fill, then the hairlines over both: the contours, the grid, the shore.
+  float aWash = light * u_cap.x;
+  vec3 washColor = mix(u_deep, u_glint, glint);
   float fill = 0.94 * (1.0 - smoothstep(u_far * 0.5, u_far, dist));
-  float rest = (1.0 - aLine) * (1.0 - aWash);
-  color = vec4(lineColor * aLine + washColor * aWash * (1.0 - aLine) + u_ground * fill * rest,
-               aLine + aWash * (1.0 - aLine) + fill * rest);
+  vec4 c = vec4(washColor * aWash + u_ground * fill * (1.0 - aWash), aWash + fill * (1.0 - aWash));
+  c = vec4(lineColor * aLine, aLine) + c * (1.0 - aLine);
+  c = vec4(u_lamp * aGrat, aGrat) + c * (1.0 - aGrat);
+  c = vec4(u_lamp * aShore, aShore) + c * (1.0 - aShore);
+  color = c;
 }`;
 
 // A haze along the horizon, brighter above the pool; the floor's own fill hides it below the line.
@@ -183,16 +254,38 @@ in vec2 v_clip;
 uniform float u_horizon;
 uniform float u_poolX;
 uniform float u_poolGain;
-uniform vec3 u_lamp;
+uniform float u_vivid;
+uniform vec3 u_glint;
 uniform vec2 u_cap;
 out vec4 color;
 void main() {
   float d = v_clip.y - u_horizon;
-  float haze = d > 0.0 ? exp(-d * 4.0) : exp(d * 12.0);
+  float haze = d > 0.0 ? exp(-d * 2.6) : exp(d * 12.0);
   float dx = v_clip.x - u_poolX;
   float glow = exp(-dx * dx * 1.1);
-  float a = clamp(haze * (0.45 + 0.4 * glow * u_poolGain), 0.0, 1.0) * u_cap.x;
-  color = vec4(u_lamp * a, a);
+  float a = clamp(haze * (0.5 + 0.5 * glow * u_poolGain), 0.0, 1.0) * u_vivid * u_cap.x;
+  color = vec4(u_glint * a, a);
+}`;
+
+// Shafts of light slanting down through the water, over everything, brightest at the top: slow
+// bands whose edges drift, so the surface above seems to move.
+const SHAFT_FS = `#version 300 es
+precision highp float;
+in vec2 v_clip;
+uniform float u_time;
+uniform float u_poolX;
+uniform float u_poolGain;
+uniform float u_vivid;
+uniform vec3 u_glint;
+uniform vec2 u_cap;
+out vec4 color;
+void main() {
+  float a = v_clip.x * 0.9 - v_clip.y * 0.5 + u_poolX * 0.04;
+  float s = 0.5 + 0.5 * sin(a * 11.0 + sin(a * 4.0 + u_time * 0.07) * 1.6 + u_time * 0.025);
+  s = pow(s, 4.0) * (0.55 + 0.45 * sin(a * 3.1 - u_time * 0.045));
+  float fade = smoothstep(-0.7, 1.0, v_clip.y);
+  float k = s * fade * (0.5 + 0.35 * u_poolGain) * u_vivid * u_cap.x * 0.42;
+  color = vec4(u_glint * k, k);
 }`;
 
 // Motes in the water: dark until the lamp's pool reaches them.
@@ -278,6 +371,7 @@ interface Scene {
   gl: WebGL2RenderingContext;
   floor: Program;
   haze: Program;
+  shaft: Program;
   motes: Program;
   floorVao: WebGLVertexArrayObject;
   hazeVao: WebGLVertexArrayObject;
@@ -289,11 +383,12 @@ interface Scene {
 function buildScene(gl: WebGL2RenderingContext, coarse: boolean): Scene | null {
   const floor = compile(gl, FLOOR_VS, FLOOR_FS);
   const haze = compile(gl, HAZE_VS, HAZE_FS);
+  const shaft = compile(gl, HAZE_VS, SHAFT_FS);
   const motes = compile(gl, MOTE_VS, MOTE_FS);
   const floorVao = gl.createVertexArray();
   const hazeVao = gl.createVertexArray();
   const moteVao = gl.createVertexArray();
-  if (!floor || !haze || !motes || !floorVao || !hazeVao || !moteVao) return null;
+  if (!floor || !haze || !shaft || !motes || !floorVao || !hazeVao || !moteVao) return null;
 
   const size = gridFor(coarse);
   const grid = buildGrid(size.cols, size.rows);
@@ -314,7 +409,7 @@ function buildScene(gl: WebGL2RenderingContext, coarse: boolean): Scene | null {
   gl.vertexAttribPointer(aMote, 4, gl.FLOAT, false, 0, 0);
   gl.bindVertexArray(null);
 
-  return { gl, floor, haze, motes, floorVao, hazeVao, moteVao, indexCount: grid.indices.length, moteCount: size.motes };
+  return { gl, floor, haze, shaft, motes, floorVao, hazeVao, moteVao, indexCount: grid.indices.length, moteCount: size.motes };
 }
 
 /** The GPU's name. Firefox gives it plainly (and warns about the debug extension); Chromium needs the extension. */
@@ -336,6 +431,9 @@ interface Colors {
   ink: Rgb;
   lamp: Rgb;
   ground: Rgb;
+  deep: Rgb; // the open sea: the lamp's hue, pushed to a clear blue, at the cap's luminance
+  glint: Rgb; // the lamp's own saturation at the same luminance: its pool, the caustics, the shafts
+  dark: number; // 1 in the dark theme
   cap: [number, number]; // wash, line
 }
 
@@ -386,7 +484,20 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
     const ink = parseColor(css.getPropertyValue("--text"));
     const lamp = parseColor(css.getPropertyValue("--signal"));
     const ground = parseColor(css.getPropertyValue("--bg"));
-    colors = ink && lamp && ground ? { ink, lamp, ground, cap: [CAPS[scheme].wash, CAPS[scheme].line] } : null;
+    const cap = CAPS[scheme];
+    const toward: Rgb = scheme === "dark" ? [0, 0, 0] : [1, 1, 1];
+    colors =
+      ink && lamp && ground
+        ? {
+            ink,
+            lamp,
+            ground,
+            deep: tintOf(lamp, cap.tint, toward, cap.sea),
+            glint: tintOf(lamp, cap.tint, toward),
+            dark: scheme === "dark" ? 1 : 0,
+            cap: [cap.wash, cap.line],
+          }
+        : null;
   }
 
   function resize(): void {
@@ -408,7 +519,7 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
 
   function draw(now: number): void {
     if (!scene || !canvas || !colors) return;
-    const { gl, floor, haze, motes } = scene;
+    const { gl, floor, haze, shaft, motes } = scene;
     const tint = colors;
     const aspect = canvas.width / Math.max(1, canvas.height);
     const vp = viewProjection(cam, aspect);
@@ -416,6 +527,7 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
     const swell = swellAt(now - swellStart);
     const sp = spread(cam, aspect);
     const ratio = canvas.width / Math.max(1, canvas.clientWidth);
+    const vivid = Math.max(0.6, Math.min(1, 0.55 + 0.45 * mood.pool)); // an error dims the sea
 
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -428,7 +540,8 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
     gl.uniform1f(haze.u("u_horizon"), horizonY(cam));
     gl.uniform1f(haze.u("u_poolX"), project(vp, pool.x, 0, -pool.z)[0]);
     gl.uniform1f(haze.u("u_poolGain"), mood.pool);
-    gl.uniform3fv(haze.u("u_lamp"), tint.lamp);
+    gl.uniform1f(haze.u("u_vivid"), vivid);
+    gl.uniform3fv(haze.u("u_glint"), tint.glint);
     gl.uniform2fv(haze.u("u_cap"), tint.cap);
     gl.bindVertexArray(scene.hazeVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -445,6 +558,11 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
       gl.uniform3f(p.u("u_pool"), pool.x, pool.z, pool.radius);
       gl.uniform1f(p.u("u_poolGain"), mood.pool);
       gl.uniform3fv(p.u("u_lamp"), tint.lamp);
+      gl.uniform3fv(p.u("u_deep"), tint.deep);
+      gl.uniform3fv(p.u("u_glint"), tint.glint);
+      gl.uniform1f(p.u("u_dark"), tint.dark);
+      gl.uniform1f(p.u("u_camH"), cam.height);
+      gl.uniform1f(p.u("u_vivid"), vivid);
       gl.uniform2fv(p.u("u_cap"), tint.cap);
     };
 
@@ -467,6 +585,18 @@ export function mountBackdrop(host: HTMLElement): Backdrop {
     gl.bindVertexArray(scene.moteVao);
     gl.drawArrays(gl.POINTS, 0, scene.moteCount);
     gl.depthMask(true);
+
+    // The shafts, over everything.
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(shaft.program);
+    gl.uniform1f(shaft.u("u_time"), clock);
+    gl.uniform1f(shaft.u("u_poolX"), project(vp, pool.x, 0, -pool.z)[0]);
+    gl.uniform1f(shaft.u("u_poolGain"), mood.pool);
+    gl.uniform1f(shaft.u("u_vivid"), vivid);
+    gl.uniform3fv(shaft.u("u_glint"), tint.glint);
+    gl.uniform2fv(shaft.u("u_cap"), tint.cap);
+    gl.bindVertexArray(scene.hazeVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
   }
 

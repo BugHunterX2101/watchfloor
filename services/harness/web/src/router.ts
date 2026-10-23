@@ -62,6 +62,7 @@ export function setBadge(route: Route, count: number | null, noun = "need attent
 function show(route: Route, first: boolean): void {
   const previous = active;
   active = route;
+  document.body.dataset.page = route; // for the styles that depend on the page (the footer's width, the chart)
   for (const page of document.querySelectorAll<HTMLElement>("[data-page]")) {
     const on = page.dataset.page === route;
     page.hidden = !on;

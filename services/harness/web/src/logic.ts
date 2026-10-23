@@ -107,6 +107,29 @@ export function relativeTime(then: number, now: number): string {
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
 
+/** "340 ms", "1.2 s", "19 s": milliseconds the way a person reads them. */
+export function fmtMs(ms: number): string {
+  const n = Number.isFinite(ms) ? Math.round(Math.max(0, ms)) : 0;
+  if (n < 1000) return `${n} ms`;
+  const s = n / 1000;
+  return `${s >= 10 ? Math.round(s) : s.toFixed(1).replace(/\.0$/, "")} s`;
+}
+
+/** The same, for a voice: "340 milliseconds", "10 seconds". */
+export function spokenMs(ms: number): string {
+  const n = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  if (n < 1000) return `${Math.round(n)} milliseconds`;
+  const s = Math.round((n / 1000) * 10) / 10;
+  return `${s} ${s === 1 ? "second" : "seconds"}`;
+}
+
+/** A briefing's summary as its first sentence (the headline) and what follows it. */
+export function splitSummary(text: string): { head: string; rest: string } {
+  const t = text.trim().replace(/\s+/g, " ");
+  const m = /^(.+?[.!?])(?:\s+(.*))?$/.exec(t);
+  return m ? { head: m[1], rest: m[2] ?? "" } : { head: t, rest: "" };
+}
+
 /** Newest first, no repeats (case-insensitive), at most `max` entries. */
 export function pushRecent(list: readonly string[], text: string, max = 6): string[] {
   const t = text.trim().slice(0, 120);

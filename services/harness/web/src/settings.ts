@@ -1,7 +1,8 @@
 // The settings dialog: what to call you, how replies sound, and how much the page moves. Every change
 // applies at once and is remembered in this browser (store.ts); nothing is sent anywhere.
 
-import { h } from "./dom";
+import { confirmDialog, h, icon } from "./dom";
+import { ICONS } from "./icons";
 import { speak, stopSpeaking, voices } from "./speech";
 import { forgetEverything, lessons, settings, unlearn, update, type Motion, type ReplyStyle } from "./store";
 
@@ -142,7 +143,8 @@ export function mountSettings(host: SettingsHost): { open(): void } {
     paintLearned();
 
     const forget = h("button", { type: "button", class: "btn btn-quiet danger-text" }, "Forget everything in this browser");
-    const close = h("button", { type: "button", class: "icon-btn close", "aria-label": "Close" }, "✕");
+    const close = h("button", { type: "button", class: "icon-btn close", "aria-label": "Close" });
+    close.append(icon(ICONS.x));
 
     const toggle = (id: string, label: string, help: string, input: HTMLInputElement): HTMLElement =>
       h(
@@ -152,6 +154,10 @@ export function mountSettings(host: SettingsHost): { open(): void } {
         h("p", { class: "help" }, help),
       );
 
+    // The controls in groups, so a long list reads as a few short ones.
+    const group = (id: string, title: string, ...rows: HTMLElement[]): HTMLElement =>
+      h("section", { class: "set-group", "aria-labelledby": `set-g-${id}` }, h("h3", { class: "set-group-title", id: `set-g-${id}` }, title), ...rows);
+
     const d = h(
       "dialog",
       { class: "sheet", "aria-labelledby": "settings-title" },
@@ -159,84 +165,112 @@ export function mountSettings(host: SettingsHost): { open(): void } {
       h(
         "div",
         { class: "sheet-main settings" },
-        h(
-          "div",
-          { class: "set-row" },
-          h("label", { for: "set-name", class: "set-label" }, "What should I call you?"),
-          name,
-          h("p", { class: "help" }, "Used for the greeting. Stays in this browser."),
+        group(
+          "you",
+          "You",
+          h(
+            "div",
+            { class: "set-row" },
+            h("label", { for: "set-name", class: "set-label" }, "What should I call you?"),
+            name,
+            h("p", { class: "help" }, "Used for the greeting. Stays in this browser."),
+          ),
+          h(
+            "div",
+            { class: "set-row" },
+            h("label", { for: "set-style", class: "set-label" }, "How long should answers be?"),
+            lengthSelect,
+            h("p", { class: "help" }, "You can also just say “keep it short” or “more detail”."),
+          ),
         ),
-        toggle("set-aloud", "Read replies aloud, with sound cues", "Turns off speech and the listening chimes together.", aloud),
-        toggle(
-          "set-hf",
-          "Hands-free listening",
-          host.handsFree.available
-            ? "Keeps the microphone open so you can run everything by voice. Your browser's speech service hears the microphone while it is on."
-            : "Needs Chrome or Edge, which provide speech recognition.",
-          handsFree,
+        group(
+          "voice",
+          "Voice",
+          toggle("set-aloud", "Read replies aloud, with sound cues", "Turns off speech and the listening chimes together.", aloud),
+          h("div", { class: "set-row" }, h("label", { for: "set-voice", class: "set-label" }, "Voice"), voiceSelect),
+          h(
+            "div",
+            { class: "set-row" },
+            h("label", { for: "set-rate", class: "set-label" }, "Speaking speed"),
+            h("div", { class: "range-row" }, rate, rateOut, preview),
+          ),
         ),
-        toggle(
-          "set-wake",
-          "Only act when I say “Watchfloor”",
-          "Hands-free then acts on requests that start with the wake word, or that follow a reply. Off: everything it hears is treated as a request.",
-          wake,
+        group(
+          "hands-free",
+          "Hands-free",
+          toggle(
+            "set-hf",
+            "Hands-free listening",
+            host.handsFree.available
+              ? "Keeps the microphone open so you can run everything by voice. Your browser's speech service hears the microphone while it is on."
+              : "Needs Chrome or Edge, which provide speech recognition.",
+            handsFree,
+          ),
+          toggle(
+            "set-wake",
+            "Only act when I say “Watchfloor”",
+            "Hands-free then acts on requests that start with the wake word, or that follow a reply. Off: everything it hears is treated as a request.",
+            wake,
+          ),
+          toggle(
+            "set-alerts",
+            "Speak up when the board changes",
+            "While hands-free is on, Watchfloor looks at your pipeline about once a minute and tells you when a deal slips to at risk, drops sharply, recovers, or a standing order triggers.",
+            alerts,
+          ),
         ),
-        toggle(
-          "set-alerts",
-          "Speak up when the board changes",
-          "While hands-free is on, Watchfloor looks at your pipeline about once a minute and tells you when a deal slips to at risk, drops sharply, recovers, or a standing order triggers.",
-          alerts,
+        group(
+          "look",
+          "Look and motion",
+          h(
+            "div",
+            { class: "set-row" },
+            h("span", { class: "set-label", id: "set-motion-label" }, "Motion"),
+            motionBox,
+            h("p", { class: "help" }, "Calm holds the sweep, the lamp, the chart behind the pages and the lean of the deal cards still. “Follow my system” respects your reduced-motion setting."),
+          ),
+          toggle(
+            "set-orb",
+            "Animate the voice lamp",
+            "The lamp at the centre of the scope breathes while ready and pulses on each spoken word. Off: it changes colour only.",
+            orb,
+          ),
+          toggle(
+            "set-scene",
+            "Turn the sweep on the scope",
+            "A line turns once every six seconds and each deal answers as it passes. Off: the scope holds still; every deal stays where it is.",
+            floor,
+          ),
+          toggle(
+            "set-backdrop",
+            "Show the chart behind the pages",
+            "A drowned coast drifts slowly behind every page: deep water, a lit shoreline, a chart grid floating above the sea floor and light through the waves, all in the lamp’s colour. With a mouse, deal cards also lean a little toward it. It is decoration and shows nothing about your deals. It needs WebGL, rests when the tab is hidden, and holds still with Calm. Off: the plain chart-room grid.",
+            chart,
+          ),
         ),
-        h(
-          "div",
-          { class: "set-row" },
-          h("label", { for: "set-style", class: "set-label" }, "How long should answers be?"),
-          lengthSelect,
-          h("p", { class: "help" }, "You can also just say “keep it short” or “more detail”."),
+        group(
+          "kept",
+          "What this browser keeps",
+          h(
+            "div",
+            { class: "set-row" },
+            h("span", { class: "set-label", id: "set-learned-label" }, "What I've learned from your corrections"),
+            learned,
+            h("p", { class: "help" }, "Applied before I act on what I hear. Names and phrases only: never numbers, yes or no."),
+          ),
+          h("div", { class: "sheet-actions left" }, forget),
         ),
-        h("div", { class: "set-row" }, h("label", { for: "set-voice", class: "set-label" }, "Voice"), voiceSelect),
-        h(
-          "div",
-          { class: "set-row" },
-          h("label", { for: "set-rate", class: "set-label" }, "Speaking speed"),
-          h("div", { class: "range-row" }, rate, rateOut, preview),
-        ),
-        h(
-          "div",
-          { class: "set-row" },
-          h("span", { class: "set-label", id: "set-motion-label" }, "Motion"),
-          motionBox,
-          h("p", { class: "help" }, "Calm holds the sweep, the lamp and the chart behind the pages still. “Follow my system” respects your reduced-motion setting."),
-        ),
-        toggle(
-          "set-orb",
-          "Animate the voice lamp",
-          "The lamp at the centre of the scope breathes while ready and pulses on each spoken word. Off: it changes colour only.",
-          orb,
-        ),
-        toggle(
-          "set-scene",
-          "Turn the sweep on the scope",
-          "A line turns once every six seconds and each deal answers as it passes. Off: the scope holds still; every deal stays where it is.",
-          floor,
-        ),
-        toggle(
-          "set-backdrop",
-          "Show the chart behind the pages",
-          "A sea floor in depth contours drifts slowly behind every page, lit by the lamp. It is decoration and shows nothing about your deals. It needs WebGL, rests when the tab is hidden, and holds still with Calm. Off: the plain chart-room grid.",
-          chart,
-        ),
-        h(
-          "div",
-          { class: "set-row" },
-          h("span", { class: "set-label", id: "set-learned-label" }, "What I've learned from your corrections"),
-          learned,
-          h("p", { class: "help" }, "Applied before I act on what I hear. Names and phrases only: never numbers, yes or no."),
-        ),
-        h("div", { class: "sheet-actions left" }, forget),
       ),
     );
-    forget.addEventListener("click", () => {
+    forget.addEventListener("click", async () => {
+      // The same question the Guide asks: nothing is forgotten by a stray click.
+      const yes = await confirmDialog({
+        title: "Forget everything in this browser?",
+        body: "Your name, voice and motion choices, recent questions, pinned deals and corrections are removed. Your Watchfloor account and data are not touched.",
+        confirm: "Forget",
+        danger: true,
+      });
+      if (!yes) return;
       forgetEverything();
       d.close();
     });

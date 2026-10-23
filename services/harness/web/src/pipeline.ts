@@ -92,8 +92,8 @@ function ringSvg(health: number, band: Band, size: number): string {
 }
 
 /** Health over the last days as a line with the two band lines (60 and 35) for scale. Numbers only. */
-function sparkline(values: number[]): HTMLElement {
-  const W = 360;
+function sparkline(values: number[], width = 360): HTMLElement {
+  const W = Math.max(240, Math.round(width)); // drawn at the width it is shown at, so its figures keep their size
   const H = 110;
   const pad = 10;
   const y = (v: number): number => pad + (1 - Math.min(100, Math.max(0, v)) / 100) * (H - pad * 2);
@@ -489,7 +489,8 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
     const dialog = ensureSheet();
     const token = ++sheetToken;
     currentDeal = d.deal_id;
-    const close = h("button", { type: "button", class: "icon-btn close", "aria-label": "Close" }, "✕");
+    const close = h("button", { type: "button", class: "icon-btn close", "aria-label": "Close" });
+    close.append(icon(ICONS.x));
     close.addEventListener("click", () => dialog.close());
     const title = h("h2", { class: "sheet-title", id: "sheet-title" }, d.account);
     const body = h("div", { class: "sheet-main", "aria-live": "polite" });
@@ -506,7 +507,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
         host.report(r.call, "Pipeline");
         const ex = r.isError ? null : toExplain(r.structuredContent);
         if (!ex) throw new Error(r.content[0]?.text || "That explanation came back in a shape this page doesn't understand.");
-        body.replaceChildren(detail(ex, d, dialog));
+        body.replaceChildren(detail(ex, d, dialog, body.clientWidth - 40));
       } catch (err) {
         if (token !== sheetToken) return;
         if (err instanceof SignedOut) {
@@ -524,7 +525,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
     await run();
   }
 
-  function detail(ex: Explain, d: BriefingDeal, dialog: HTMLDialogElement): HTMLElement {
+  function detail(ex: Explain, d: BriefingDeal, dialog: HTMLDialogElement, width: number): HTMLElement {
     const ringBox = h("div", { class: "ring-box big" });
     ringBox.innerHTML = ringSvg(ex.health, ex.band, 112);
 
@@ -572,7 +573,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
         ringBox,
         h(
           "div",
-          null,
+          { class: "detail-id" },
           h("div", { class: "deal-tags" }, bandChip(ex.band), ex.band_since ? h("span", { class: "muted" }, sinceLabel(ex.band_since)) : null),
           h("p", { class: "detail-sub" }, `${dealTitle(ex.deal.account, ex.deal.name)}${ex.deal.stage ? ` · ${ex.deal.stage}` : ""}`),
           h(
@@ -594,7 +595,7 @@ export function mountPipeline(root: HTMLElement, host: PipelineHost): PipelineHa
       h("h3", { class: "mini-title" }, "What pulls health down"),
       factors,
       h("h3", { class: "mini-title" }, "Health over time"),
-      ex.trend.length ? sparkline(ex.trend) : h("p", { class: "muted" }, "No history yet for this deal."),
+      ex.trend.length ? sparkline(ex.trend, width) : h("p", { class: "muted" }, "No history yet for this deal."),
       h("p", { class: "footnote" }, "Guide lines at 60 and 35 mark where the Watch and At risk bands begin."),
       h("div", { class: "sheet-actions" }, dig, ask),
     );

@@ -4,7 +4,7 @@
 
 import type { Call } from "./api";
 import { h } from "./dom";
-import { callStats, relativeTime } from "./logic";
+import { callStats, fmtMs, relativeTime, spokenMs } from "./logic";
 import { LABELS, WRITES } from "./trace";
 
 export interface Entry {
@@ -33,7 +33,7 @@ export function clearActivity(): void {
 export type Filter = "all" | "writes" | "errors";
 
 const label = (tool: string): string => LABELS[tool] ?? tool;
-const ms = (n: number): string => `${Math.round(n)} ms`;
+const ms = fmtMs;
 
 /** The page, as voice drives it. */
 export interface ActivityHandle {
@@ -143,10 +143,10 @@ export function mountActivity(root: HTMLElement, host: { toWatch(): void }): Act
               h("code", { class: "tool-id" }, tool),
               WRITES.has(tool) ? h("span", { class: "tag write" }, "writes") : null,
             ),
-            h("td", { class: "num" }, String(a.n), share),
-            h("td", { class: "num" }, ms(a.sum / a.n)),
-            h("td", { class: "num" }, ms(a.max)),
-            h("td", { class: `num${a.err ? " bad" : ""}` }, String(a.err)),
+            h("td", { class: "num", "data-label": "Calls" }, String(a.n), share),
+            h("td", { class: "num", "data-label": "Average" }, ms(a.sum / a.n)),
+            h("td", { class: "num", "data-label": "Slowest" }, ms(a.max)),
+            h("td", { class: `num${a.err ? " bad" : ""}`, "data-label": "Errors" }, String(a.err)),
           );
         }),
       ),
@@ -276,7 +276,7 @@ export function mountActivity(root: HTMLElement, host: { toWatch(): void }): Act
       const last = entries[0].calls.at(-1);
       const parts = [
         `${s.count} tool ${s.count === 1 ? "call" : "calls"} this session across ${entries.length} ${entries.length === 1 ? "turn" : "turns"}.`,
-        s.count ? `Median ${Math.round(s.p50)} milliseconds, slowest ${Math.round(s.max)}.` : "",
+        s.count ? `Median ${spokenMs(s.p50)}, slowest ${spokenMs(s.max)}.` : "",
         s.errors ? `${s.errors} ${s.errors === 1 ? "call" : "calls"} failed.` : "None failed.",
         s.writes ? `${s.writes} changed something.` : "",
         last ? `The latest was ${label(last.tool)}.` : "",
