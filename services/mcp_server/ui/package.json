@@ -9,16 +9,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@modelcontextprotocol/core": "^2.3.1",
-    "@modelcontextprotocol/ext-apps": "^2.0.3",
-    "preact": "^11.0.1",
-    "zod": "^4.6.5"
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
+    "preact": "^11.1.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vite": "^8.3.5",
+    "vite-plugin-singlefile": "^2.3.4"
   }
 }
