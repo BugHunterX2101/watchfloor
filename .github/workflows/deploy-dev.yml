@@ -20,7 +20,7 @@ jobs:
     environment: dev
     env: { ENV: dev, CDK_DEFAULT_ACCOUNT: "${{ vars.AWS_ACCOUNT_ID }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v4
         with: { role-to-assume: "${{ secrets.AWS_DEPLOY_ROLE_DEV }}", aws-region: us-east-1 }
       - uses: astral-sh/setup-uv@v5

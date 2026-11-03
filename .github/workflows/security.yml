@@ -36,7 +36,7 @@ jobs:
           - { project: "services/harness/api", ignore: "--ignore-vuln CVE-2026-59951" }
           - { project: "infra", ignore: "" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       # Locked, hashed versions only. The editable path to packages/core is this repository's own code.
       - name: Export the lock file
@@ -57,7 +57,7 @@ jobs:
       matrix:
         project: ["services/harness/web", "services/mcp_server/ui"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       # What ships, not the build tools: see "Accepted" in docs/SECURITY.md for the dev-only advisory.
@@ -67,7 +67,7 @@ jobs:
   files:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Lock files, Dockerfiles and the CloudFormation template. A clean checkout has no .venv, node_modules
       # or .secrets; they are skipped (at any depth) so a local run of this command does not walk or flag them.
       - name: Trivy (vulnerabilities, misconfiguration, secrets)
